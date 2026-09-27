@@ -217,23 +217,40 @@ describe("loading", () => {
   });
 
   it("unimplemented actions are accepted without throwing", () => {
-    expect(bus.send("deck1.loop.in", 1)).toBe(true);
+    expect(bus.send("deck1.slip", 1)).toBe(true);
     expect(bus.send("fx.unit1.knob", 0.3)).toBe(true);
   });
 });
 
 describe("FX", () => {
-  it("on/off, type cycling, level and deck assignment reach the audio engine", async () => {
+  it("three slots per unit: FX1/FX2/FX3 buttons, effect cycling, level and deck assignment", async () => {
     await loaded();
+    expect(audio.fx[0].slots.map((s) => s.type)).toEqual(["echo", "reverb", "flanger"]);
     bus.send("fx.unit1.button1", 1);
-    expect(audio.fx[0]).toMatchObject({ enabled: true, type: "echo", decks: [true, false] });
+    bus.send("fx.unit1.button3", 1);
+    expect(audio.fx[0].slots.map((s) => s.enabled)).toEqual([true, false, true]);
+    expect(audio.fx[0].decks).toEqual([true, false]);
+    expect(engine.getFeedback("fx.unit1.slot1.on")).toBe(1);
+    expect(engine.getFeedback("fx.unit1.slot2.on")).toBe(0);
     expect(engine.getFeedback("fx.unit1.on")).toBe(1);
-    bus.send("fx.unit1.button2", 1);
-    expect(audio.fx[0].type).toBe("delay");
+    bus.send("fx.unit1.slot1.next", 1); // SHIFT+FX1 on the DDJ-SB
+    expect(audio.fx[0].slots[0].type).toBe("delay");
+    expect(engine.getSettings().fxAssign[0]).toEqual(["delay", "reverb", "flanger"]);
     bus.send("fx.unit1.knob", 0.8);
     expect(audio.fx[0].mix).toBeCloseTo(0.8);
+    bus.send("fx.unit1.knob.shift", 0.2); // parameter of all slots
+    expect(audio.fx[0].slots.every((s) => Math.abs(s.param - 0.2) < 1e-9)).toBe(true);
     bus.send("fx.unit1.assign.deck2", 1);
     expect(audio.fx[0].decks).toEqual([true, true]);
+    bus.send("fx.unit1.on", 1); // unit off = every slot off
+    expect(audio.fx[0].slots.some((s) => s.enabled)).toBe(false);
+  });
+
+  it("effect assignments can be set and are restored from settings", () => {
+    engine.setFxSlotType(1, 2, "bitcrusher");
+    const saved = engine.getSettings().fxAssign;
+    const e2 = new DJEngine({ bus: new CommandBus(), audio: new FakeAudioEngine(), log: new EventLog(), browser: { moveSelection: () => {}, getSelected: () => null }, loadBytes: async () => new ArrayBuffer(1), settings: { fxAssign: saved } });
+    expect(e2.getState().fx[1].slots[2].type).toBe("bitcrusher");
   });
 
   it("echo time follows the deck's beat grid and pitch", async () => {
@@ -243,7 +260,7 @@ describe("FX", () => {
     expect(audio.fx[0].timeSec).toBeCloseTo(0.375);
     bus.send("deck1.tempo", 1); // +10% → 132 BPM
     expect(audio.fx[0].timeSec).toBeCloseTo((0.75 * 60) / 132);
-    bus.send("fx.unit1.button3", 1); // next beat length (1 beat)
+    bus.send("fx.unit1.beats.next", 1); // next beat length (1 beat)
     expect(audio.fx[0].timeSec).toBeCloseTo(60 / 132);
     expect(engine.getBpm(0)).toBeCloseTo(132);
   });

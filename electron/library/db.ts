@@ -21,6 +21,16 @@ export interface TrackRow {
   tags_read: number;
   added_at: number;
   rating: number;
+  artwork: string | null;
+}
+
+export interface PlaylistRow {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+  /** Ordered track refs. */
+  refs: string[];
 }
 
 export interface MappingRow {
@@ -80,6 +90,25 @@ function open(): DatabaseSync {
 function migrate(d: DatabaseSync): void {
   const cols = (d.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("rating")) d.exec("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS playlists (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS playlist_tracks (
+      playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      ref TEXT NOT NULL,
+      PRIMARY KEY (playlist_id, position)
+    );
+  `);
+  if (!cols.includes("artwork")) {
+    d.exec("ALTER TABLE tracks ADD COLUMN artwork TEXT");
+    // Re-read tags once so existing tracks pick up their embedded cover art.
+    d.exec("UPDATE tracks SET tags_read = 0");
+  }
 }
 
 export function loadTracks(): TrackRow[] {
@@ -89,15 +118,15 @@ export function loadTracks(): TrackRow[] {
 export function upsertTracks(rows: TrackRow[]): void {
   const d = open();
   const stmt = d.prepare(`
-    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at, rating)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at, rating, artwork)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(ref) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
       genre=excluded.genre, year=excluded.year, duration_ms=excluded.duration_ms, isrc=excluded.isrc,
-      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read, rating=excluded.rating`);
+      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read, rating=excluded.rating, artwork=excluded.artwork`);
   d.exec("BEGIN");
   try {
     for (const r of rows) {
-      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at, r.rating ?? 0);
+      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at, r.rating ?? 0, r.artwork ?? null);
     }
     d.exec("COMMIT");
   } catch (err) {
@@ -109,6 +138,38 @@ export function upsertTracks(rows: TrackRow[]): void {
 export function removeTracks(refs: string[]): void {
   const stmt = open().prepare("DELETE FROM tracks WHERE ref = ?");
   for (const r of refs) stmt.run(r);
+}
+
+export function loadPlaylists(): PlaylistRow[] {
+  const d = open();
+  const lists = d.prepare("SELECT * FROM playlists ORDER BY created_at, id").all() as unknown as Omit<PlaylistRow, "refs">[];
+  const tracks = d.prepare("SELECT ref FROM playlist_tracks WHERE playlist_id = ? ORDER BY position");
+  return lists.map((p) => ({ ...p, refs: (tracks.all(p.id) as { ref: string }[]).map((r) => r.ref) }));
+}
+
+/** Replace one playlist (name + full ordered track list) atomically. */
+export function savePlaylist(p: PlaylistRow): void {
+  const d = open();
+  d.exec("BEGIN");
+  try {
+    d.prepare(
+      `INSERT INTO playlists (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+    ).run(p.id, p.name, p.created_at, p.updated_at);
+    d.prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?").run(p.id);
+    const ins = d.prepare("INSERT INTO playlist_tracks (playlist_id, position, ref) VALUES (?, ?, ?)");
+    p.refs.forEach((ref, i) => ins.run(p.id, i, ref));
+    d.exec("COMMIT");
+  } catch (err) {
+    d.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+export function removePlaylist(id: string): void {
+  const d = open();
+  d.prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?").run(id);
+  d.prepare("DELETE FROM playlists WHERE id = ?").run(id);
 }
 
 export function loadMappings(): MappingRow[] {

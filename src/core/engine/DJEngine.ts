@@ -23,8 +23,11 @@ import {
 import type { AudioEngine, FxType, TrackInfo } from "./types";
 
 export const TEMPO_RANGES = [0.06, 0.1, 0.16, 1.0] as const;
-export const FX_TYPES: FxType[] = ["echo", "delay", "reverb", "flanger", "filter"];
-export const FX_BEATS = [0.25, 0.5, 0.75, 1, 2, 4] as const;
+export const FX_TYPES: FxType[] = ["echo", "delay", "reverb", "flanger", "phaser", "filter", "bitcrusher", "distortion", "gate", "roll"];
+export const FX_BEATS = [0.125, 0.25, 0.5, 0.75, 1, 2, 4] as const;
+export const FX_SLOTS = 3;
+/** Default FX1 / FX2 / FX3 assignment for each unit. */
+export const DEFAULT_FX_ASSIGN: FxType[] = ["echo", "reverb", "flanger"];
 
 export interface BeatGrid {
   bpm: number;
@@ -50,12 +53,18 @@ export interface DeckStems {
 export type FxTarget = "deck" | StemName;
 export const FX_TARGETS: FxTarget[] = ["deck", ...STEM_NAMES];
 
-export interface FxUnitState {
-  target: FxTarget;
+export interface FxSlotState {
   type: FxType;
   on: boolean;
-  mix: number;
   param: number;
+}
+
+/** One FX unit (DDJ-SB: left unit = deck A, right unit = deck B) with three effect slots. */
+export interface FxUnitState {
+  target: FxTarget;
+  slots: FxSlotState[];
+  /** Unit dry/wet level (FX knob). */
+  mix: number;
   beats: number;
   decks: boolean[];
 }
@@ -147,6 +156,8 @@ export interface EngineSettings {
   lockPlayingDecks: boolean;
   /** Which decks sit on the left/right side of the crossfader. */
   crossfaderAssign: ("left" | "right" | "thru")[];
+  /** Effect assigned to FX1/FX2/FX3 of each unit (persisted). */
+  fxAssign: FxType[][];
 }
 
 export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
@@ -155,6 +166,7 @@ export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
   crossfaderCurve: "additive",
   lockPlayingDecks: true,
   crossfaderAssign: ["left", "right", "left", "right"],
+  fxAssign: [DEFAULT_FX_ASSIGN, DEFAULT_FX_ASSIGN],
 };
 
 /** Browser/library port used by browser.* actions. Implemented by the library layer. */
@@ -268,10 +280,17 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         headMix: 0.3,
         headLevel: 0.8,
       },
-      fx: [
-        { target: "deck", type: "echo", on: false, mix: 0.5, param: 0.5, beats: 0.75, decks: Array.from({ length: this.deckCount }, (_, i) => i === 0) },
-        { target: "deck", type: "reverb", on: false, mix: 0.5, param: 0.5, beats: 1, decks: Array.from({ length: this.deckCount }, (_, i) => i === 1) },
-      ],
+      fx: [0, 1].map((u) => ({
+        target: "deck" as FxTarget,
+        slots: Array.from({ length: FX_SLOTS }, (_, k) => ({
+          type: (this.settings.fxAssign[u]?.[k] && FX_TYPES.includes(this.settings.fxAssign[u][k]) ? this.settings.fxAssign[u][k] : DEFAULT_FX_ASSIGN[k]) as FxType,
+          on: false,
+          param: 0.5,
+        })),
+        mix: 0.5,
+        beats: 0.75,
+        decks: Array.from({ length: this.deckCount }, (_, i) => i === u),
+      })),
       masterDeck: null,
     };
     this.loadTokens = new Array(this.deckCount).fill(0);
@@ -717,11 +736,12 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       if (hc) return d.hotcues[Number(hc[1]) - 1] != null ? 1 : 0;
       return 0;
     }
-    const fxMatch = /^fx\.unit(\d+)\.(on|assign\.deck(\d+))$/.exec(key);
+    const fxMatch = /^fx\.unit(\d+)\.(on|assign\.deck(\d+)|slot(\d)\.on)$/.exec(key);
     if (fxMatch) {
       const u = this.state.fx[Number(fxMatch[1]) - 1];
       if (!u) return 0;
-      if (fxMatch[2] === "on") return u.on ? 1 : 0;
+      if (fxMatch[2] === "on") return u.slots.some((s) => s.on) ? 1 : 0;
+      if (fxMatch[4]) return u.slots[Number(fxMatch[4]) - 1]?.on ? 1 : 0;
       return u.decks[Number(fxMatch[3]) - 1] ? 1 : 0;
     }
     const chMatch = /^mixer\.channel(\d+)\.(.+)$/.exec(key);
@@ -889,17 +909,25 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
 
     for (let u = 0; u < this.state.fx.length; u++) {
       const f = `fx.unit${u + 1}`;
-      const toggleOn = pressed(() => this.patchFx(u, { on: !this.state.fx[u].on }));
-      on(`${f}.on`, toggleOn);
-      on(`${f}.button1`, toggleOn);
-      const nextType = (d: 1 | -1) =>
+      for (let k = 0; k < FX_SLOTS; k++) {
+        const s = `${f}.slot${k + 1}`;
+        const toggle = pressed(() => this.patchSlot(u, k, { on: !this.state.fx[u].slots[k].on }));
+        on(`${s}.toggle`, toggle);
+        on(`${f}.button${k + 1}`, toggle); // DDJ-SB FX1/FX2/FX3 buttons
+        on(`${s}.next`, pressed(() => this.cycleSlotType(u, k, 1)));
+        on(`${s}.prev`, pressed(() => this.cycleSlotType(u, k, -1)));
+        on(`${s}.param`, (v) => this.patchSlot(u, k, { param: clamp(v, 0, 1) }));
+      }
+      // Unit on/off: everything off, or FX1 on when nothing is running.
+      on(
+        `${f}.on`,
         pressed(() => {
-          const i = FX_TYPES.indexOf(this.state.fx[u].type);
-          this.patchFx(u, { type: FX_TYPES[(i + d + FX_TYPES.length) % FX_TYPES.length] });
-        });
-      on(`${f}.button2`, nextType(1));
-      on(`${f}.chain.next`, nextType(1));
-      on(`${f}.chain.prev`, nextType(-1));
+          const any = this.state.fx[u].slots.some((s) => s.on);
+          this.patchFx(u, { slots: this.state.fx[u].slots.map((s, k) => ({ ...s, on: any ? false : k === 0 })) });
+        }),
+      );
+      on(`${f}.chain.next`, pressed(() => this.cycleSlotType(u, 0, 1)));
+      on(`${f}.chain.prev`, pressed(() => this.cycleSlotType(u, 0, -1)));
       const nextBeats = (d: 1 | -1, wrap: boolean) =>
         pressed(() => {
           const i = FX_BEATS.indexOf(this.state.fx[u].beats as (typeof FX_BEATS)[number]);
@@ -911,13 +939,14 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         const t = FX_TARGETS[(FX_TARGETS.indexOf(this.state.fx[u].target) + 1) % FX_TARGETS.length];
         this.patchFx(u, { target: t });
       }));
-      on(`${f}.button3`, nextBeats(1, true));
       on(`${f}.beats.next`, nextBeats(1, false));
       on(`${f}.beats.prev`, nextBeats(-1, false));
       on(`${f}.knob`, (v) => this.patchFx(u, { mix: clamp(v, 0, 1) }));
       on(`${f}.mix`, (v) => this.patchFx(u, { mix: clamp(v, 0, 1) }));
-      on(`${f}.knob.shift`, (v) => this.patchFx(u, { param: clamp(v, 0, 1) }));
-      on(`${f}.param`, (v) => this.patchFx(u, { param: clamp(v, 0, 1) }));
+      // SHIFT + FX knob: the parameter of every slot in the unit (depth / feedback / rate…).
+      const allParams = (v: number) => this.patchFx(u, { slots: this.state.fx[u].slots.map((s) => ({ ...s, param: clamp(v, 0, 1) })) });
+      on(`${f}.knob.shift`, allParams);
+      on(`${f}.param`, allParams);
       for (let d = 0; d < this.deckCount; d++) {
         on(
           `${f}.assign.deck${d + 1}`,
@@ -1168,14 +1197,31 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     const deck = f.decks.findIndex(Boolean);
     const bpm = (deck >= 0 ? this.getBpm(deck) : null) ?? 120;
     this.audio.setFx(u, {
-      type: f.type,
-      enabled: f.on,
+      slots: f.slots.map((s) => ({ type: s.type, enabled: s.on, param: s.param })),
       mix: f.mix,
-      param: f.param,
       timeSec: clamp((f.beats * 60) / bpm, 0.01, 3.9),
       decks: f.decks,
       stemMask: f.target === "deck" ? null : STEM_NAMES.map((s) => (s === f.target ? 1 : 0)),
     });
+  }
+
+  private patchSlot(u: number, k: number, patch: Partial<FxSlotState>): void {
+    const slots = this.state.fx[u].slots.slice();
+    slots[k] = { ...slots[k], ...patch };
+    this.patchFx(u, { slots });
+  }
+
+  private cycleSlotType(u: number, k: number, dir: 1 | -1): void {
+    const i = FX_TYPES.indexOf(this.state.fx[u].slots[k].type);
+    this.setFxSlotType(u, k, FX_TYPES[(i + dir + FX_TYPES.length) % FX_TYPES.length]);
+  }
+
+  /** Assign an effect to FX1/FX2/FX3 of a unit (remembered in settings). */
+  setFxSlotType(u: number, k: number, type: FxType): void {
+    if (!this.state.fx[u]?.slots[k] || !FX_TYPES.includes(type)) return;
+    this.patchSlot(u, k, { type });
+    const fxAssign = this.state.fx.map((unit) => unit.slots.map((s) => s.type));
+    this.settings = { ...this.settings, fxAssign };
   }
 
   private patchFx(u: number, patch: Partial<FxUnitState>): void {

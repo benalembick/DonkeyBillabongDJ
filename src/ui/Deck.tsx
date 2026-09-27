@@ -10,6 +10,7 @@ import { useApp, useEngineState, useSend } from "./context";
 import { formatTime, useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS } from "./layout";
 import { OverviewWaveform } from "./Waveforms";
+import { ArtTile } from "./ArtTile";
 
 const RANGE_LABEL: Record<string, string> = { "0.06": "±6", "0.1": "±10", "0.16": "±16", "1": "WIDE" };
 const SOURCE_LABEL: Record<string, string> = { "apple-music": "APPLE MUSIC" };
@@ -356,7 +357,7 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
     >
       <header className="deck-head">
         <div className="deck-letter" aria-label={`Deck ${L}`}>{L}</div>
-        <div className="art">{d.track?.artworkUrl ? <img src={d.track.artworkUrl} alt="" /> : <span>{d.track ? "♪" : ""}</span>}</div>
+        <div className="art">{d.track && <ArtTile track={d.track} size={40} />}</div>
         <div className="deck-meta">
           <div
             className={`deck-title ${d.status === "empty" ? "clickable" : ""}`}

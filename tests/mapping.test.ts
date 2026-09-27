@@ -61,6 +61,13 @@ describe("MappingRuntime with the DDJ-SB mapping", () => {
     expect(dispatched).toEqual([["deck1.stem.vocals.toggle", 1], ["deck2.stem.instruments.isolate", 1]]);
   });
 
+  it("DDJ-SB FX buttons switch the three slots; SHIFT changes the effect", () => {
+    const { rt, dispatched } = runtimeFor(buildDdjSbMapping());
+    rt.handle(msg(0x94, 0x49, 0x7f)); // FX1 unit, button 3
+    rt.handle(msg(0x95, 0x63, 0x7f)); // FX2 unit, SHIFT + button 1
+    expect(dispatched).toEqual([["fx.unit1.slot3.toggle", 1], ["fx.unit2.slot1.next", 1]]);
+  });
+
   it("browse encoder is two's complement", () => {
     const { rt, dispatched } = runtimeFor(buildDdjSbMapping());
     rt.handle(msg(0xb6, 0x40, 0x7f));

@@ -5,14 +5,18 @@
  * ISRC sources (via music-metadata's common mapping): ID3v2 TSRC (MP3, AIFF,
  * WAV id3 chunk), Vorbis comment ISRC (FLAC/OGG), MP4 ----:com.apple.iTunes:ISRC (M4A/AAC).
  */
-import { parseFile } from "music-metadata";
+import { parseFile, selectCover } from "music-metadata";
+import { artUrl, storeArtwork } from "./artwork";
 import type { TagResult } from "../../src/library/tags";
 
 async function readOne(filePath: string): Promise<TagResult> {
   try {
-    const m = await parseFile(filePath, { skipCovers: true, duration: false });
+    const m = await parseFile(filePath, { skipCovers: false, duration: false });
     const c = m.common;
+    const cover = selectCover(c.picture);
+    const art = cover?.data?.length ? await storeArtwork(cover.data) : null;
     return {
+      artworkUrl: art ? artUrl(art) : undefined,
       ref: filePath,
       ok: true,
       title: c.title,

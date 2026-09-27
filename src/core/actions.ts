@@ -113,16 +113,20 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
 
   for (let u = 1; u <= 2; u++) {
     const G = `FX ${u}`;
-    add(`fx.unit${u}.button1`, `FX${u} on/off`, "button", G);
-    add(`fx.unit${u}.button2`, `FX${u} next effect`, "button", G);
-    add(`fx.unit${u}.button3`, `FX${u} beat length`, "button", G);
+    for (let k = 1; k <= 3; k++) {
+      add(`fx.unit${u}.button${k}`, `FX${u} button ${k} (slot ${k} on/off)`, "button", G);
+      add(`fx.unit${u}.slot${k}.toggle`, `FX${u} slot ${k} on/off`, "button", G);
+      add(`fx.unit${u}.slot${k}.next`, `FX${u} slot ${k} next effect`, "button", G);
+      add(`fx.unit${u}.slot${k}.prev`, `FX${u} slot ${k} previous effect`, "button", G);
+      add(`fx.unit${u}.slot${k}.param`, `FX${u} slot ${k} parameter`, "absolute", G);
+    }
     add(`fx.unit${u}.knob`, `FX${u} level (dry/wet)`, "absolute", G);
-    add(`fx.unit${u}.knob.shift`, `FX${u} parameter`, "absolute", G);
-    add(`fx.unit${u}.chain.next`, `FX${u} next effect`, "button", G);
-    add(`fx.unit${u}.chain.prev`, `FX${u} previous effect`, "button", G);
-    add(`fx.unit${u}.on`, `FX${u} on/off`, "button", G);
+    add(`fx.unit${u}.knob.shift`, `FX${u} parameter (all slots)`, "absolute", G);
+    add(`fx.unit${u}.chain.next`, `FX${u} slot 1 next effect`, "button", G);
+    add(`fx.unit${u}.chain.prev`, `FX${u} slot 1 previous effect`, "button", G);
+    add(`fx.unit${u}.on`, `FX${u} on/off (all slots)`, "button", G);
     add(`fx.unit${u}.mix`, `FX${u} level (dry/wet)`, "absolute", G);
-    add(`fx.unit${u}.param`, `FX${u} parameter`, "absolute", G);
+    add(`fx.unit${u}.param`, `FX${u} parameter (all slots)`, "absolute", G);
     add(`fx.unit${u}.beats.next`, `FX${u} longer beat`, "button", G);
     add(`fx.unit${u}.beats.prev`, `FX${u} shorter beat`, "button", G);
     for (let d = 1; d <= deckCount; d++) add(`fx.unit${u}.assign.deck${d}`, `FX${u} assign deck ${deckLetter(d - 1)}`, "button", G);

@@ -12,6 +12,9 @@ import os from "node:os";
 import path from "node:path";
 import { registerStreamingIpc } from "./streaming/ipc";
 import { registerStemIpc } from "./stems/host";
+import { handleArtProtocol, registerArtScheme } from "./library/artwork";
+
+registerArtScheme();
 import * as libraryDb from "./library/db";
 import { readTags } from "./library/tags";
 
@@ -104,6 +107,12 @@ function registerIpc(): void {
   ipcMain.handle("dbdj:library:load", () => libraryDb.loadTracks());
   ipcMain.handle("dbdj:library:upsert", (_e, rows: libraryDb.TrackRow[]) => libraryDb.upsertTracks(Array.isArray(rows) ? rows : []));
   ipcMain.handle("dbdj:library:remove", (_e, refs: string[]) => libraryDb.removeTracks(Array.isArray(refs) ? refs.map(String) : []));
+  ipcMain.handle("dbdj:playlists:load", () => libraryDb.loadPlaylists());
+  ipcMain.handle("dbdj:playlists:save", (_e, p: libraryDb.PlaylistRow) => {
+    if (!p || typeof p.id !== "string" || !Array.isArray(p.refs)) throw new Error("invalid playlist");
+    libraryDb.savePlaylist({ id: p.id, name: String(p.name ?? "Playlist"), created_at: Number(p.created_at) || Date.now(), updated_at: Date.now(), refs: p.refs.map(String) });
+  });
+  ipcMain.handle("dbdj:playlists:remove", (_e, id: string) => libraryDb.removePlaylist(String(id)));
   ipcMain.handle("dbdj:mappings:load", () => libraryDb.loadMappings());
   ipcMain.handle("dbdj:mappings:put", (_e, row: libraryDb.MappingRow) => libraryDb.putMapping(row));
   ipcMain.handle("dbdj:mappings:remove", (_e, key: string) => libraryDb.removeMapping(String(key)));
@@ -553,6 +562,7 @@ app.whenReady().then(() => {
   ses.setPermissionRequestHandler((_wc, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)));
   ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
 
+  handleArtProtocol();
   registerIpc();
   registerStreamingIpc();
   void registerStemIpc();

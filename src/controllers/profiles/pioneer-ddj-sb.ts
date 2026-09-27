@@ -163,25 +163,23 @@ export function buildDdjSbMapping(): ControllerMapping {
     led(pad(2), padCh, 0x61, `${m}.eq.mid.kill`);
     led(pad(3), padCh, 0x62, `${m}.eq.high.kill`);
     led(pad(4), padCh, 0x63, `${m}.mute`);
-    note(pad(1), padCh, 0x68, `fx.unit${s + 1}.chain.prev`, { note: "Mixxx: prev_chain" });
-    note(pad(2), padCh, 0x69, `fx.unit${s + 1}.chain.next`, { note: "Mixxx: next_chain" });
+    note(pad(1), padCh, 0x68, `fx.unit${s + 1}.beats.prev`, { note: "SHIFT+pad in MANUAL LOOP mode: FX beat length shorter" });
+    note(pad(2), padCh, 0x69, `fx.unit${s + 1}.beats.next`, { note: "SHIFT+pad in MANUAL LOOP mode: FX beat length longer" });
 
     // ── FX unit on this side ──
     const fx = `fx${s + 1}`;
     for (let b = 0; b < 3; b++) {
       const id = `${fx}.button${b + 1}`;
       control(id, `FX${s + 1} button ${b + 1}`, "button", fx, `FX${s + 1}-${b + 1}`);
-      note(id, fxCh, 0x47 + b, `fx.unit${s + 1}.button${b + 1}`);
-      note(id, fxCh, 0x63 + b, `fx.unit${s + 1}.button${b + 1}`, { note: "SHIFT layer" });
-      if (b === 0) {
-        // FX button 1 lights while the unit is on.
-        led(id, fxCh, 0x47, `fx.unit${s + 1}.on`);
-        led(id, fxCh, 0x63, `fx.unit${s + 1}.on`);
-      }
+      // FX button n switches effect slot n of this side's unit; SHIFT + button steps its effect.
+      note(id, fxCh, 0x47 + b, `fx.unit${s + 1}.slot${b + 1}.toggle`);
+      note(id, fxCh, 0x63 + b, `fx.unit${s + 1}.slot${b + 1}.next`, { note: "SHIFT + FX button: next effect for this slot" });
+      led(id, fxCh, 0x47 + b, `fx.unit${s + 1}.slot${b + 1}.on`);
+      led(id, fxCh, 0x63 + b, `fx.unit${s + 1}.slot${b + 1}.on`);
     }
     control(`${fx}.knob`, `FX${s + 1} knob`, "knob", fx, `FX${s + 1} KNOB`);
-    cc14(`${fx}.knob`, fxCh, 0x06, `fx.unit${s + 1}.knob`);
-    cc14(`${fx}.knob`, fxCh, 0x00, `fx.unit${s + 1}.knob.shift`, { note: "SHIFT + FX knob" });
+    cc14(`${fx}.knob`, fxCh, 0x06, `fx.unit${s + 1}.knob`, { note: "FX level (dry/wet) of all three slots" });
+    cc14(`${fx}.knob`, fxCh, 0x00, `fx.unit${s + 1}.knob.shift`, { note: "SHIFT + FX knob: effect parameter (feedback / size / rate / depth)" });
   }
 
   // ── global section ──

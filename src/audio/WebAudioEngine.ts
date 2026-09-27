@@ -36,7 +36,8 @@ interface DeckGraph {
   dry: GainNode;
   /** Sum of dry + FX returns, feeding the fader and PFL. */
   post: GainNode;
-  fx: FxSlot[];
+  /** [unit][slot] */
+  fx: FxSlot[][];
   out: GainNode;
   pfl: GainNode;
   meter: AnalyserNode;
@@ -266,7 +267,8 @@ export class WebAudioEngine implements AudioEngine {
       const dry = ctx.createGain();
       const post = ctx.createGain();
       lpf.connect(dry).connect(post);
-      const fx = [0, 1].map((u) => new FxSlot(ctx, lpf, post, { node, output: u + 1 }));
+      // Two units × three slots; effects are only built once a slot is used.
+      const fx = [0, 1].map((u) => [0, 1, 2].map(() => new FxSlot(ctx, lpf, post, { node, output: u + 1 })));
       post.connect(out).connect(meter);
       out.connect(masterBus);
       post.connect(pfl).connect(cueBus);
@@ -566,13 +568,20 @@ export class WebAudioEngine implements AudioEngine {
     this.decks.forEach((g, deck) => {
       let dryCut = 0;
       this.fxDsp.forEach((fx, unit) => {
-        const slot = g.fx[unit];
-        if (!fx || !slot) return;
-        const active = fx.enabled && !!fx.decks[deck];
-        const useStems = !!fx.stemMask && !INSERT_TYPES.has(fx.type) && this.models[deck].stemsLoaded;
-        slot.update(fx, active, useStems);
-        g.node.port.postMessage({ type: "stemsFx", unit, mask: active && useStems ? fx.stemMask : [0, 0, 0, 0] });
-        dryCut += slot.dryReduction(fx, active);
+        const slots = g.fx[unit];
+        if (!fx || !slots) return;
+        let stemSend = false;
+        fx.slots.forEach((s, k) => {
+          const slot = slots[k];
+          if (!slot) return;
+          const active = s.enabled && !!fx.decks[deck];
+          const useStems = !!fx.stemMask && !INSERT_TYPES.has(s.type) && this.models[deck].stemsLoaded;
+          const params = { type: s.type, mix: fx.mix, param: s.param, timeSec: fx.timeSec };
+          slot.update(params, active, useStems);
+          if (active && useStems) stemSend = true;
+          dryCut += slot.dryReduction(params, active);
+        });
+        g.node.port.postMessage({ type: "stemsFx", unit, mask: stemSend ? fx.stemMask : [0, 0, 0, 0] });
       });
       g.dry.gain.setTargetAtTime(Math.max(0, 1 - dryCut), ctx.currentTime, 0.02);
     });

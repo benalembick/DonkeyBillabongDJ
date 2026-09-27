@@ -52,6 +52,9 @@ export interface DesktopBridge {
     loadTracks(): Promise<TrackRow[]>;
     upsertTracks(rows: TrackRow[]): Promise<void>;
     removeTracks(refs: string[]): Promise<void>;
+    loadPlaylists(): Promise<PlaylistRow[]>;
+    savePlaylist(p: PlaylistRow): Promise<void>;
+    removePlaylist(id: string): Promise<void>;
     loadMappings(): Promise<MappingRow[]>;
     putMapping(row: MappingRow): Promise<void>;
     removeMapping(key: string): Promise<void>;
@@ -75,6 +78,15 @@ export interface TrackRow {
   tags_read: number;
   added_at: number;
   rating?: number;
+  /** Cached cover art URL (dbdj-art://…). */
+  artwork?: string | null;
+}
+export interface PlaylistRow {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+  refs: string[];
 }
 export interface MappingRow {
   key: string;
@@ -87,6 +99,30 @@ export interface MappingRow {
   method: string;
   user_confirmed: number;
   resolved_at: number;
+}
+
+export interface PlaylistPersistence {
+  load(): Promise<PlaylistRow[]>;
+  save(p: PlaylistRow): Promise<void>;
+  remove(id: string): Promise<void>;
+}
+
+/** Browser: playlists in localStorage (track files must be re-added after a reload, but names/order survive). */
+class LocalStoragePlaylists implements PlaylistPersistence {
+  private store = new LocalStorageStore("dbdj.playlists.");
+  async load(): Promise<PlaylistRow[]> {
+    return Object.values((await this.store.get<Record<string, PlaylistRow>>("all")) ?? {}).sort((a, b) => a.created_at - b.created_at);
+  }
+  async save(p: PlaylistRow): Promise<void> {
+    const all = (await this.store.get<Record<string, PlaylistRow>>("all")) ?? {};
+    all[p.id] = { ...p, updated_at: Date.now() };
+    await this.store.set("all", all);
+  }
+  async remove(id: string): Promise<void> {
+    const all = (await this.store.get<Record<string, PlaylistRow>>("all")) ?? {};
+    delete all[id];
+    await this.store.set("all", all);
+  }
 }
 
 /** Persistent local library (desktop only; browser file references don't survive a reload). */
@@ -123,6 +159,8 @@ export interface Platform {
   /** Read embedded tags (ISRC, duration, BPM, key…) for local refs. */
   readTags(refs: string[]): Promise<TagResult[]>;
   library: LibraryPersistence | null;
+  /** Playlists: SQLite on desktop, localStorage in the browser. */
+  playlists: PlaylistPersistence;
   mappingStorage: MappingStorage;
 }
 
@@ -142,6 +180,7 @@ function rowToTrack(r: TrackRow): TrackInfo {
     tagsRead: !!r.tags_read,
     rating: r.rating ?? 0,
     addedAt: r.added_at,
+    artworkUrl: r.artwork ?? undefined,
   };
 }
 
@@ -160,6 +199,7 @@ function trackToRow(t: TrackInfo): TrackRow {
     tags_read: t.tagsRead ? 1 : 0,
     added_at: t.addedAt ?? Date.now(),
     rating: t.rating ?? 0,
+    artwork: t.artworkUrl?.startsWith("dbdj-art://") ? t.artworkUrl : null,
   };
 }
 
@@ -257,6 +297,10 @@ class DesktopPlatform implements Platform {
       remove: (refs) => db.removeTracks(refs),
     };
   }
+  get playlists(): PlaylistPersistence {
+    const db = this.bridge.db;
+    return { load: () => db.loadPlaylists(), save: (p) => db.savePlaylist(p), remove: (id) => db.removePlaylist(id) };
+  }
   get mappingStorage(): MappingStorage {
     const db = this.bridge.db;
     return {
@@ -296,6 +340,7 @@ class BrowserPlatform implements Platform {
   readonly streaming: StreamingBridge = createBrowserStreaming();
   readonly library = null;
   readonly mappingStorage: MappingStorage = new LocalStorageMappings();
+  readonly playlists: PlaylistPersistence = new LocalStoragePlaylists();
 
   async readTags(refs: string[]): Promise<TagResult[]> {
     const { parseBlob } = await import("music-metadata");

@@ -71,17 +71,22 @@ export interface MasterDsp {
   headphoneGain: number;
 }
 
-export type FxType = "echo" | "delay" | "reverb" | "flanger" | "filter";
+export type FxType = "echo" | "delay" | "reverb" | "flanger" | "phaser" | "filter" | "bitcrusher" | "distortion" | "gate" | "roll";
+
+/** One of an FX unit's three effect slots (the DDJ-SB's FX1 / FX2 / FX3 buttons). */
+export interface FxSlotDsp {
+  type: FxType;
+  enabled: boolean;
+  /** Effect-specific 0..1 (feedback, size, rate, cutoff, bit depth, drive, gate depth…). */
+  param: number;
+}
 
 /** Final parameters for one FX unit (computed by the DJ engine). */
 export interface FxDsp {
-  type: FxType;
-  enabled: boolean;
-  /** Dry/wet level 0..1 (for "filter": 0 = bypass, 1 = fully filtered). */
+  slots: FxSlotDsp[];
+  /** Unit dry/wet level 0..1 (the DDJ-SB FX knob). */
   mix: number;
-  /** Effect-specific 0..1 (echo/delay feedback, reverb size, flanger rate, filter cutoff). */
-  param: number;
-  /** Beat-synced time in seconds (echo/delay). */
+  /** Beat-synced time in seconds (echo/delay/gate/roll). */
   timeSec: number;
   /** Which mixer channels feed this unit. */
   decks: boolean[];

@@ -13,6 +13,7 @@ import type { StreamingProviderId } from "../providers/streamingTypes";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 import { useStemIndex, useStemStatus } from "./stemHooks";
+import { ArtTile } from "./ArtTile";
 
 type Source = "local" | "audius" | StreamingProviderId;
 
@@ -104,12 +105,6 @@ const COLUMNS: { key: SortKey | null; label: string; cls?: string }[] = [
   { key: "addedAt", label: "Added" },
   { key: null, label: "Load" },
 ];
-
-function artColor(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return `hsl(${h % 360} 45% 32%)`;
-}
 
 function Stars({ value, onChange }: { value: number; onChange: (n: number) => void }) {
   return (
@@ -266,9 +261,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
                   }}
                 >
                   <td className="col-art">
-                    <span className="art-tile" style={{ background: artColor(t.album || t.artist || t.title) }}>
-                      {(t.artist || t.title).slice(0, 1).toUpperCase()}
-                    </span>
+                    <ArtTile track={t} size={22} />
                   </td>
                   <td className="title-cell">{t.title}</td>
                   <td>{t.artist}</td>
