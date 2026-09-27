@@ -4,7 +4,36 @@ import type { AudioConfig, OutputDevice } from "../core/engine/types";
 import type { CrossfaderCurve } from "../core/engine/mixerMath";
 import { importMixxxMapping, type ImportResult } from "../controllers/mixxx/MixxxImporter";
 import { useApp, useEngineState } from "./context";
+import { MatchDiagnostics } from "./MatchDialog";
+import type { SourceId } from "../matching/sources";
 import { useTick } from "./hooks";
+
+function SmartMatchDiagnostics() {
+  const { matching } = useApp();
+  useTick(1000);
+  const recent = matching.resolver.recent.filter((r, i, a) => a.findIndex((x) => x.requested.sourceTrackId === r.requested.sourceTrackId) === i).slice(0, 8);
+  return (
+    <>
+      <h4>Smart Match</h4>
+      <p className="hint">
+        Local index: {matching.local.size} tracks · sources:{" "}
+        {matching.resolver
+          .getSources()
+          .map((s) => `${s.name} (${s.availability().available ? "available" : "unavailable"})`)
+          .join(" → ")}
+      </p>
+      {recent.length === 0 && <p className="hint">No resolutions yet — open a Spotify playlist or load a Spotify track.</p>}
+      {recent.map((r) => (
+        <details key={`${r.requested.source}:${r.requested.sourceTrackId}`}>
+          <summary>
+            {r.requested.artists.join(", ")} — {r.requested.title} · {r.status} {r.best ? `${r.confidence}%` : ""}
+          </summary>
+          <MatchDiagnostics result={r} />
+        </details>
+      ))}
+    </>
+  );
+}
 
 export function Diagnostics() {
   const { audio, controllers, engine, log } = useApp();
@@ -63,6 +92,7 @@ export function Diagnostics() {
           <dd>{mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(0)} MB` : "n/a"}</dd>
         </dl>
       </div>
+      <SmartMatchDiagnostics />
       <h4>Event log</h4>
       <div className="log">
         {entries.map((e) => (
@@ -72,6 +102,69 @@ export function Diagnostics() {
         ))}
       </div>
     </div>
+  );
+}
+
+function SmartMatchSettings() {
+  const { matching, platform } = useApp();
+  const [, force] = useState(0);
+  const sources = matching.resolver.getSources();
+  const cfg = matching.resolver.getConfig();
+  const move = (i: number, d: -1 | 1) => {
+    const order: SourceId[] = sources.map((s) => s.id);
+    const j = i + d;
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    matching.setOrder(order);
+    force((n) => n + 1);
+  };
+  const set = (patch: Parameters<typeof matching.setConfig>[0]) => {
+    matching.setConfig(patch);
+    force((n) => n + 1);
+  };
+  return (
+    <fieldset>
+      <legend>STREAMING → SMART MATCHING</legend>
+      <p className="hint">Spotify / Apple Music tracks are matched to a source that may actually be played, in this order:</p>
+      <ol className="source-order">
+        {sources.map((s, i) => {
+          const a = s.availability();
+          return (
+            <li key={s.id}>
+              <span className={a.available ? "ok-text" : "hint"}>{s.name}</span>
+              {!a.available && (
+                <span className="hint" title={a.reason}>
+                  {" "}— unavailable (partner access only){" "}
+                  {a.docsUrl && <button className="linklike" onClick={() => platform.openExternal(a.docsUrl!)}>why?</button>}
+                </span>
+              )}
+              <span className="row-actions">
+                <button className="tiny" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                <button className="tiny" disabled={i === sources.length - 1} onClick={() => move(i, 1)}>↓</button>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <label>
+        Load automatically at or above
+        <input type="range" min={70} max={100} step={1} value={cfg.autoLoadMin} onChange={(e) => set({ autoLoadMin: Number(e.target.value) })} />
+        <span>{cfg.autoLoadMin}%</span>
+      </label>
+      <label>
+        Duration: very strong within (s)
+        <input type="number" min={0.5} max={10} step={0.5} value={cfg.durationVeryStrongS} onChange={(e) => set({ durationVeryStrongS: Number(e.target.value) })} />
+      </label>
+      <label>
+        Duration: strong within (s)
+        <input type="number" min={1} max={20} step={0.5} value={cfg.durationStrongS} onChange={(e) => set({ durationStrongS: Number(e.target.value) })} />
+      </label>
+      <label>
+        Duration: possible within (s)
+        <input type="number" min={2} max={60} step={1} value={cfg.durationPossibleS} onChange={(e) => set({ durationPossibleS: Number(e.target.value) })} />
+      </label>
+      <p className="hint">Below 70% nothing is ever loaded automatically; ambiguous versions always ask you.</p>
+    </fieldset>
   );
 }
 
@@ -255,6 +348,7 @@ export function Settings() {
       </fieldset>
 
       <StreamingSettings />
+      <SmartMatchSettings />
 
       {imported && (
         <fieldset className="import-report">

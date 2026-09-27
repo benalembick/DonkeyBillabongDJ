@@ -34,13 +34,26 @@ export class LibraryStore extends Emitter<{ change: LibraryState }> implements B
     return this.state;
   }
 
-  addFiles(files: AudioFileRef[]): number {
+  /** Adds new files; returns the tracks that were actually added (duplicates skipped). */
+  addFiles(files: AudioFileRef[]): TrackInfo[] {
     const existing = new Set(this.state.tracks.map((t) => t.ref));
     const added = files.filter((f) => !existing.has(f.ref)).map((f) => trackInfoFromFileName(f.ref, f.name));
-    if (added.length === 0) return 0;
+    if (added.length === 0) return [];
     const tracks = [...this.state.tracks, ...added];
     this.set({ tracks, selected: this.state.selected < 0 ? 0 : this.state.selected });
-    return added.length;
+    return added;
+  }
+
+  /** Replace the library with persisted tracks (startup). */
+  hydrate(tracks: TrackInfo[]): void {
+    this.set({ tracks, selected: tracks.length ? 0 : -1 });
+  }
+
+  /** Update tracks in place (e.g. after reading tags). */
+  patchTracks(updated: TrackInfo[]): void {
+    if (updated.length === 0) return;
+    const byRef = new Map(updated.map((t) => [t.ref, t]));
+    this.set({ ...this.state, tracks: this.state.tracks.map((t) => byRef.get(t.ref) ?? t) });
   }
 
   getByRef(ref: string): TrackInfo | null {

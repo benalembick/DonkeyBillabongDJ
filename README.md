@@ -22,7 +22,7 @@ Loading music:
 - Library → **+ Add files… / + Add folder…**, then double-click a row, drag it onto a deck, or use the **→ A / → B** buttons.
 - DDJ-SB: turn the browse encoder, then press **LOAD A/B**.
 
-Streaming: Library → MUSIC → **Spotify** or **Apple Music** walks you through connecting your account (see [docs/STREAMING-INTEGRATIONS.md](docs/STREAMING-INTEGRATIONS.md)).
+Streaming: Library → MUSIC → **Spotify** or **Apple Music** walks you through connecting your account. **Smart Match** then finds each Spotify/Apple track in your own library (by ISRC, then title, artist, version and length) and loads *your file* (see [docs/STREAMING-INTEGRATIONS.md](docs/STREAMING-INTEGRATIONS.md)).
 
 ## What works now (Phase 1)
 
@@ -55,6 +55,7 @@ Streaming: Library → MUSIC → **Spotify** or **Apple Music** walks you throug
 - [Controller mappings](docs/CONTROLLER-MAPPINGS.md): format, DDJ-SB, Mixxx import, adding controllers, debugging MIDI
 - [Audio engine](docs/AUDIO-ENGINE.md): design, latency, native backend option, adding effects
 - [Streaming integrations](docs/STREAMING-INTEGRATIONS.md): provider abstraction, restrictions, adding providers
+- [Smart Metadata Matching](docs/SMART-METADATA-MATCHING.md): Spotify/Apple Music playlists resolved to your own files (ISRC + metadata scoring)
 - [Development](docs/DEVELOPMENT.md): running, building macOS / Windows, layout, conventions
 - [Hardware test plan](docs/HARDWARE-TEST-PLAN.md) and the generated [DDJ-SB test matrix](docs/DDJ-SB-TEST-MATRIX.md)
 

@@ -15,6 +15,25 @@ export interface TrackInfo {
   durationMs?: number;
   artworkUrl?: string;
   externalUrl?: string;
+  isrc?: string | null;
+  genre?: string;
+  year?: number;
+  /** Embedded tags have been read (local files). */
+  tagsRead?: boolean;
+  /** Set when this playable track was resolved from another service's metadata (Smart Match). */
+  resolvedFrom?: ResolvedFrom;
+}
+
+/** Where a deck's audio came from vs. where its metadata came from (kept separate for licensing/debugging). */
+export interface ResolvedFrom {
+  metadataSource: string;
+  metadataTrackId: string;
+  requestedTitle: string;
+  requestedArtist: string;
+  isrc: string | null;
+  audioSource: string;
+  confidence: number;
+  method: "isrc" | "metadata" | "manual";
 }
 
 /** Decoded PCM held by the audio engine. Opaque to the DJ engine except for duration. */

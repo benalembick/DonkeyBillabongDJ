@@ -19,6 +19,15 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
   openMappingFile: (): Promise<string | null> => ipcRenderer.invoke("dbdj:openMappingFile"),
   readTextFile: (p: string): Promise<string> => ipcRenderer.invoke("dbdj:readTextFile", p),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("dbdj:openExternal", url),
+  readTags: (paths: string[]) => ipcRenderer.invoke("dbdj:tags:read", paths),
+  db: {
+    loadTracks: () => ipcRenderer.invoke("dbdj:library:load"),
+    upsertTracks: (rows: unknown[]) => ipcRenderer.invoke("dbdj:library:upsert", rows),
+    removeTracks: (refs: string[]) => ipcRenderer.invoke("dbdj:library:remove", refs),
+    loadMappings: () => ipcRenderer.invoke("dbdj:mappings:load"),
+    putMapping: (row: unknown) => ipcRenderer.invoke("dbdj:mappings:put", row),
+    removeMapping: (key: string) => ipcRenderer.invoke("dbdj:mappings:remove", key),
+  },
   streaming: {
     status: (id: string) => ipcRenderer.invoke("dbdj:stream:status", id),
     configure: (id: string, cfg: unknown) => ipcRenderer.invoke("dbdj:stream:configure", id, cfg),

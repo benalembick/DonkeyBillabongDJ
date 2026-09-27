@@ -2,12 +2,13 @@
  * Music browser: Local Library + streaming providers (Spotify, Apple Music).
  * Streaming tracks are browse-only; when a matching local file exists it can be loaded instead.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TrackInfo } from "../core/engine/types";
-import { buildLocalIndex } from "../library/matching";
 import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
 import { PROVIDER_NAMES, toTrackInfo, type ProviderView } from "../providers/StreamingStore";
-import type { StreamingProviderId, StreamingTrack } from "../providers/streamingTypes";
+import { summarize } from "../app/matching";
+import type { ResolutionResult } from "../matching/SmartTrackResolver";
+import type { StreamingProviderId } from "../providers/streamingTypes";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 
@@ -114,8 +115,10 @@ function LocalView() {
               <th>#</th>
               <th>Title</th>
               <th>Artist</th>
+              <th>Time</th>
               <th>BPM</th>
               <th>Key</th>
+              <th>ISRC</th>
               <th>Source</th>
               <th>Load</th>
             </tr>
@@ -123,7 +126,7 @@ function LocalView() {
           <tbody>
             {state.tracks.length === 0 && (
               <tr>
-                <td colSpan={7} className="empty dropzone">
+                <td colSpan={9} className="empty dropzone">
                   <div className="dropzone-big">⤓ Drop audio files or folders here</div>
                   or use <b>+ Add files…</b> / <b>+ Add folder…</b>. Files are referenced in place, never moved or modified.
                 </td>
@@ -148,8 +151,10 @@ function LocalView() {
                 <td>{i + 1}</td>
                 <td>{t.title}</td>
                 <td>{t.artist}</td>
+                <td>{fmtDuration(t.durationMs)}</td>
                 <td>{t.bpm ?? "—"}</td>
                 <td>{t.key ?? "—"}</td>
+                <td className="mono">{t.isrc ?? (t.tagsRead ? "—" : "…")}</td>
                 <td>
                   <span className="source-badge">LOCAL</span>
                 </td>
@@ -228,8 +233,9 @@ function RestrictionBanner({ id }: { id: StreamingProviderId }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="restriction">
-      🔒 <b>Browse &amp; match only.</b> {PROVIDER_NAMES[id]} tracks can't be loaded onto decks, mixed or recorded — the service's terms
-      don't allow it for third-party apps. Tracks that exist in your <b>local library</b> are matched automatically and can be loaded.{" "}
+      🔎 <b>Smart Match:</b> {PROVIDER_NAMES[id]} is your discovery &amp; playlist source. When you load a track, the app finds the same
+      recording (by ISRC, then title/artist/version/length) in your <b>local library</b> and plays that file. {PROVIDER_NAMES[id]} audio itself is
+      never used — its terms don't allow mixing in third-party apps.{" "}
       <button className="linklike" onClick={() => setOpen((o) => !o)}>{open ? "Hide details" : "Why?"}</button>
       {open && <p className="hint">{PROVIDER_CAPABILITIES[id].restriction}</p>}
     </div>
@@ -439,18 +445,71 @@ function ConnectedView({ id, view }: { id: StreamingProviderId; view: ProviderVi
   );
 }
 
+function useMatchingTick(): void {
+  const { matching } = useApp();
+  const [, force] = useState(0);
+  useEffect(() => {
+    let frame = 0;
+    return matching.on("change", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        force((n) => n + 1);
+      });
+    });
+  }, [matching]);
+}
+
+function MatchBadge({ r }: { r: ResolutionResult | undefined }) {
+  const { matching } = useApp();
+  if (!r) return <span className="match-badge pending">…</span>;
+  const src = r.best ? matching.sourceName(r.best.source).toUpperCase().replace("LOCAL LIBRARY", "LOCAL") : "";
+  switch (r.status) {
+    case "resolved":
+      return <span className="match-badge ok" title={`${r.confidence}% · ${r.method}${r.userConfirmed ? " · your saved match" : ""}`}>✓ {src} {r.confidence}%</span>;
+    case "possible":
+      return <span className="match-badge warn" title="Check before loading">⚠ POSSIBLE {r.confidence}%</span>;
+    case "ambiguous":
+      return <span className="match-badge warn" title="Several versions match">⇆ {r.candidates.length} MATCHES</span>;
+    default:
+      return <span className="match-badge none">✕ NO PLAYABLE SOURCE</span>;
+  }
+}
+
 function StreamingTracks({ view }: { view: ProviderView }) {
-  const lib = useLibraryState();
-  const { platform } = useApp();
-  const index = useMemo(() => buildLocalIndex(lib.tracks), [lib.tracks]);
-  const rows = view.tracks.map((t: StreamingTrack) => ({ t, local: index.find(t.title, t.artist) }));
-  const matched = rows.filter((r) => r.local).length;
+  const { platform, matching } = useApp();
+  const engineState = useEngineState();
+  useMatchingTick();
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [resolving, setResolving] = useState(false);
+  useEffect(() => matching.on("progress", setProgress), [matching]);
+  // Resolve the visible list against the local library as soon as it's shown (instant, all local).
+  useEffect(() => {
+    if (view.tracks.length) void matching.resolveList(view.tracks);
+  }, [view.tracks, matching]);
+
   if (view.loading) return <div className="provider-msg">Loading…</div>;
   if (!view.selected) return <div className="provider-msg">Choose a playlist or search.</div>;
+  const results = view.tracks.map((t) => matching.resultFor(t));
+  const sum = summarize(results);
+  const review = results.filter((r) => r && (r.status === "possible" || r.status === "ambiguous")).length;
+
   return (
     <div className="table-wrap">
-      <div className="hint match-summary">
-        {rows.length} tracks · <b>{matched}</b> found in your local library (loadable)
+      <div className="toolbar match-summary">
+        <b>{view.tracks.length}</b> tracks · <span className="ok-text">{sum.playable} playable</span> · <span className="warn">{review} to review</span> ·{" "}
+        <span className="hint">{sum.unavailable} unavailable</span>
+        {progress && <span className="hint"> · matching {progress.done}/{progress.total}…</span>}
+        <button
+          disabled={resolving}
+          title="Match every track now (local library + connected DJ services) and cache the results before your set"
+          onClick={() => {
+            setResolving(true);
+            void matching.preResolve(view.tracks).finally(() => setResolving(false));
+          }}
+        >
+          {resolving ? "Resolving…" : "⟳ Resolve playlist"}
+        </button>
       </div>
       <table>
         <thead>
@@ -458,48 +517,59 @@ function StreamingTracks({ view }: { view: ProviderView }) {
             <th />
             <th>Title</th>
             <th>Artist</th>
-            <th>Album</th>
             <th>Time</th>
-            <th>Source</th>
-            <th>Local file</th>
+            <th>Metadata</th>
+            <th>Playable source</th>
+            <th />
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ t, local }) => (
-            <tr
-              key={t.id}
-              className={local ? "" : "stream-only"}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(local ?? toTrackInfo(t)));
-                e.dataTransfer.effectAllowed = "copy";
-              }}
-            >
-              <td>{t.artworkUrl ? <img className="art" src={t.artworkUrl} alt="" loading="lazy" /> : null}</td>
-              <td>{t.title}</td>
-              <td>{t.artist}</td>
-              <td>{t.album}</td>
-              <td>{fmtDuration(t.durationMs)}</td>
-              <td>
-                <span className={`source-badge ${t.provider}`}>{t.provider === "spotify" ? "SPOTIFY" : "APPLE MUSIC"}</span>
-              </td>
-              <td className="row-actions">
-                {local ? (
-                  <>
-                    <span className="ok-text" title={local.ref}>✓ </span>
-                    <LoadButtons track={local} />
-                  </>
-                ) : (
-                  <span className="hint" title="Not in your local library. Streaming audio can't be mixed.">🔒 stream only</span>
-                )}
-                {t.externalUrl && (
-                  <button className="tiny" title="Open in the service's own app" onClick={() => platform.openExternal(t.externalUrl!)}>
-                    ↗
+          {view.tracks.map((t, i) => {
+            const r = results[i];
+            return (
+              <tr
+                key={t.id}
+                className={r?.status === "resolved" ? "" : "stream-only"}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(toTrackInfo(t)));
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
+                onDoubleClick={() => matching.inspect(t)}
+              >
+                <td>{t.artworkUrl ? <img className="art" src={t.artworkUrl} alt="" loading="lazy" /> : null}</td>
+                <td>{t.title}</td>
+                <td>{t.artist}</td>
+                <td>{fmtDuration(t.durationMs)}</td>
+                <td>
+                  <span className={`source-badge ${t.provider}`}>{t.provider === "spotify" ? "SPOTIFY" : "APPLE MUSIC"}</span>
+                </td>
+                <td>
+                  <button className="linklike badge-btn" onClick={() => matching.inspect(t)} title="Match details">
+                    <MatchBadge r={r} />
                   </button>
-                )}
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="row-actions">
+                  {engineState.decks.map((d, deck) => (
+                    <button
+                      key={deck}
+                      className={`tiny ${deck === 0 ? "deck-a-btn" : "deck-b-btn"}`}
+                      disabled={d.playing}
+                      title={r?.status === "resolved" ? `Load the matched file into deck ${String.fromCharCode(65 + deck)}` : "Find a playable version first"}
+                      onClick={() => void matching.loadToDeck(deck, toTrackInfo(t), t)}
+                    >
+                      → {String.fromCharCode(65 + deck)}
+                    </button>
+                  ))}
+                  {t.externalUrl && (
+                    <button className="tiny" title="Open in the service's own app" onClick={() => platform.openExternal(t.externalUrl!)}>
+                      ↗
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

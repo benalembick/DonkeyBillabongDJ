@@ -5,37 +5,9 @@ import { CommandBus } from "../src/core/commands";
 import { DJEngine } from "../src/core/engine/DJEngine";
 import type { TrackInfo } from "../src/core/engine/types";
 import { EventLog } from "../src/core/log";
-import { buildLocalIndex, normalizeTitle } from "../src/library/matching";
-import { trackInfoFromFileName } from "../src/library/LibraryStore";
 import { PROVIDER_CAPABILITIES } from "../src/providers/MusicProvider";
 import { toTrackInfo } from "../src/providers/StreamingStore";
 import { FakeAudioEngine } from "./fakes";
-
-describe("local matching", () => {
-  const lib = [
-    trackInfoFromFileName("/m/1.mp3", "Daft Punk - One More Time.mp3"),
-    trackInfoFromFileName("/m/2.mp3", "Fred again.. - Delilah (pull me out of this).mp3"),
-    trackInfoFromFileName("/m/3.mp3", "Other Artist - One More Time.mp3"),
-    trackInfoFromFileName("/m/4.flac", "Strings of Life.flac"),
-  ];
-  const idx = buildLocalIndex(lib);
-
-  it("normalises remaster/feat/punctuation noise", () => {
-    expect(normalizeTitle("One More Time - Remastered 2021")).toBe("one more time");
-    expect(normalizeTitle("Song (feat. Someone)")).toBe("song");
-    expect(normalizeTitle("Beyoncé & Co")).toBe("beyonce and co");
-  });
-
-  it("matches title + artist and prefers the right artist", () => {
-    expect(idx.find("One More Time", "Daft Punk")?.ref).toBe("/m/1.mp3");
-    expect(idx.find("One More Time - Radio Edit", "Daft Punk")).toBeNull(); // different title text stays unmatched
-    expect(idx.find("One More Time", "Nobody")).toBeNull();
-  });
-
-  it("matches files without an artist by title", () => {
-    expect(idx.find("Strings Of Life", "Derrick May")?.ref).toBe("/m/4.flac");
-  });
-});
 
 describe("source policy", () => {
   it("engine refuses streaming tracks with the provider's reason", async () => {

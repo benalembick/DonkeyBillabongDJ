@@ -189,7 +189,8 @@ export function Deck({ deck }: { deck: number }) {
         setDragOver(false);
         const raw = e.dataTransfer.getData("application/x-dbdj-track");
         if (raw) {
-          void engine.loadTrack(deck, JSON.parse(raw));
+          // Streaming tracks are resolved to a playable source (Smart Match); local ones load directly.
+          void app.matching.loadToDeck(deck, JSON.parse(raw));
           return;
         }
         const files = [...e.dataTransfer.files];
@@ -214,6 +215,17 @@ export function Deck({ deck }: { deck: number }) {
           <div className="deck-artist">
             {d.track?.artist || (d.status === "error" ? `⚠ ${d.error}` : "")}
             {d.track && <span className="source-badge">{d.track.source.toUpperCase()}</span>}
+            {d.track?.resolvedFrom && (
+              <span
+                className="via-badge"
+                title={`Metadata: ${d.track.resolvedFrom.metadataSource} — "${d.track.resolvedFrom.requestedTitle}" by ${d.track.resolvedFrom.requestedArtist}
+Audio: ${d.track.resolvedFrom.audioSource}
+Match: ${d.track.resolvedFrom.confidence}% (${d.track.resolvedFrom.method})${d.track.resolvedFrom.isrc ? `
+ISRC ${d.track.resolvedFrom.isrc}` : ""}`}
+              >
+                via {d.track.resolvedFrom.metadataSource === "apple-music" ? "APPLE MUSIC" : d.track.resolvedFrom.metadataSource.toUpperCase()} · {d.track.resolvedFrom.confidence}%
+              </span>
+            )}
           </div>
         </div>
         <button className="load-btn" onClick={() => void pickAndLoad()} disabled={d.playing} title={d.playing ? "Pause the deck to load another track" : "Choose an audio file for this deck"}>

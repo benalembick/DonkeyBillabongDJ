@@ -36,6 +36,7 @@ export function toTrackInfo(t: StreamingTrack): TrackInfo {
     durationMs: t.durationMs,
     artworkUrl: t.artworkUrl,
     externalUrl: t.externalUrl,
+    isrc: t.isrc ?? null,
   };
 }
 

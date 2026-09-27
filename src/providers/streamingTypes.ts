@@ -11,8 +11,12 @@ export interface StreamingTrack {
   id: string;
   title: string;
   artist: string;
+  /** Individual artist credits, in order. */
+  artists?: string[];
   album: string;
   durationMs: number;
+  releaseDate?: string;
+  explicit?: boolean;
   artworkUrl?: string;
   isrc?: string;
   externalUrl?: string;

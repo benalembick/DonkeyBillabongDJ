@@ -6,6 +6,11 @@ import type {
   StreamingTrack,
 } from "../providers/streamingTypes";
 import { createBrowserStreaming } from "../providers/browser/browserStreaming";
+import type { TrackInfo } from "../core/engine/types";
+import type { TagResult } from "../library/tags";
+import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackResolver";
+import type { SourceId } from "../matching/sources";
+import { LocalStorageStore } from "../providers/web";
 
 /**
  * Platform abstraction: desktop (Electron, full filesystem access) vs browser
@@ -41,7 +46,51 @@ export interface DesktopBridge {
   openMappingFile(): Promise<string | null>;
   readTextFile(path: string): Promise<string>;
   openExternal(url: string): Promise<void>;
+  readTags(paths: string[]): Promise<TagResult[]>;
+  db: {
+    loadTracks(): Promise<TrackRow[]>;
+    upsertTracks(rows: TrackRow[]): Promise<void>;
+    removeTracks(refs: string[]): Promise<void>;
+    loadMappings(): Promise<MappingRow[]>;
+    putMapping(row: MappingRow): Promise<void>;
+    removeMapping(key: string): Promise<void>;
+  };
   streaming: StreamingBridge;
+}
+
+/** Row shapes of the desktop SQLite database (electron/library/db.ts). */
+export interface TrackRow {
+  ref: string;
+  title: string;
+  artist: string;
+  album: string;
+  genre: string | null;
+  year: number | null;
+  duration_ms: number | null;
+  isrc: string | null;
+  bpm: number | null;
+  key: string | null;
+  tags_read: number;
+  added_at: number;
+}
+export interface MappingRow {
+  key: string;
+  metadata_source: string;
+  metadata_track_id: string;
+  audio_source: string;
+  audio_track_id: string;
+  isrc: string | null;
+  confidence: number;
+  method: string;
+  user_confirmed: number;
+  resolved_at: number;
+}
+
+/** Persistent local library (desktop only; browser file references don't survive a reload). */
+export interface LibraryPersistence {
+  load(): Promise<TrackInfo[]>;
+  save(tracks: TrackInfo[]): Promise<void>;
+  remove(refs: string[]): Promise<void>;
 }
 
 declare global {
@@ -68,6 +117,88 @@ export interface Platform {
   openExternal(url: string): void;
   /** Null in browser mode: streaming accounts need the desktop app. */
   streaming: StreamingBridge | null;
+  /** Read embedded tags (ISRC, duration, BPM, key…) for local refs. */
+  readTags(refs: string[]): Promise<TagResult[]>;
+  library: LibraryPersistence | null;
+  mappingStorage: MappingStorage;
+}
+
+function rowToTrack(r: TrackRow): TrackInfo {
+  return {
+    ref: r.ref,
+    title: r.title,
+    artist: r.artist,
+    album: r.album,
+    source: "local",
+    bpm: r.bpm,
+    key: r.key,
+    durationMs: r.duration_ms ?? undefined,
+    isrc: r.isrc,
+    genre: r.genre ?? undefined,
+    year: r.year ?? undefined,
+    tagsRead: !!r.tags_read,
+  };
+}
+
+function trackToRow(t: TrackInfo): TrackRow {
+  return {
+    ref: t.ref,
+    title: t.title,
+    artist: t.artist,
+    album: t.album,
+    genre: t.genre ?? null,
+    year: t.year ?? null,
+    duration_ms: t.durationMs ?? null,
+    isrc: t.isrc ?? null,
+    bpm: t.bpm,
+    key: t.key,
+    tags_read: t.tagsRead ? 1 : 0,
+    added_at: Date.now(),
+  };
+}
+
+const rowToMapping = (r: MappingRow): ResolutionMapping => ({
+  key: r.key,
+  metadataSource: r.metadata_source,
+  metadataTrackId: r.metadata_track_id,
+  audioSource: r.audio_source as SourceId,
+  audioTrackId: r.audio_track_id,
+  isrc: r.isrc,
+  confidence: r.confidence,
+  method: r.method as ResolutionMapping["method"],
+  userConfirmed: !!r.user_confirmed,
+  resolvedAt: r.resolved_at,
+});
+
+const mappingToRow = (m: ResolutionMapping): MappingRow => ({
+  key: m.key,
+  metadata_source: m.metadataSource,
+  metadata_track_id: m.metadataTrackId,
+  audio_source: m.audioSource,
+  audio_track_id: m.audioTrackId,
+  isrc: m.isrc,
+  confidence: m.confidence,
+  method: m.method,
+  user_confirmed: m.userConfirmed ? 1 : 0,
+  resolved_at: m.resolvedAt,
+});
+
+/** Browser: mappings in localStorage (desktop uses SQLite). */
+class LocalStorageMappings implements MappingStorage {
+  private store = new LocalStorageStore("dbdj.matching.");
+  async loadAll(): Promise<ResolutionMapping[]> {
+    return Object.values((await this.store.get<Record<string, ResolutionMapping>>("mappings")) ?? {});
+  }
+  async put(m: ResolutionMapping): Promise<void> {
+    const all = (await this.store.get<Record<string, ResolutionMapping>>("mappings")) ?? {};
+    all[m.key] = m;
+    await this.store.set("mappings", all);
+  }
+  async remove(key: string): Promise<void> {
+    const all = (await this.store.get<Record<string, ResolutionMapping>>("mappings")) ?? {};
+    delete all[key];
+    await this.store.set("mappings", all);
+  }
 }
 
 function basename(p: string): string {
@@ -109,6 +240,25 @@ class DesktopPlatform implements Platform {
   get streaming(): StreamingBridge {
     return this.bridge.streaming;
   }
+  readTags(refs: string[]): Promise<TagResult[]> {
+    return this.bridge.readTags(refs);
+  }
+  get library(): LibraryPersistence {
+    const db = this.bridge.db;
+    return {
+      load: async () => (await db.loadTracks()).map(rowToTrack),
+      save: (tracks) => db.upsertTracks(tracks.filter((t) => t.source === "local").map(trackToRow)),
+      remove: (refs) => db.removeTracks(refs),
+    };
+  }
+  get mappingStorage(): MappingStorage {
+    const db = this.bridge.db;
+    return {
+      loadAll: async () => (await db.loadMappings()).map(rowToMapping),
+      put: (m) => db.putMapping(mappingToRow(m)),
+      remove: (key) => db.removeMapping(key),
+    };
+  }
   async pickTextFile(): Promise<{ name: string; text: string } | null> {
     const p = await this.bridge.openMappingFile();
     if (!p) return null;
@@ -138,6 +288,40 @@ class BrowserPlatform implements Platform {
   }
 
   readonly streaming: StreamingBridge = createBrowserStreaming();
+  readonly library = null;
+  readonly mappingStorage: MappingStorage = new LocalStorageMappings();
+
+  async readTags(refs: string[]): Promise<TagResult[]> {
+    const { parseBlob } = await import("music-metadata");
+    const out: TagResult[] = [];
+    for (const ref of refs) {
+      const f = this.files.get(ref);
+      if (!f) {
+        out.push({ ref, ok: false, error: "file no longer available" });
+        continue;
+      }
+      try {
+        const m = await parseBlob(f, { skipCovers: true, duration: false });
+        const c = m.common;
+        out.push({
+          ref,
+          ok: true,
+          title: c.title,
+          artist: c.artists?.length ? c.artists.join(", ") : c.artist,
+          album: c.album,
+          isrc: c.isrc?.[0],
+          durationMs: m.format.duration ? Math.round(m.format.duration * 1000) : undefined,
+          bpm: c.bpm,
+          key: c.key,
+          genre: c.genre?.[0],
+          year: c.year,
+        });
+      } catch (err) {
+        out.push({ ref, ok: false, error: String(err) });
+      }
+    }
+    return out;
+  }
 
   openExternal(url: string): void {
     window.open(url, "_blank", "noopener");

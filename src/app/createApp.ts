@@ -19,6 +19,9 @@ import { LibraryStore } from "../library/LibraryStore";
 import { createPlatform, type AudioFileRef, type Platform } from "../platform";
 import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
 import { StreamingStore } from "../providers/StreamingStore";
+import type { TrackInfo } from "../core/engine/types";
+import { applyTags } from "../library/tags";
+import { MatchingService } from "./matching";
 
 export interface App {
   bus: CommandBus;
@@ -31,6 +34,7 @@ export interface App {
   keyboard: KeyboardShortcuts;
   platform: Platform;
   streaming: StreamingStore;
+  matching: MatchingService;
   /** Add files to the library and optionally load the first one into a deck. */
   addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number>;
   saveAudioConfig(c: AudioConfig): void;
@@ -82,6 +86,58 @@ export function createApp(): App {
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
+  const matching = new MatchingService({ engine, log, library, storage: platform.mappingStorage });
+
+  /** Read embedded tags (ISRC, duration, BPM, key) in the background and persist them. */
+  let tagQueue: string[] = [];
+  let tagging = false;
+  const enrichTags = async (refs: string[]) => {
+    tagQueue.push(...refs);
+    if (tagging) return;
+    tagging = true;
+    let done = 0;
+    let withIsrc = 0;
+    try {
+      while (tagQueue.length) {
+        const batch = tagQueue.splice(0, 25);
+        let results;
+        try {
+          results = await platform.readTags(batch);
+        } catch (err) {
+          log.warn("library", `Couldn't read tags: ${String(err)}`);
+          continue;
+        }
+        const updated: TrackInfo[] = [];
+        for (const r of results) {
+          const t = library.getByRef(r.ref);
+          if (!t) continue;
+          const u = applyTags(t, r);
+          if (u.isrc) withIsrc++;
+          updated.push(u);
+        }
+        library.patchTracks(updated);
+        await platform.library?.save(updated).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+        done += updated.length;
+      }
+    } finally {
+      tagging = false;
+    }
+    if (done) log.info("library", `Read tags for ${done} track(s) (${withIsrc} with ISRC)`);
+  };
+
+  // Restore the persisted library (desktop), then fill in any tags not read yet.
+  if (platform.library) {
+    void platform.library
+      .load()
+      .then((tracks) => {
+        if (tracks.length === 0) return;
+        library.hydrate(tracks);
+        log.info("library", `Loaded ${tracks.length} track(s) from your library database`);
+        const pending = tracks.filter((t) => !t.tagsRead).map((t) => t.ref);
+        if (pending.length) void enrichTags(pending);
+      })
+      .catch((err) => log.warn("library", `Library database unavailable: ${String(err)}`));
+  }
 
   bus.on("failed", ({ cmd, error }) => log.error("engine", `Action ${cmd.action} failed: ${String(error)}`));
   audio.on((e) => {
@@ -115,13 +171,19 @@ export function createApp(): App {
     keyboard,
     platform,
     streaming,
+    matching,
     addFiles: async (refs, loadIntoDeck) => {
-      const n = library.addFiles(refs);
+      const added = library.addFiles(refs);
       if (refs.length === 0) {
         log.warn("library", "No supported audio files found (MP3, WAV, M4A/AAC, FLAC, OGG, AIFF).");
         return 0;
       }
-      if (n > 0) log.info("library", `Added ${n} track(s) to the library`);
+      const n = added.length;
+      if (n > 0) {
+        log.info("library", `Added ${n} track(s) to the library`);
+        await platform.library?.save(added).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+        void enrichTags(added.map((t) => t.ref));
+      }
       if (loadIntoDeck !== undefined) {
         const t = library.getByRef(refs[0].ref);
         if (t) await engine.loadTrack(loadIntoDeck, t);

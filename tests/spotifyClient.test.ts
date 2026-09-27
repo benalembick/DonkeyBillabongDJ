@@ -65,7 +65,7 @@ describe("SpotifyClient", () => {
     expect(pls.map((p) => [p.name, p.readable])).toEqual([["Liked Songs", true], ["Own", true], ["Theirs", false]]);
 
     const tracks = await client.playlistTracks("p1");
-    expect(tracks).toEqual([{ provider: "spotify", id: "t1", title: "One More Time", artist: "Daft Punk", album: "Discovery", durationMs: 320000, artworkUrl: "small", isrc: undefined, externalUrl: "https://open.spotify.com/track/t1" }]);
+    expect(tracks).toEqual([{ provider: "spotify", id: "t1", title: "One More Time", artist: "Daft Punk", artists: ["Daft Punk"], album: "Discovery", durationMs: 320000, artworkUrl: "small", isrc: undefined, externalUrl: "https://open.spotify.com/track/t1" }]);
     expect(calls.filter((c) => c.includes("/api/token"))).toHaveLength(2); // exchange + refresh after 401
   });
 

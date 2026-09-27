@@ -8,6 +8,7 @@ import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
 import { useFrameStore, useTick } from "./hooks";
 import { LibraryPanel } from "./LibraryPanel";
+import { MatchDialogHost } from "./MatchDialog";
 import { Mixer } from "./Mixer";
 import { Diagnostics, Settings } from "./SystemPanels";
 
@@ -76,7 +77,7 @@ function Toasts() {
   useEffect(
     () =>
       log.on("entry", (e) => {
-        const notable = e.level === "warn" || e.level === "error" || (e.source === "library" && e.message.startsWith("Added")) || e.source === "streaming";
+        const notable = e.level === "warn" || e.level === "error" || (e.source === "library" && e.message.startsWith("Added")) || e.source === "streaming" || (e.source === "matching" && !e.message.startsWith("Resolving")) || (e.source === "library" && e.message.startsWith("Read tags"));
         if (!notable || e.source === "controllers") return;
         setItems((xs) => [...xs.slice(-3), e]);
         setTimeout(() => setItems((xs) => xs.filter((x) => x.id !== e.id)), e.level === "info" ? 3500 : 7000);
@@ -164,6 +165,7 @@ function Shell() {
         </div>
       </section>
       <Toasts />
+      <MatchDialogHost />
     </div>
   );
 }

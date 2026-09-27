@@ -210,6 +210,8 @@ export function mapAppleSong(s: Json): StreamingTrack | null {
     artist: a.artistName ?? "",
     album: a.albumName ?? "",
     durationMs: a.durationInMillis ?? 0,
+    releaseDate: a.releaseDate,
+    explicit: a.contentRating === "explicit",
     artworkUrl: artwork(a.artwork),
     isrc: a.isrc,
     externalUrl: a.url,

@@ -8,11 +8,19 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { registerStreamingIpc } from "./streaming/ipc";
+import * as libraryDb from "./library/db";
+import { readTags } from "./library/tags";
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".flac", ".ogg", ".opus", ".aif", ".aiff"]);
 const ALLOWED_PERMISSIONS = new Set(["midi", "midiSysex", "media", "speaker-selection", "clipboard-sanitized-write"]);
+
+// Smoke tests run in a throwaway profile so they never touch the user's library, settings or credentials.
+if (process.env.DBDJ_SMOKE_TEST) {
+  app.setPath("userData", process.env.DBDJ_SMOKE_USERDATA ?? path.join(os.tmpdir(), `dbdj-smoke-${process.pid}`));
+}
 
 // A DJ app must keep processing controller input and audio when not focused / minimised.
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
@@ -90,6 +98,15 @@ function registerIpc(): void {
     }
     return out;
   });
+
+  // Local library database + tag reading (all local; nothing is uploaded anywhere).
+  ipcMain.handle("dbdj:library:load", () => libraryDb.loadTracks());
+  ipcMain.handle("dbdj:library:upsert", (_e, rows: libraryDb.TrackRow[]) => libraryDb.upsertTracks(Array.isArray(rows) ? rows : []));
+  ipcMain.handle("dbdj:library:remove", (_e, refs: string[]) => libraryDb.removeTracks(Array.isArray(refs) ? refs.map(String) : []));
+  ipcMain.handle("dbdj:mappings:load", () => libraryDb.loadMappings());
+  ipcMain.handle("dbdj:mappings:put", (_e, row: libraryDb.MappingRow) => libraryDb.putMapping(row));
+  ipcMain.handle("dbdj:mappings:remove", (_e, key: string) => libraryDb.removeMapping(String(key)));
+  ipcMain.handle("dbdj:tags:read", (_e, paths: string[]) => readTags((Array.isArray(paths) ? paths : []).map(String).filter(isAudioFile)));
 
   ipcMain.handle("dbdj:openExternal", async (_e, url: string) => {
     const u = new URL(String(url));
@@ -170,6 +187,24 @@ function runSmokeTest(win: BrowserWindow): void {
             checks.deckBAfterDropLoad = a.engine.getState().decks[1].status;
             checks.libraryCount = a.library.getState().tracks.length;
           }
+          // Smart Match demo: a Spotify track (metadata + ISRC only) resolved to a tagged local file and loaded.
+          const matchFile = ${JSON.stringify(process.env.DBDJ_SMOKE_MATCH_FILE ?? "")};
+          if (matchFile) {
+            await a.addFiles([{ ref: matchFile, name: matchFile.split(/[\/]/).pop() }]);
+            for (let i = 0; i < 50 && !a.library.getByRef(matchFile)?.tagsRead; i++) await sleep(100);
+            await sleep(500); // local index refresh is debounced
+            const sp = { provider: "spotify", id: "smoke-sp-1", title: "Get Lucky (feat. Pharrell Williams)", artist: "Daft Punk, Pharrell Williams",
+              artists: ["Daft Punk", "Pharrell Williams"], album: "Random Access Memories", durationMs: 2000, isrc: "USQX91300809" };
+            await a.matching.loadToDeck(1, { ref: "spotify:smoke-sp-1", title: sp.title, artist: sp.artist, album: sp.album, source: "spotify", bpm: null, key: null, durationMs: 2000, isrc: sp.isrc }, sp);
+            const d = a.engine.getState().decks[1];
+            const lt = a.library.getByRef(matchFile);
+            checks.smartMatch = { deckStatus: d.status, deckTitle: d.track?.title, audioSource: d.track?.source, resolvedFrom: d.track?.resolvedFrom,
+              localTags: { title: lt?.title, artist: lt?.artist, isrc: lt?.isrc, durationMs: lt?.durationMs } };
+          }
+          if (${JSON.stringify(!!process.env.DBDJ_SMOKE_INSPECT)} && a.matching.resolver.recent[0]) a.matching.emit("prompt", { deck: 1, result: a.matching.resolver.recent[0] });
+          const persisted = ${JSON.stringify(process.env.DBDJ_SMOKE_EXPECT_LIBRARY ?? "")};
+          if (persisted) checks.libraryAfterRestart = a.library.getState().tracks.map((t) => ({ title: t.title, isrc: t.isrc }));
+
           // Streaming IPC round-trips (no network sign-in).
           const bridge = window.dbdjDesktop;
           if (bridge) {
