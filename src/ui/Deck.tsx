@@ -174,6 +174,17 @@ const STEM_STATUS: Record<string, string> = {
   unavailable: "STEMS UNAVAILABLE",
 };
 
+/** Short, actionable reason shown in the strip (full text in the tooltip). */
+function unavailableLabel(msg?: string): string {
+  const m = msg ?? "";
+  if (/install the separation model/i.test(m)) return "STEMS: INSTALL MODEL IN SETTINGS";
+  if (/switched off/i.test(m)) return "STEMS OFF IN SETTINGS";
+  if (/desktop app/i.test(m)) return "STEMS: DESKTOP APP ONLY";
+  if (/Apple Silicon|Windows and macOS/i.test(m)) return "STEMS NOT SUPPORTED HERE";
+  if (/source/i.test(m)) return "NO STEMS FOR THIS SOURCE";
+  return "STEMS UNAVAILABLE";
+}
+
 /**
  * STEMS strip: on/off, then one control per stem (click = mute/unmute,
  * Shift+click or right-click = isolate, slider = stem volume). Separated audio
@@ -188,7 +199,7 @@ function StemStrip({ deck }: { deck: number }) {
   const unavailable = st.status === "unavailable";
   const pct = Math.round(st.progress * 100);
   const label =
-    st.status === "analysing" ? `ANALYSING STEMS… ${pct}%` : st.status === "loading" ? `LOADING STEMS… ${pct}%` : STEM_STATUS[st.status];
+    st.status === "analysing" ? `ANALYSING STEMS… ${pct}%` : st.status === "loading" ? `LOADING STEMS… ${pct}%` : unavailable ? unavailableLabel(st.message) : STEM_STATUS[st.status];
   return (
     <div className={`stem-strip ${st.enabled ? "on" : ""} ${unavailable ? "disabled" : ""}`}>
       <button
