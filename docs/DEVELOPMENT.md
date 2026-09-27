@@ -42,7 +42,7 @@ The browser version's **⬇ Get the desktop app** button links to the *latest Gi
 1. The repo (or at least its releases) must be **public**, otherwise visitors can't download.
 2. Bump `version` in package.json, commit, then tag and push:
    ```bash
-   git tag v0.1.1 && git push origin main v0.1.1
+   git tag v0.1.2 && git push origin main v0.1.2
    ```
 3. `.github/workflows/release.yml` builds on Windows and macOS runners, runs the tests, and builds each installer, then a final job publishes whatever built to a GitHub Release marked "latest", so one platform failing does not block the other.
 4. Optional signing: add the secrets listed in the workflow to remove the SmartScreen and Gatekeeper warnings.
