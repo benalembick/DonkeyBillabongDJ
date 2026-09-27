@@ -11,6 +11,9 @@ name: Release desktop app
 on:
   push:
     tags: ["v*"]
+    # Build-only check (no release) when the release pipeline itself changes.
+    branches: [main]
+    paths: [".github/workflows/release.yml", "package.json"]
   workflow_dispatch:
 
 permissions:
@@ -39,7 +42,14 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Build installer
-        run: npx electron-builder ${{ matrix.target }} --publish never
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npx electron-builder ${{ matrix.target }} --publish never 2>&1 | tee build.log; then
+            # Surface the failure as public annotations (job logs need repo access to read).
+            grep -E "⨯|rror|failed|Exception" build.log | tail -25 | while IFS= read -r line; do echo "::error title=electron-builder::${line}"; done
+            exit 1
+          fi
         env:
           # Optional code signing — add these repository secrets to remove OS warnings:
           #   Windows: CSC_LINK (base64 .pfx) + CSC_KEY_PASSWORD
@@ -65,8 +75,8 @@ jobs:
 
   release:
     needs: build
-    # Publish whatever built successfully, even if one platform failed.
-    if: ${{ !cancelled() }}
+    # Publish whatever built successfully, even if one platform failed (tags only).
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
