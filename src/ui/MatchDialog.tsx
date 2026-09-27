@@ -14,7 +14,8 @@ const fmt = (ms: number | null | undefined) => {
   const s = ms / 1000;
   return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
 };
-const srcName = (s: string) => (s === "spotify" ? "Spotify" : s === "apple-music" ? "Apple Music" : s === "local" ? "Local Library" : s);
+const srcName = (s: string) =>
+  ({ spotify: "Spotify", "apple-music": "Apple Music", local: "Local Library", audius: "Audius" } as Record<string, string>)[s] ?? s;
 
 const STATUS_TEXT: Record<ResolutionResult["status"], string> = {
   resolved: "✓ Match found",
@@ -150,7 +151,12 @@ function MatchDialog({ prompt, onClose, onUpdate }: { prompt: MatchPrompt; onClo
                         ))}
                       </ul>
                     </td>
-                    <td className="row-actions">{deckButtons(c)}</td>
+                    <td className="row-actions">
+                      <button className="tiny" title="Save as the match for this track without loading" onClick={() => void pick(c, null)}>
+                        Use this version
+                      </button>
+                      {deckButtons(c)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -204,7 +210,7 @@ function MatchDialog({ prompt, onClose, onUpdate }: { prompt: MatchPrompt; onClo
           )}
           <button onClick={() => setShowDiag((x) => !x)}>{showDiag ? "Hide" : "Show"} diagnostics</button>
           <span className="hint">
-            Spotify and Apple Music audio is never used; only files you have (or licensed DJ services) can be loaded.
+            Spotify and Apple Music audio is never used; only your own files or permitted sources (Audius) can be loaded.
           </span>
         </div>
         {showDiag && <MatchDiagnostics result={result} />}

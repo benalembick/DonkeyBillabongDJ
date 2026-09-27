@@ -272,8 +272,9 @@ export class AudiusClient extends Emitter<{ stats: AudiusStats }> {
         this.stats.requests++;
         const headers: Record<string, string> = received > 0 ? { Range: `bytes=${received}-` } : {};
         const res = await this.fetchImpl(url, { headers, signal });
-        if (res.status === 429 || res.status >= 500) throw new Error(`Audius stream error ${res.status}`);
-        if (!res.ok) throw new Error(res.status === 403 || res.status === 404 ? "This track is not available for streaming via the API." : `Audius stream error ${res.status}`);
+        if (res.status === 429 || res.status === 408 || res.status >= 500) throw new Error(`Audius stream error ${res.status}`);
+        // Other client errors (bad id, removed, gated, opted out) won't fix themselves: fail at once.
+        if (!res.ok) throw new PermanentError(res.status === 400 || res.status === 403 || res.status === 404 ? "This track is not available for streaming via the Audius API." : `Audius stream error ${res.status}`);
         if (received > 0 && res.status !== 206) {
           // Server ignored the Range header: start again from scratch.
           chunks.length = 0;
@@ -301,7 +302,7 @@ export class AudiusClient extends Emitter<{ stats: AudiusStats }> {
       } catch (err) {
         if (signal?.aborted) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        if (/not available/.test(message) || retries >= 5) {
+        if (err instanceof PermanentError || retries >= 5) {
           this.stats.errors++;
           this.stats.lastError = message;
           this.emit("stats", this.stats);
@@ -324,6 +325,8 @@ export class AudiusClient extends Emitter<{ stats: AudiusStats }> {
     return out.buffer;
   }
 }
+
+class PermanentError extends Error {}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

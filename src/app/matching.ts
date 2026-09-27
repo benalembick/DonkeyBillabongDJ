@@ -180,7 +180,7 @@ export class MatchingService extends Emitter<{ change: void; prompt: MatchPrompt
   }
 
   /** "Resolve playlist": full resolution incl. connected providers; confident matches are cached. */
-  async preResolve(tracks: StreamingTrack[]): Promise<{ playable: number; possible: number; unavailable: number }> {
+  async preResolve(tracks: StreamingTrack[]): Promise<ReturnType<typeof summarize>> {
     const token = ++this.listToken;
     let done = 0;
     for (const t of tracks) {
@@ -194,7 +194,8 @@ export class MatchingService extends Emitter<{ change: void; prompt: MatchPrompt
     }
     this.emit("progress", null);
     const s = summarize(tracks.map((t) => this.results.get(streamingKey(t))));
-    this.log.info("matching", `Resolved ${tracks.length} tracks: ${s.playable} playable, ${s.possible} to review, ${s.unavailable} unavailable`);
+    const parts = Object.entries(s.bySource).map(([src, n]) => `${n} ${this.sourceName(src)}`).join(", ");
+    this.log.info("matching", `Resolved ${tracks.length} tracks: ${s.playable} playable${parts ? ` (${parts})` : ""}, ${s.possible} to review, ${s.unavailable} unavailable`);
     return s;
   }
 
@@ -263,16 +264,30 @@ export class MatchingService extends Emitter<{ change: void; prompt: MatchPrompt
   }
 }
 
-export function summarize(results: (ResolutionResult | undefined)[]): { playable: number; possible: number; unavailable: number } {
+export function playableSourceOf(r: ResolutionResult | undefined): string | null {
+  if (!r || r.status !== "resolved") return null;
+  return r.best?.source ?? r.cachedMapping?.audioSource ?? null;
+}
+
+export function summarize(results: (ResolutionResult | undefined)[]): {
+  playable: number;
+  possible: number;
+  unavailable: number;
+  bySource: Record<string, number>;
+} {
   let playable = 0;
   let possible = 0;
   let unavailable = 0;
+  const bySource: Record<string, number> = {};
   for (const r of results) {
     if (!r || r.status === "unavailable") unavailable++;
-    else if (r.status === "resolved") playable++;
-    else possible++;
+    else if (r.status === "resolved") {
+      playable++;
+      const s = playableSourceOf(r) ?? "other";
+      bySource[s] = (bySource[s] ?? 0) + 1;
+    } else possible++;
   }
-  return { playable, possible, unavailable };
+  return { playable, possible, unavailable, bySource };
 }
 
 function loadSettings(): StoredSettings {

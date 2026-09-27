@@ -8,14 +8,14 @@ Spotify / Apple Music track (official Web API: metadata + ISRC)
   → SmartTrackResolver
        1. user-confirmed mapping?     (always wins while the target exists)
        2. cached automatic mapping?   (re-validated: target must still exist)
-       3. sources in priority order:  Local Library → Beatport → Beatsource → SoundCloud → …
+       3. sources in priority order:  Local Library → Audius → Beatport → Beatsource → SoundCloud → …
   → score candidates (transparent reasons)
   → resolved / possible / ambiguous / unavailable
   → playable TrackInfo { audio: local file, resolvedFrom: { metadata: spotify, … } }
   → DJ engine
 ```
 
-Status (27 Sep 2026): Phases 1–3 are implemented, plus caching and manual overrides from Phase 6. The provider adapter architecture from Phase 4 is in place. Beatport, Beatsource and SoundCloud are **unavailable** because they require partner access; see §8.
+Status (27 Sep 2026): Phases 1–3 are implemented, plus caching and manual overrides from Phase 6. The provider adapter architecture from Phase 4 is in place. **Audius is the first live playable provider** (see [AUDIUS-INTEGRATION.md](AUDIUS-INTEGRATION.md)). Beatport, Beatsource and SoundCloud are **unavailable** because they require partner access; see §8.
 
 ## 1. Architecture
 
@@ -150,6 +150,7 @@ Every loaded deck track carries `resolvedFrom { metadataSource, metadataTrackId,
 | **Local Library** | ✅ | ✅ everything | Implemented |
 | **Spotify** | ✅ official Web API (dev mode: 5 users, Premium, search limit 10) | ❌ Developer Terms and policy prohibit mixing, altering or capturing | Metadata source only |
 | **Apple Music** | ✅ Apple Music API (needs a MusicKit key) | ❌ DRM; DJ use is partner-only ("DJ with Apple Music") | Metadata source only |
+| **Audius** | ✅ public REST API, no key, often no ISRC | ✅ Open Music License (recording disabled) | **Implemented**: browse, deck playback, Smart Match target |
 | **Beatport** | ⛔ API v4 is partner-gated, with no public sign-up | ⛔ Beatport Streaming only in partner DJ apps | Adapter present, reports *unavailable* |
 | **Beatsource** | ⛔ No public API | ⛔ Beatsource LINK only in partner DJ apps (rekordbox, Serato, djay, VirtualDJ…) | Adapter present, reports *unavailable* |
 | **SoundCloud** | ⚠ API keys by application only (OAuth 2.1 + PKCE) | ⛔ DJ use (Go+ / DJ plans) only in partner apps | Adapter present, reports *unavailable* |
@@ -172,6 +173,6 @@ No provider functionality is faked. Unavailable adapters return no candidates, a
 
 ## Next steps
 
-- **Phase 5:** implement a real `PlayableSource` for any provider that grants access, and test that its capabilities are honoured by the engine.
+- **Phase 5:** Audius done (`src/providers/audius/AudiusSource.ts`). Next, any partner provider that grants access.
 - **Universal Playlists:** a playlist of `TrackIdentity` references, each resolved at load time through the same resolver. The schema and resolver already support it.
 - A match-review queue for "possible" results across a whole playlist.

@@ -34,6 +34,8 @@ export interface ResolutionResult {
   userConfirmed: boolean;
   resolvedAt: number;
   sourceNotes: { source: SourceId; name: string; message: string }[];
+  /** Saved mapping to a remote source, shown instantly in lists; validated when actually loaded. */
+  cachedMapping?: ResolutionMapping;
 }
 
 /** Persisted mapping metadata-source track → playable-source track. */
@@ -208,7 +210,23 @@ export class SmartTrackResolver extends Emitter<{ resolved: ResolutionResult; ma
     const m = this.mappings.get(identityKey(req));
     if (!m) return null;
     const src = this.sources.find((s) => s.id === m.audioSource);
-    if (!src || src.remote) return null;
+    if (!src) return null;
+    if (src.remote) {
+      // Can't validate a remote target synchronously: report the saved mapping; resolve() re-checks it on load.
+      if (this.disabled.has(src.id) || !src.availability().available) return null;
+      const base = this.finish(req, [], []);
+      return {
+        ...base,
+        status: "resolved",
+        playable: true,
+        confidence: m.confidence,
+        band: bandFor(m.confidence),
+        method: m.userConfirmed ? "manual" : m.method,
+        fromCache: true,
+        userConfirmed: m.userConfirmed,
+        cachedMapping: m,
+      };
+    }
     const exists = src.exists(m.audioTrackId);
     const c = exists === true ? (src.candidateFor(m.audioTrackId) as SourceCandidate | null) : null;
     return c ? this.mappedResult(req, m, c) : null;

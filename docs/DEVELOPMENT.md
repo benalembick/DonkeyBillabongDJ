@@ -18,6 +18,9 @@ npm install
 | `npm run dev:web` | Browser mode at http://localhost:5173. Use Chrome or Edge (Web MIDI). Folder scanning is limited to the browser's picker, and output routing depends on the browser |
 | `npm run build` then `npm start` | Production renderer in Electron |
 | `npm run smoke` | Builds, launches Electron headless-ish, prints a JSON health report (audio, MIDI, errors) and exits. Add `DBDJ_SMOKE_TRACK=/path/file.wav` to also check real playback |
+| `DBDJ_SMOKE_AUDIUS="tech house" npm run smoke` | Live Audius end-to-end: search → controller LOAD A → play, tempo, jog, EQ, filter, crossfader, hot cue, seek via simulated DDJ-SB MIDI (plays audio briefly) |
+| `DBDJ_SMOKE_SPOTIFY_AUDIUS=1 npm run smoke` | Live Smart Match: Spotify-shaped metadata → Audius (positive + a rejected cover case) |
+| `DBDJ_SMOKE_ISOLATION=/path/60s.wav npm run smoke` | Local deck keeps playing while an Audius load fails on the other deck |
 | `npm test` | Unit tests (Vitest): engine logic, mixer and jog maths, mapping runtime, DDJ-SB mapping integrity, Mixxx importer |
 | `MIXXX_MAPPING=/path/Pioneer-DDJ-SB.midi.xml npm test` | Also runs the importer against a real Mixxx mapping |
 | `npm run typecheck` | TypeScript |

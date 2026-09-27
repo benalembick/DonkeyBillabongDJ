@@ -156,3 +156,27 @@ describe("Audius in Smart Matching (conservative)", () => {
     expect(new AudiusSource(client).availability().available).toBe(false);
   });
 });
+
+describe("playlist resolution summary", () => {
+  it("counts playable tracks per audio source and keeps remote mappings visible", async () => {
+    const { summarize, playableSourceOf } = await import("../src/app/matching");
+    const f = vi.fn(async () => json({ data: [raw({ title: "Example Song", duration: 222 })] }));
+    const client = new AudiusClient({ fetchImpl: f as unknown as typeof fetch });
+    client.stats.apiStatus = "ok";
+    const rows = new Map<string, import("../src/matching/SmartTrackResolver").ResolutionMapping>();
+    const storage = { loadAll: async () => [...rows.values()], put: async (m: never) => void rows.set((m as { key: string }).key, m), remove: async (k: string) => void rows.delete(k) };
+    const r = new SmartTrackResolver({ sources: [new LocalLibrarySource([]), new AudiusSource(client)], storage });
+    const req = buildIdentity({ source: "spotify", sourceTrackId: "s1", title: "Example Song", artists: ["Example Artist"], durationMs: 222_000 });
+    const full = await r.resolve(req);
+    expect(full.best?.source).toBe("audius");
+    expect(rows.size).toBe(1); // confident Audius match cached (ids only, never audio)
+
+    const r2 = new SmartTrackResolver({ sources: [new LocalLibrarySource([]), new AudiusSource(client)], storage });
+    await r2.loadMappings();
+    const quick = r2.resolveLocal(req); // instant list view, no network
+    expect(quick.status).toBe("resolved");
+    expect(playableSourceOf(quick)).toBe("audius");
+    const none = r2.resolveLocal(buildIdentity({ source: "spotify", sourceTrackId: "s2", title: "Nothing", artists: ["Nobody"] }));
+    expect(summarize([quick, none, undefined])).toMatchObject({ playable: 1, unavailable: 2, bySource: { audius: 1 } });
+  });
+});

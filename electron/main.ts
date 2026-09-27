@@ -242,6 +242,61 @@ function runSmokeTest(win: BrowserWindow): void {
             audius.apiStats = { ...a.audius.client.stats, lastStream: undefined };
           }
 
+          // Isolation (DBDJ_SMOKE_ISOLATION=/path/local.wav): local track plays on deck B while an Audius load fails on deck A.
+          let isolation = null;
+          const isoFile = ${JSON.stringify(process.env.DBDJ_SMOKE_ISOLATION ?? "")};
+          if (isoFile) {
+            await a.engine.loadTrack(1, { ref: isoFile, title: "local", artist: "", album: "", source: "local", bpm: null, key: null });
+            a.bus.send("mixer.crossfader", 0.5);
+            a.bus.send("deck2.play");
+            await sleep(300);
+            const p0 = a.engine.getPosition(1);
+            const tl = performance.now();
+            await a.engine.loadTrack(0, { ref: "audius:doesNotExist123", title: "Broken Audius track", artist: "", album: "", source: "audius", bpm: null, key: null });
+            const loadFailMs = Math.round(performance.now() - tl);
+            let peak = 0;
+            for (let i = 0; i < 10; i++) { await sleep(50); peak = Math.max(peak, a.audio.getLevels().channels[1]); }
+            const dA = a.engine.getState().decks[0];
+            const dB = a.engine.getState().decks[1];
+            isolation = { deckA: { status: dA.status, error: dA.error, failedAfterMs: loadFailMs },
+              deckB: { playing: dB.playing, advancedSeconds: +(a.engine.getPosition(1) - p0).toFixed(2), peak: +peak.toFixed(3) } };
+            a.bus.send("deck2.play");
+          }
+
+          // Milestone 2 (DBDJ_SMOKE_SPOTIFY_AUDIUS=1): Spotify-shaped metadata with no local file → Audius.
+          let spotifyAudius = null;
+          if (${JSON.stringify(!!process.env.DBDJ_SMOKE_SPOTIFY_AUDIUS)}) {
+            spotifyAudius = {};
+            let prompt = null;
+            const offPrompt = a.matching.on("prompt", (p) => { prompt = p; });
+            const summarize = (r) => r && { status: r.status, confidence: r.confidence, source: r.best?.source,
+              candidates: r.candidates.slice(0, 3).map((c) => ({ source: c.source, title: c.identity.title, artist: c.identity.artists.join(", "), score: c.score, reasons: c.reasons.map((x) => (x.points > 0 ? "+" : "") + x.points + " " + x.label) })),
+              notes: r.sourceNotes.map((n) => n.name + ": " + n.message.slice(0, 60)) };
+            // Positive: a real Audius original presented as if Spotify supplied its metadata.
+            const pool = (await a.audius.client.trending(undefined, 30)).filter((t) => t.streamable && !t.coverOf && !t.remixOf && t.durationMs > 60000 && t.durationMs < 420000);
+            const src = pool[0];
+            const sp = { provider: "spotify", id: "sp-positive", title: src.title, artist: src.artist, artists: [src.artist], album: "", durationMs: src.durationMs + 700 };
+            const info = (t) => ({ ref: "spotify:" + t.id, title: t.title, artist: t.artist, album: t.album, source: "spotify", bpm: null, key: null, durationMs: t.durationMs, isrc: t.isrc ?? null });
+            const t1 = performance.now();
+            await a.matching.loadToDeck(1, info(sp), sp);
+            for (let i = 0; i < 1200 && a.engine.getState().decks[1].status === "loading"; i++) await sleep(50);
+            const dB = a.engine.getState().decks[1];
+            spotifyAudius.positive = { requested: sp.title + " — " + sp.artist, deckStatus: dB.status, deckSource: dB.track?.source, resolvedFrom: dB.track?.resolvedFrom,
+              ms: Math.round(performance.now() - t1), resolution: summarize(a.matching.resultFor(sp)) };
+            // Negative: a famous track Audius only has covers/flips of — must not auto-load.
+            const neg = { provider: "spotify", id: "sp-negative", title: "Get Lucky (feat. Pharrell Williams)", artist: "Daft Punk, Pharrell Williams",
+              artists: ["Daft Punk", "Pharrell Williams"], album: "Random Access Memories", durationMs: 369626, isrc: "USQX91300108" };
+            const before = a.engine.getState().decks[0].track?.ref;
+            prompt = null;
+            await a.matching.loadToDeck(0, info(neg), neg);
+            spotifyAudius.negative = { deckAUnchanged: a.engine.getState().decks[0].track?.ref === before, promptedUser: !!prompt, resolution: summarize(a.matching.resultFor(neg)) };
+            // Repeat → served from cache, no new API search.
+            const reqs = a.audius.client.stats.requests;
+            await a.matching.resolver.resolve(a.matching.resultFor(neg).requested);
+            spotifyAudius.repeatSearchRequests = a.audius.client.stats.requests - reqs;
+            offPrompt();
+          }
+
           // File loading path used by drag & drop: expand a folder, add to library, load into deck B.
           const checks = {};
           if (ref && window.dbdjDesktop) {
@@ -301,6 +356,8 @@ function runSmokeTest(win: BrowserWindow): void {
           const clickSel = ${JSON.stringify(process.env.DBDJ_SMOKE_BROWSER_CLICK ?? "")};
           if (clickSel) { document.querySelector(clickSel)?.click(); await sleep(1500); }
           return {
+            isolation,
+            spotifyAudius,
             audius,
             checks,
             tabErrors,

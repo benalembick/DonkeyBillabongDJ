@@ -472,12 +472,13 @@ function useMatchingTick(): void {
 function MatchBadge({ r }: { r: ResolutionResult | undefined }) {
   const { matching } = useApp();
   if (!r) return <span className="match-badge pending">…</span>;
-  const src = r.best ? matching.sourceName(r.best.source).toUpperCase().replace("LOCAL LIBRARY", "LOCAL") : "";
+  const srcId = r.best?.source ?? r.cachedMapping?.audioSource;
+  const src = srcId ? matching.sourceName(srcId).toUpperCase().replace("LOCAL LIBRARY", "LOCAL") : "";
   switch (r.status) {
     case "resolved":
       return <span className="match-badge ok" title={`${r.confidence}% · ${r.method}${r.userConfirmed ? " · your saved match" : ""}`}>✓ {src} {r.confidence}%</span>;
     case "possible":
-      return <span className="match-badge warn" title="Check before loading">⚠ POSSIBLE {r.confidence}%</span>;
+      return <span className="match-badge warn" title="Check before loading">⚠ {src} POSSIBLE {r.confidence}%</span>;
     case "ambiguous":
       return <span className="match-badge warn" title="Several versions match">⇆ {r.candidates.length} MATCHES</span>;
     default:
@@ -506,8 +507,16 @@ function StreamingTracks({ view }: { view: ProviderView }) {
   return (
     <div className="table-wrap">
       <div className="toolbar match-summary">
-        <b>{view.tracks.length}</b> tracks · <span className="ok-text">{sum.playable} playable</span> · <span className="warn">{review} to review</span> ·{" "}
-        <span className="hint">{sum.unavailable} unavailable</span>
+        <b>{view.tracks.length}</b> tracks ·{" "}
+        {Object.entries(sum.bySource).map(([s, n]) => (
+          <span key={s} className="ok-text">
+            {n} {matching.sourceName(s).replace("Local Library", "Local")} ·{" "}
+          </span>
+        ))}
+        <span className="warn">{review} to review</span> · <span className="hint">{sum.unavailable} unavailable</span> ·{" "}
+        <b>
+          {sum.playable} / {view.tracks.length} PLAYABLE
+        </b>
         {progress && <span className="hint"> · matching {progress.done}/{progress.total}…</span>}
         <button
           disabled={resolving}
