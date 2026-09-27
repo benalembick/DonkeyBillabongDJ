@@ -45,6 +45,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          # Unset signing variables whose secrets are missing: an empty CSC_LINK is
+          # resolved to the working directory by electron-builder ("… not a file").
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then unset "$v"; fi
+          done
           if ! npx electron-builder ${{ matrix.target }} --publish never 2>&1 | tee build.log; then
             # Surface the failure as public annotations (job logs need repo access to read).
             grep -E "⨯|rror|failed|Exception" build.log | tail -25 | while IFS= read -r line; do echo "::error title=electron-builder::${line}"; done
