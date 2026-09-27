@@ -54,6 +54,13 @@ describe("MappingRuntime with the DDJ-SB mapping", () => {
     expect(dispatched).toEqual([["deck1.jog.ring", 4], ["deck1.jog.platter", -4]]);
   });
 
+  it("SAMPLER pad mode drives STEMS (pad = mute, SHIFT+pad = solo)", () => {
+    const { rt, dispatched } = runtimeFor(buildDdjSbMapping());
+    rt.handle(msg(0x97, 0x30, 0x7f)); // deck A pad 1 in sampler mode
+    rt.handle(msg(0x98, 0x3b, 0x7f)); // deck B SHIFT + pad 4
+    expect(dispatched).toEqual([["deck1.stem.vocals.toggle", 1], ["deck2.stem.instruments.isolate", 1]]);
+  });
+
   it("browse encoder is two's complement", () => {
     const { rt, dispatched } = runtimeFor(buildDdjSbMapping());
     rt.handle(msg(0xb6, 0x40, 0x7f));

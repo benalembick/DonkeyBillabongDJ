@@ -85,6 +85,8 @@ export interface FxDsp {
   timeSec: number;
   /** Which mixer channels feed this unit. */
   decks: boolean[];
+  /** Send only these stems [vocals, drums, bass, instruments] instead of the whole channel (send-type FX only). */
+  stemMask: number[] | null;
 }
 
 export type AudioRouting = "stereo" | "quad";
@@ -152,6 +154,15 @@ export interface AudioEngine {
   setChannel(deck: number, dsp: ChannelDsp): void;
   setMaster(dsp: MasterDsp): void;
   setFx(unit: number, fx: FxDsp): void;
+  /** STEMS: prepare a deck for separated audio (regions of `stride` frames at `rate` Hz). */
+  stemsInit(deck: number, info: { stride: number; regions: number; rate: number }): void;
+  /** STEMS: one finished region, interleaved Int16 [vL vR dL dR bL bR]. Ownership moves to the engine. */
+  stemsRegion(deck: number, region: number, data: Int16Array): void;
+  /** STEMS: on/off and per-stem gains [vocals, drums, bass, instruments] (0..1). */
+  stemsMix(deck: number, enabled: boolean, gains: number[]): void;
+  stemsClear(deck: number): void;
+  /** Is separated audio available at the deck's current position? */
+  stemsReadyAtPlayhead(deck: number): boolean;
   /** Current playhead in seconds (extrapolated between engine reports). */
   getPosition(deck: number): number;
   /** Peak levels 0..1: decks then master. */

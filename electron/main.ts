@@ -11,6 +11,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { registerStreamingIpc } from "./streaming/ipc";
+import { registerStemIpc } from "./stems/host";
 import * as libraryDb from "./library/db";
 import { readTags } from "./library/tags";
 
@@ -242,6 +243,87 @@ function runSmokeTest(win: BrowserWindow): void {
             audius.apiStats = { ...a.audius.client.stats, lastStream: undefined };
           }
 
+          // STEMS (DBDJ_SMOKE_STEMS=/path/local.wav; model from DBDJ_STEMS_MODEL_PATH or userData): the deck keeps
+          // playing normally while separating; then DDJ-SB STEMS pads (simulated MIDI) mute/solo stems and the output changes.
+          const stemFile = ${JSON.stringify(process.env.DBDJ_SMOKE_STEMS ?? "")};
+          let stems = null;
+          if (stemFile) {
+            const midi = (...b) => a.controllers.simulate("pioneer-ddj-sb", b);
+            const lvl = async (ms) => { let p = 0; for (let i = 0; i < ms / 50; i++) { await sleep(50); p = Math.max(p, a.audio.getLevels().channels[1]); } return +p.toFixed(4); };
+            const speed = async (ms) => { const p0 = a.engine.getPosition(1); await sleep(ms); return +((a.engine.getPosition(1) - p0) / (ms / 1000)).toFixed(3); };
+            const deckStems = () => { const st = a.engine.getState().decks[1].stems; return { status: st.status, progress: +st.progress.toFixed(2), enabled: st.enabled, muted: st.muted.join(","), message: st.message }; };
+            stems = { steps: {} };
+            for (let i = 0; i < 100 && !a.stems.status.available; i++) await sleep(100);
+            stems.available = a.stems.status.available;
+            stems.reason = a.stems.status.reason;
+            const t0 = performance.now();
+            await a.engine.loadTrack(1, { ref: stemFile, title: "stems", artist: "", album: "", source: "local", bpm: null, key: null });
+            a.bus.send("mixer.channel2.volume", 0.5);
+            a.bus.send("mixer.crossfader", 1);
+            a.bus.send("deck2.play");
+            // 1. Normal playback while the worker loads the model and starts separating.
+            stems.steps.playingWhileSeparating = { speeds: [await speed(2000), await speed(2000), await speed(2000)], peak: await lvl(500), stems: deckStems(), worker: a.stems.status.worker };
+            a.bus.send("deck2.play"); // pause
+            a.bus.send("deck2.seek", 0);
+            let firstMs = null;
+            for (let i = 0; i < 1500; i++) { await sleep(100); if (a.audio.stemsReadyAtPlayhead(1)) { firstMs = Math.round(performance.now() - t0); break; } }
+            stems.steps.firstStems = { msFromLoad: firstMs, stems: deckStems(), worker: a.stems.status.worker, rtf: a.stems.status.rtf };
+            a.bus.send("deck2.play");
+            const original = await lvl(1500);
+            midi(0x98, 0x30, 0x7f); midi(0x98, 0x30, 0x00);           // pad 1: vocals mute (switches STEMS on)
+            const noVocals = await lvl(1500);
+            const afterMute = deckStems();
+            midi(0x98, 0x30, 0x7f); midi(0x98, 0x30, 0x00);           // vocals back: all four stems
+            const allStems = await lvl(1500);
+            const solo = {};
+            for (const [n, note] of [["vocals", 0x38], ["drums", 0x39], ["bass", 0x3a], ["instruments", 0x3b]]) {
+              midi(0x98, note, 0x7f); midi(0x98, note, 0x00);         // SHIFT + pad: solo
+              solo[n] = await lvl(1500);
+              midi(0x98, note, 0x7f); midi(0x98, note, 0x00);         // again: all back
+            }
+            stems.steps.mixing = { peakOriginal: original, peakVocalsMuted: noVocals, stateAfterPad1: afterMute, peakAllStems: allStems, peakSolo: solo,
+              speedWithStems: await speed(1500), leds: ["vocals", "drums", "bass", "instruments"].map((n) => a.engine.getFeedback("deck2.stem." + n)) };
+            // Per-stem FX: echo on vocals only.
+            a.bus.send("fx.unit1.target.next", 1);
+            a.bus.send("fx.unit1.assign.deck2", 1);
+            a.bus.send("fx.unit1.on", 1);
+            stems.steps.stemFx = { target: a.engine.getState().fx[0].target, peak: await lvl(1000) };
+            a.bus.send("fx.unit1.on", 1);
+            const env = a.stems.envelopes(1);
+            if (env) {
+              const sum = (x) => { let t = 0; for (let i = 0; i < x.length; i++) t += x[i]; return +t.toFixed(1); };
+              stems.envelopeEnergy = { vocals: sum(env.vocals), drums: sum(env.drums), bass: sum(env.bass), instruments: sum(env.instruments) };
+            }
+            // 2. Seek ahead: separation re-prioritises from the new playhead.
+            a.bus.send("deck2.seek", 0.75);
+            const ts = performance.now();
+            let seekMs = null;
+            for (let i = 0; i < 600; i++) { await sleep(100); if (a.audio.stemsReadyAtPlayhead(1)) { seekMs = Math.round(performance.now() - ts); break; } }
+            stems.steps.seek = { stemsAtNewPlayheadMs: seekMs, speed: await speed(1000) };
+            // 3. Finish and reload: the second load comes from the cache.
+            for (let i = 0; i < 2400 && a.engine.getState().decks[1].stems.status !== "ready" && a.engine.getState().decks[1].stems.status !== "error"; i++) await sleep(100);
+            stems.steps.complete = { stems: deckStems(), msFromLoad: Math.round(performance.now() - t0), cache: await window.dbdjDesktop.stems.cacheInfo(), index: a.stems.index() };
+            a.bus.send("deck2.play"); // pause so the reload is allowed
+            const tc = performance.now();
+            await a.engine.loadTrack(1, { ref: stemFile, title: "stems", artist: "", album: "", source: "local", bpm: null, key: null });
+            for (let i = 0; i < 300 && a.engine.getState().decks[1].stems.status !== "ready"; i++) await sleep(50);
+            stems.steps.cachedReload = { ms: Math.round(performance.now() - tc), stems: deckStems(), readyAtPlayhead: a.audio.stemsReadyAtPlayhead(1) };
+            // 4. Library: Remove STEM Cache, then Analyse STEMS in the background (deck B keeps playing).
+            a.bus.send("deck2.seek", 0.1);
+            a.bus.send("deck2.play");
+            await a.stems.removeCache([stemFile]);
+            const removed = a.stems.index()[stemFile] ?? "none";
+            const tl = performance.now();
+            a.stems.analyse([{ ref: stemFile, title: "stems", artist: "", album: "", source: "local", bpm: null, key: null }], (r) => a.platform.readAudio(r));
+            for (let i = 0; i < 1200 && a.stems.index()[stemFile] !== "complete"; i++) await sleep(100);
+            stems.steps.libraryAnalyse = { indexAfterRemove: removed, index: a.stems.index()[stemFile] ?? "none", ms: Math.round(performance.now() - tl), deckSpeedMeanwhile: await speed(1000), worker: a.stems.status.worker };
+            a.bus.send("mixer.channel2.volume", 0);
+            // Leave the STEM waveform view on (screenshot), with drums muted to show the dimmed lane.
+            document.querySelector(".wave-mode")?.click();
+            a.bus.send("deck2.stem.drums.toggle", 1);
+            await sleep(500);
+          }
+
           // Demo (DBDJ_SMOKE_DEMO=1): two Audius tracks playing, hot cues and FX set — for layout screenshots.
           let demo = null;
           if (${JSON.stringify(!!process.env.DBDJ_SMOKE_DEMO)}) {
@@ -394,6 +476,7 @@ function runSmokeTest(win: BrowserWindow): void {
           const clickSel = ${JSON.stringify(process.env.DBDJ_SMOKE_BROWSER_CLICK ?? "")};
           if (clickSel) { document.querySelector(clickSel)?.click(); await sleep(1500); }
           return {
+            stems,
             demo,
             isolation,
             spotifyAudius,
@@ -472,6 +555,7 @@ app.whenReady().then(() => {
 
   registerIpc();
   registerStreamingIpc();
+  void registerStemIpc();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

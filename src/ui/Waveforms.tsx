@@ -11,7 +11,8 @@ import type { Overview } from "../analysis/AnalysisService";
 import { deckLetter } from "../core/actions";
 import { useApp, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
-import { HOTCUE_COLORS, useLayout, zoom } from "./layout";
+import { HOTCUE_COLORS, STEM_COLORS, setLayout, useLayout, zoom } from "./layout";
+import type { StemEnvelopes } from "../stems/StemService";
 
 const LOW = "#2f6dff";
 const MID = "#ff9c1a";
@@ -103,6 +104,57 @@ function renderTile(ov: Overview, startSec: number, secPerPx: number, cross: num
   return c;
 }
 
+const STEM_KEYS = ["vocals", "drums", "bass", "instruments"] as const;
+
+/** Per-stem normalisation (98th percentile of analysed frames). */
+function stemNorms(env: StemEnvelopes): number[] {
+  return STEM_KEYS.map((k) => {
+    const a = env[k];
+    const s: number[] = [];
+    const step = Math.max(1, Math.floor(a.length / 3000));
+    for (let i = 0; i < a.length; i += step) if (a[i] > 0) s.push(a[i]);
+    if (!s.length) return 1;
+    s.sort((x, y) => x - y);
+    return s[Math.floor(s.length * 0.98)] || 1;
+  });
+}
+
+/** STEM view tile: four lanes (vocals, drums, bass, instruments); muted stems drawn dim. */
+function renderStemTile(env: StemEnvelopes, norms: number[], muted: boolean[], startSec: number, secPerPx: number, cross: number, vertical: boolean): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = vertical ? cross : TILE_PX;
+  c.height = vertical ? TILE_PX : cross;
+  const g = c.getContext("2d")!;
+  const fps = 1 / env.hop;
+  const laneW = cross / 4;
+  STEM_KEYS.forEach((k, lane) => {
+    const a = env[k];
+    const n = a.length;
+    const mid = laneW * lane + laneW / 2;
+    const s = (laneW * 0.48) / norms[lane];
+    g.fillStyle = STEM_COLORS[k];
+    g.globalAlpha = muted[lane] ? 0.18 : 0.95;
+    g.beginPath();
+    const hs = new Float32Array(TILE_PX + 1);
+    for (let p = 0; p <= TILE_PX; p++) {
+      const ta = startSec + p * secPerPx;
+      let i0 = Math.floor(ta * fps);
+      let i1 = Math.max(i0 + 1, Math.floor((ta + secPerPx) * fps));
+      if (i0 < 0) i0 = 0;
+      if (i1 > n) i1 = n;
+      let m = 0;
+      for (let i = i0; i < i1; i++) if (a[i] > m) m = a[i];
+      hs[p] = Math.min(laneW * 0.49, m * s);
+    }
+    for (let p = 0; p <= TILE_PX; p++) (vertical ? g.lineTo(mid - hs[p], p) : g.lineTo(p, mid - hs[p]));
+    for (let p = TILE_PX; p >= 0; p--) (vertical ? g.lineTo(mid + hs[p], p) : g.lineTo(p, mid + hs[p]));
+    g.closePath();
+    g.fill();
+  });
+  g.globalAlpha = 1;
+  return c;
+}
+
 function fitCanvas(c: HTMLCanvasElement): { w: number; h: number; dpr: number } {
   const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   const w = Math.max(1, Math.round(c.clientWidth * dpr));
@@ -113,9 +165,10 @@ function fitCanvas(c: HTMLCanvasElement): { w: number; h: number; dpr: number } 
 }
 
 export function ScrollingWaveform({ deck, orientation }: { deck: number; orientation: "horizontal" | "vertical" }) {
-  const { engine } = useApp();
+  const { engine, stems } = useApp();
   const ov = useOverview(deck);
-  const { zoomSeconds } = useLayout();
+  const { zoomSeconds, waveMode } = useLayout();
+  const stemNorm = useRef<{ env: StemEnvelopes | null; version: number; norms: number[] }>({ env: null, version: -1, norms: [1, 1, 1, 1] });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const norm = useRef(1);
   const drag = useRef<{ start: number; pos: number } | null>(null);
@@ -159,8 +212,15 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
 
     // Waveform: pre-rendered tiles (cached per zoom/size/track) blitted each frame —
     // two cheap image copies per lane instead of re-rasterising the waveform every frame.
-    if (ov) {
-      const cacheKey = `${orientation}|${secPerPx.toFixed(7)}|${cross}|${ov.low.length}`;
+    // STEM view: lanes per stem once separation data exists (tiles re-render as regions arrive).
+    const env = waveMode === "stems" ? stems.envelopes(deck) : null;
+    if (env) {
+      const sn = stemNorm.current;
+      if (sn.env !== env || sn.version !== env.version) stemNorm.current = { env, version: env.version, norms: stemNorms(env) };
+    }
+    const muted = d.stems.muted.map((m, k) => d.stems.enabled && (m || d.stems.volume[k] === 0));
+    if (ov || env) {
+      const cacheKey = `${orientation}|${secPerPx.toFixed(7)}|${cross}|${ov?.low.length ?? 0}|${env ? `stems:${env.version}:${muted.join()}` : "std"}`;
       if (tiles.current.key !== cacheKey || tiles.current.ov !== ov) tiles.current = { key: cacheKey, ov, map: new Map() };
       const tileSec = TILE_PX * secPerPx;
       const first = Math.floor(t0 / tileSec);
@@ -169,7 +229,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
         if (ti < 0 || ti * tileSec > d.duration) continue;
         let tile = tiles.current.map.get(ti);
         if (!tile) {
-          tile = renderTile(ov, ti * tileSec, secPerPx, cross, vertical, scale, mid);
+          tile = env ? renderStemTile(env, stemNorm.current.norms, muted, ti * tileSec, secPerPx, cross, vertical) : renderTile(ov!, ti * tileSec, secPerPx, cross, vertical, scale, mid);
           tiles.current.map.set(ti, tile);
           if (tiles.current.map.size > 24) tiles.current.map.delete(tiles.current.map.keys().next().value!);
         }
@@ -343,11 +403,26 @@ export function WaveformStack({ orientation }: { orientation: "horizontal" | "ve
       {labels.map((deck) => (
         <div key={deck} className={`wave-lane deck-${deckLetter(deck).toLowerCase()}`}>
           <span className="wave-label">{deckLetter(deck)}</span>
+          <WaveModeToggle />
           <ScrollingWaveform deck={deck} orientation={orientation} />
           <BarCounter deck={deck} />
         </div>
       ))}
     </div>
+  );
+}
+
+/** Standard (frequency colours) ⇄ STEM (vocals / drums / bass / instruments lanes). */
+function WaveModeToggle() {
+  const { waveMode } = useLayout();
+  return (
+    <button
+      className={`tiny wave-mode ${waveMode === "stems" ? "lit" : ""}`}
+      onClick={() => setLayout({ waveMode: waveMode === "stems" ? "standard" : "stems" })}
+      title="Waveform: Standard (frequency) or STEM lanes (vocals, drums, bass, instruments)"
+    >
+      {waveMode === "stems" ? "STEM" : "STD"}
+    </button>
   );
 }
 

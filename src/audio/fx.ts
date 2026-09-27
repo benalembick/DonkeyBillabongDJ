@@ -26,6 +26,9 @@ function impulse(ctx: BaseAudioContext, seconds: number): AudioBuffer {
 
 export class FxSlot {
   readonly send: GainNode;
+  /** Per-stem send from the deck worklet (used instead of the whole channel when a stem is targeted). */
+  readonly stemIn: GainNode;
+  private readonly input: GainNode;
   readonly wet: GainNode;
   private type: FxType | null = null;
   private nodes: AudioNode[] = [];
@@ -37,22 +40,29 @@ export class FxSlot {
   private reverbSize = -1;
   private readonly ctx: AudioContext;
 
-  constructor(ctx: AudioContext, source: AudioNode, destination: AudioNode) {
+  constructor(ctx: AudioContext, source: AudioNode, destination: AudioNode, stemSource?: { node: AudioNode; output: number }) {
     this.ctx = ctx;
     this.send = ctx.createGain();
     this.send.gain.value = 0;
+    this.stemIn = ctx.createGain();
+    this.stemIn.gain.value = 0;
+    this.input = ctx.createGain();
     this.wet = ctx.createGain();
     this.wet.gain.value = 0;
     source.connect(this.send);
+    if (stemSource) stemSource.node.connect(this.stemIn, stemSource.output);
+    this.send.connect(this.input);
+    this.stemIn.connect(this.input);
     this.wet.connect(destination);
   }
 
   /** Apply unit parameters; `active` = unit enabled and this channel assigned. */
-  update(fx: FxDsp, active: boolean): void {
+  update(fx: FxDsp, active: boolean, useStems = false): void {
     if (fx.type !== this.type) this.build(fx.type);
     const t = this.ctx.currentTime;
     const insert = INSERT_TYPES.has(fx.type);
-    this.send.gain.setTargetAtTime(active ? 1 : 0, t, SMOOTH);
+    this.send.gain.setTargetAtTime(active && !useStems ? 1 : 0, t, SMOOTH);
+    this.stemIn.gain.setTargetAtTime(active && useStems ? 1 : 0, t, SMOOTH);
     // Send FX keep their wet level so tails decay after switching off; insert FX drop out entirely.
     this.wet.gain.setTargetAtTime(insert ? (active ? fx.mix : 0) : fx.mix, t, SMOOTH);
     const p = fx.param;
@@ -99,7 +109,7 @@ export class FxSlot {
 
   private teardown(): void {
     try {
-      this.send.disconnect();
+      this.input.disconnect();
     } catch {
       /* not connected */
     }
@@ -127,7 +137,7 @@ export class FxSlot {
       case "delay": {
         const delay = keep(ctx.createDelay(4));
         const fb = keep(ctx.createGain());
-        this.send.connect(delay);
+        this.input.connect(delay);
         if (type === "echo") {
           const lp = keep(ctx.createBiquadFilter());
           lp.type = "lowpass";
@@ -147,7 +157,7 @@ export class FxSlot {
         hp.type = "highpass";
         hp.frequency.value = 250;
         const conv = keep(ctx.createConvolver());
-        this.send.connect(hp).connect(conv).connect(this.wet);
+        this.input.connect(hp).connect(conv).connect(this.wet);
         this.convolver = conv;
         break;
       }
@@ -162,17 +172,17 @@ export class FxSlot {
         lfo.connect(depth).connect(delay.delayTime);
         lfo.start();
         this.lfo = lfo;
-        this.send.connect(delay);
+        this.input.connect(delay);
         delay.connect(fb).connect(delay);
         // Flanger = dry + modulated copy; the wet path carries both so the insert mix sounds right.
-        this.send.connect(this.wet);
+        this.input.connect(this.wet);
         delay.connect(this.wet);
         break;
       }
       case "filter": {
         const f = keep(ctx.createBiquadFilter());
         f.Q.value = 4;
-        this.send.connect(f).connect(this.wet);
+        this.input.connect(f).connect(this.wet);
         this.filter = f;
         break;
       }

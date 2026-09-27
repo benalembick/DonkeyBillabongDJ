@@ -26,6 +26,7 @@ import { AudiusClient } from "../providers/audius/AudiusClient";
 import { AudiusSource } from "../providers/audius/AudiusSource";
 import { AudiusStore, BrowserRouter } from "../providers/audius/AudiusStore";
 import { audiusIdFromRef } from "../providers/audius/audiusTracks";
+import { StemService } from "../stems/StemService";
 
 export interface App {
   bus: CommandBus;
@@ -35,6 +36,8 @@ export interface App {
   controllers: ControllerManager;
   library: LibraryStore;
   analysis: AnalysisService;
+  /** STEM separation (desktop only; local ONNX model). */
+  stems: StemService;
   keyboard: KeyboardShortcuts;
   platform: Platform;
   streaming: StreamingStore;
@@ -98,6 +101,7 @@ export function createApp(): App {
     settings: { ...storedSettings, jog: { ...DEFAULT_ENGINE_SETTINGS.jog, ...storedSettings.jog } },
   });
   const analysis = new AnalysisService(engine);
+  const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
@@ -185,6 +189,7 @@ export function createApp(): App {
     controllers,
     library,
     analysis,
+    stems,
     keyboard,
     platform,
     streaming,

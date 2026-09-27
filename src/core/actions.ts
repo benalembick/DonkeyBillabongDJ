@@ -20,6 +20,9 @@ export interface ActionMeta {
 }
 
 export const MAX_DECKS = 4;
+export const STEM_NAMES = ["vocals", "drums", "bass", "instruments"] as const;
+export type StemName = (typeof STEM_NAMES)[number];
+export const STEM_LABELS: Record<StemName, string> = { vocals: "Vocals", drums: "Drums", bass: "Bass", instruments: "Instruments" };
 export const HOTCUE_COUNT = 8;
 export const BEATLOOP_SIZES = ["0.03125", "0.0625", "0.125", "0.25", "0.5", "1", "2", "4", "8", "16", "32", "64"] as const;
 
@@ -50,6 +53,13 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
     add(`${p}.eject`, `Eject ${L}`, "button", g);
     add(`${p}.deckToggle`, `Deck toggle ${L}`, "button", g, false);
     add(`${p}.seek`, `Seek (track position) ${L}`, "absolute", g);
+    add(`${p}.stems`, `STEMS on/off ${L}`, "button", g);
+    for (const s of STEM_NAMES) {
+      const n = STEM_LABELS[s];
+      add(`${p}.stem.${s}.toggle`, `${n} mute/unmute ${L}`, "button", g);
+      add(`${p}.stem.${s}.isolate`, `${n} solo ${L}`, "button", g);
+      add(`${p}.stem.${s}.volume`, `${n} volume ${L}`, "absolute", g);
+    }
     add(`${p}.tempo`, `Tempo ${L}`, "absolute", g);
     add(`${p}.tempo.range`, `Tempo range cycle ${L}`, "button", g);
     add(`${p}.tempo.reset`, `Tempo reset ${L}`, "button", g);
@@ -116,6 +126,7 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
     add(`fx.unit${u}.beats.next`, `FX${u} longer beat`, "button", G);
     add(`fx.unit${u}.beats.prev`, `FX${u} shorter beat`, "button", G);
     for (let d = 1; d <= deckCount; d++) add(`fx.unit${u}.assign.deck${d}`, `FX${u} assign deck ${deckLetter(d - 1)}`, "button", G);
+    add(`fx.unit${u}.target.next`, `FX${u} target (deck / single stem)`, "button", G);
   }
   for (let s = 1; s <= 4; s++) {
     add(`sampler${s}.play`, `Sampler ${s} play`, "button", "Sampler", false);

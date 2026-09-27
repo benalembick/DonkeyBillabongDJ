@@ -136,9 +136,13 @@ export function buildDdjSbMapping(): ControllerMapping {
       if (p < 3) note(pad, padCh, 0x18 + p, `${d}.beatloop.${LOOP_SIZES[p + 4]}`);
       note(pad, padCh, 0x50 + p, `${d}.beatloop.roll.${ROLL_SIZES[p]}`);
       note(pad, padCh, 0x58 + p, `${d}.beatloop.roll.${ROLL_SIZES[p + 4]}`);
-      // SAMPLER mode
-      note(pad, padCh, 0x30 + p, `sampler${p + 1}.play`);
-      note(pad, padCh, 0x38 + p, `sampler${p + 1}.stop`);
+      // SAMPLER pad mode = STEMS: pads 1-4 mute/unmute vocals/drums/bass/instruments,
+      // SHIFT + pad solos that stem (press again to bring all stems back). LEDs = stem audible.
+      const stem = ["vocals", "drums", "bass", "instruments"][p];
+      note(pad, padCh, 0x30 + p, `${d}.stem.${stem}.toggle`);
+      note(pad, padCh, 0x38 + p, `${d}.stem.${stem}.isolate`);
+      led(pad, padCh, 0x30 + p, `${d}.stem.${stem}`);
+      led(pad, padCh, 0x38 + p, `${d}.stem.${stem}`);
       note(pad, padCh, 0x70 + p, `sampler${p + 1}.load`);
       note(pad, padCh, 0x78 + p, `sampler${p + 1}.eject`);
     }

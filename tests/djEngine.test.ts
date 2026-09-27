@@ -248,3 +248,58 @@ describe("FX", () => {
     expect(engine.getBpm(0)).toBeCloseTo(132);
   });
 });
+
+describe("STEMS", () => {
+  it("is unavailable until the stem service enables it; the original plays untouched", async () => {
+    await loaded();
+    bus.send("deck1.stems", 1);
+    expect(engine.getState().decks[0].stems.enabled).toBe(false);
+    expect(engine.getState().decks[0].stems.status).toBe("unavailable");
+    expect(audio.stems[0].mix).toEqual({ enabled: false, gains: [1, 1, 1, 1] });
+  });
+
+  it("mute, volume and isolate reach the audio engine", async () => {
+    engine.setStemsSupport(true);
+    await loaded();
+    expect(engine.getState().decks[0].stems.status).toBe("waiting");
+    bus.send("deck1.stem.drums.toggle", 1); // auto-enables STEMS
+    expect(audio.stems[0].mix).toEqual({ enabled: true, gains: [1, 0, 1, 1] });
+    bus.send("deck1.stem.vocals.volume", 0.5);
+    expect(audio.stems[0].mix?.gains).toEqual([0.5, 0, 1, 1]);
+    bus.send("deck1.stem.bass.isolate", 1);
+    expect(audio.stems[0].mix?.gains).toEqual([0, 0, 1, 0]);
+    expect(engine.getFeedback("deck1.stem.bass")).toBe(1);
+    expect(engine.getFeedback("deck1.stem.vocals")).toBe(0);
+    bus.send("deck1.stem.bass.isolate", 1); // solo again → everything back
+    expect(audio.stems[0].mix?.gains).toEqual([0.5, 1, 1, 1]);
+    bus.send("deck1.stems", 1);
+    expect(audio.stems[0].mix?.enabled).toBe(false);
+  });
+
+  it("a new track resets mutes but keeps STEMS mode and volumes", async () => {
+    engine.setStemsSupport(true);
+    await loaded();
+    bus.send("deck1.stem.vocals.toggle", 1);
+    await loaded();
+    const st = engine.getState().decks[0].stems;
+    expect(st.enabled).toBe(true);
+    expect(st.muted).toEqual([false, false, false, false]);
+    expect(audio.stems[0].mix).toEqual({ enabled: true, gains: [1, 1, 1, 1] });
+  });
+
+  it("disabling support switches STEMS off", async () => {
+    engine.setStemsSupport(true);
+    await loaded();
+    bus.send("deck1.stems", 1);
+    engine.setStemsSupport(false, "model missing");
+    expect(engine.getState().decks[0].stems).toMatchObject({ enabled: false, status: "unavailable", message: "model missing" });
+    expect(audio.stems[0].mix?.enabled).toBe(false);
+  });
+
+  it("FX target sends a single stem", () => {
+    bus.send("fx.unit1.button1", 1);
+    expect(audio.fx[0].stemMask).toBeNull();
+    bus.send("fx.unit1.target.next", 1); // vocals
+    expect(audio.fx[0].stemMask).toEqual([1, 0, 0, 0]);
+  });
+});

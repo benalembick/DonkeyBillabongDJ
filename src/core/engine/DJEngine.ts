@@ -3,7 +3,7 @@
  * tempo, hot cues, mixer curves). It receives Commands from the CommandBus and
  * drives an AudioEngine. It knows nothing about React, MIDI or files.
  */
-import { actionCatalog, HOTCUE_COUNT, deckLetter } from "../actions";
+import { actionCatalog, HOTCUE_COUNT, deckLetter, STEM_NAMES, STEM_LABELS, type StemName } from "../actions";
 import type { CommandBus } from "../commands";
 import { Emitter } from "../events";
 import type { EventLog } from "../log";
@@ -33,7 +33,25 @@ export interface BeatGrid {
   source: "analysis" | "metadata" | "none";
 }
 
+export type StemStatus = "off" | "waiting" | "loading" | "analysing" | "ready" | "error" | "unavailable";
+
+export interface DeckStems {
+  /** STEMS mode switched on for this deck (persists across track loads). */
+  enabled: boolean;
+  /** Per-stem volume 0..1 [vocals, drums, bass, instruments]. */
+  volume: number[];
+  muted: boolean[];
+  status: StemStatus;
+  /** Fraction of the track separated so far. */
+  progress: number;
+  message?: string;
+}
+
+export type FxTarget = "deck" | StemName;
+export const FX_TARGETS: FxTarget[] = ["deck", ...STEM_NAMES];
+
 export interface FxUnitState {
+  target: FxTarget;
   type: FxType;
   on: boolean;
   mix: number;
@@ -69,6 +87,7 @@ export interface DeckState {
   hotcues: (number | null)[];
   /** Estimated beat grid from analysis (null until analysed). */
   beatGrid: BeatGrid | null;
+  stems: DeckStems;
 }
 
 export interface ChannelState {
@@ -156,6 +175,7 @@ function initialDeck(index: number): DeckState {
     scratching: false,
     hotcues: new Array(HOTCUE_COUNT).fill(null),
     beatGrid: null,
+    stems: { enabled: false, volume: [1, 1, 1, 1], muted: [false, false, false, false], status: "off", progress: 0 },
   };
 }
 
@@ -227,8 +247,8 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         headLevel: 0.8,
       },
       fx: [
-        { type: "echo", on: false, mix: 0.5, param: 0.5, beats: 0.75, decks: Array.from({ length: this.deckCount }, (_, i) => i === 0) },
-        { type: "reverb", on: false, mix: 0.5, param: 0.5, beats: 1, decks: Array.from({ length: this.deckCount }, (_, i) => i === 1) },
+        { target: "deck", type: "echo", on: false, mix: 0.5, param: 0.5, beats: 0.75, decks: Array.from({ length: this.deckCount }, (_, i) => i === 0) },
+        { target: "deck", type: "reverb", on: false, mix: 0.5, param: 0.5, beats: 1, decks: Array.from({ length: this.deckCount }, (_, i) => i === 1) },
       ],
     };
     this.loadTokens = new Array(this.deckCount).fill(0);
@@ -258,6 +278,76 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.settings = { ...this.settings, ...patch, jog: { ...this.settings.jog, ...patch.jog } };
     this.applyMixer();
     for (let d = 0; d < this.deckCount; d++) this.applyTempo(d, this.state.decks[d].tempo);
+  }
+
+  // ───────────────────────────── STEMS ─────────────────────────────
+
+  private stemsSupport: { ok: boolean; reason?: string } = { ok: false, reason: "STEM separation is starting up…" };
+
+  /** Set by the stem service: whether separation is possible here (desktop app, model installed, mode not Off). */
+  setStemsSupport(ok: boolean, reason?: string): void {
+    this.stemsSupport = { ok, reason };
+    for (let d = 0; d < this.deckCount; d++) {
+      const st = this.state.decks[d].stems;
+      if (!ok && st.status !== "unavailable") this.patchStems(d, { enabled: false, status: "unavailable", progress: 0, message: reason });
+      if (ok && st.status === "unavailable") this.patchStems(d, { status: this.state.decks[d].status === "ready" ? "waiting" : "off", message: undefined });
+    }
+  }
+
+  getStemsSupport(): { ok: boolean; reason?: string } {
+    return this.stemsSupport;
+  }
+
+  /** Progress/status updates from the stem service. */
+  setStemStatus(deck: number, patch: Partial<Pick<DeckStems, "status" | "progress" | "message">>): void {
+    if (!this.state.decks[deck]) return;
+    this.patchStems(deck, patch);
+  }
+
+  setStemsEnabled(deck: number, enabled: boolean): void {
+    if (enabled && !this.stemsSupport.ok) {
+      this.log.warn("engine", `STEMS unavailable: ${this.stemsSupport.reason ?? "not supported here"}`);
+      return;
+    }
+    this.patchStems(deck, { enabled });
+  }
+
+  private toggleStem(deck: number, k: number): void {
+    const st = this.state.decks[deck].stems;
+    if (!st.enabled) this.setStemsEnabled(deck, true);
+    const muted = st.muted.slice();
+    muted[k] = !muted[k];
+    this.patchStems(deck, { muted });
+  }
+
+  /** Solo a stem; pressing solo on an already-solo'd stem brings every stem back. */
+  private isolateStem(deck: number, k: number): void {
+    const st = this.state.decks[deck].stems;
+    if (!st.enabled) this.setStemsEnabled(deck, true);
+    const soloed = st.muted.every((m, j) => (j === k ? !m : m));
+    this.patchStems(deck, { muted: soloed ? [false, false, false, false] : st.muted.map((_, j) => j !== k) });
+  }
+
+  private setStemVolume(deck: number, k: number, v: number): void {
+    const volume = this.state.decks[deck].stems.volume.slice();
+    volume[k] = clamp(v, 0, 1);
+    this.patchStems(deck, { volume });
+  }
+
+  private patchStems(deck: number, patch: Partial<DeckStems>): void {
+    const d = this.state.decks[deck];
+    this.patchDeck(deck, { stems: { ...d.stems, ...patch } });
+    if ("enabled" in patch || "muted" in patch || "volume" in patch) this.applyStems(deck);
+  }
+
+  private applyStems(deck: number): void {
+    const st = this.state.decks[deck].stems;
+    this.audio.stemsMix(deck, st.enabled, st.volume.map((v, k) => (st.muted[k] ? 0 : v)));
+  }
+
+  /** Human label for a stem index (for logs/UI). */
+  static stemLabel(k: number): string {
+    return STEM_LABELS[STEM_NAMES[k]];
   }
 
   /** Called by the analysis service when a deck's beat grid is known. */
@@ -311,6 +401,12 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
           return d.vinyl ? 1 : 0;
         case "loaded":
           return d.status === "ready" ? 1 : 0;
+      }
+      if (f === "stems") return d.stems.enabled ? 1 : 0;
+      const sm = /^stem\.(\w+)$/.exec(f);
+      if (sm) {
+        const k = STEM_NAMES.indexOf(sm[1] as StemName);
+        return k >= 0 && d.stems.enabled && !d.stems.muted[k] && d.stems.volume[k] > 0 ? 1 : 0;
       }
       const hc = /^hotcue\.(\d+)$/.exec(f);
       if (hc) return d.hotcues[Number(hc[1]) - 1] != null ? 1 : 0;
@@ -389,7 +485,9 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         cuePoint: 0,
         hotcues: new Array(HOTCUE_COUNT).fill(null),
         beatGrid: null,
+        stems: { ...this.state.decks[deck].stems, muted: [false, false, false, false], status: this.stemsSupport.ok ? "waiting" : "unavailable", progress: 0, message: undefined },
       });
+      this.applyStems(deck);
       this.applyTempo(deck, this.state.decks[deck].tempo);
       this.log.info("engine", `Loaded "${track.title}" into deck ${deckLetter(deck)} (${decoded.duration.toFixed(1)} s)`);
       this.emit("event", { type: "trackLoaded", deck, track, audioHandle: decoded.handle });
@@ -420,6 +518,12 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         this.warnUnimplemented(`${p}.keylock`, "Key lock (time-stretching) arrives in Phase 2; the flag is stored only.");
       }));
       on(`${p}.eject`, pressed(() => this.eject(i)));
+      on(`${p}.stems`, pressed(() => this.setStemsEnabled(i, !this.state.decks[i].stems.enabled)));
+      STEM_NAMES.forEach((s, k) => {
+        on(`${p}.stem.${s}.toggle`, pressed(() => this.toggleStem(i, k)));
+        on(`${p}.stem.${s}.isolate`, pressed(() => this.isolateStem(i, k)));
+        on(`${p}.stem.${s}.volume`, (v) => this.setStemVolume(i, k, v));
+      });
       on(`${p}.seek`, (v) => {
         const d = this.state.decks[i];
         if (d.status === "ready") this.audio.seek(i, clamp(v, 0, 1) * d.duration);
@@ -482,6 +586,10 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
           if (wrap) j = (j + FX_BEATS.length) % FX_BEATS.length;
           this.patchFx(u, { beats: FX_BEATS[clamp(j, 0, FX_BEATS.length - 1)] });
         });
+      on(`${f}.target.next`, pressed(() => {
+        const t = FX_TARGETS[(FX_TARGETS.indexOf(this.state.fx[u].target) + 1) % FX_TARGETS.length];
+        this.patchFx(u, { target: t });
+      }));
       on(`${f}.button3`, nextBeats(1, true));
       on(`${f}.beats.next`, nextBeats(1, false));
       on(`${f}.beats.prev`, nextBeats(-1, false));
@@ -735,6 +843,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       param: f.param,
       timeSec: clamp((f.beats * 60) / bpm, 0.01, 3.9),
       decks: f.decks,
+      stemMask: f.target === "deck" ? null : STEM_NAMES.map((s) => (s === f.target ? 1 : 0)),
     });
   }
 

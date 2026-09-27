@@ -25,6 +25,7 @@
   "dependencies": {
     "fast-xml-parser": "^5.11.1",
     "music-metadata": "^11.16.1",
+    "onnxruntime-node": "^1.30.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
@@ -54,7 +55,8 @@
       "!dist/**/*.map",
       "dist-electron/**",
       "!dist-electron/**/*.map",
-      "package.json"
+      "package.json",
+      "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
     ],
     "mac": {
       "target": [
@@ -69,11 +71,19 @@
       "hardenedRuntime": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Used only if you choose to record from an audio input."
-      }
+      },
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"
+      ],
+      "x64ArchFiles": "**/onnxruntime-node/bin/**"
     },
     "win": {
       "target": [
         "nsis"
+      ],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
       ]
     },
     "nsis": {
@@ -91,7 +101,10 @@
     ],
     "dmg": {
       "artifactName": "DonkeyBillabongDJ-macOS.${ext}"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**"
+    ]
   },
   "repository": {
     "type": "git",

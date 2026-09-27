@@ -65,6 +65,22 @@ export class FakeAudioEngine implements AudioEngine {
   setFx(unit: number, dsp: FxDsp) {
     this.fx[unit] = dsp;
   }
+  stems: { init?: unknown; regions: number[]; mix?: { enabled: boolean; gains: number[] } }[] = [{ regions: [] }, { regions: [] }];
+  stemsInit(deck: number, info: unknown) {
+    this.stems[deck] = { init: info, regions: [] };
+  }
+  stemsRegion(deck: number, region: number) {
+    this.stems[deck].regions.push(region);
+  }
+  stemsMix(deck: number, enabled: boolean, gains: number[]) {
+    this.stems[deck].mix = { enabled, gains };
+  }
+  stemsClear(deck: number) {
+    this.stems[deck] = { regions: [] };
+  }
+  stemsReadyAtPlayhead() {
+    return false;
+  }
   getPosition(deck: number) {
     return this.positions[deck];
   }

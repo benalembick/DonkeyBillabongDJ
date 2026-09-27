@@ -38,7 +38,7 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 | **Channel fader A** | CC14 ch1 0x13/0x33  | `mixer.channel1.volume` | Channel fader ch1 |  | ☐ |
 | **Filter A** | CC14 ch7 0x17/0x37  | `mixer.channel1.filter` | Filter ch1 |  | ☐ |
 |  | CC14 ch7 0x17/0x37 <br><sub>SHIFT layer</sub> | `mixer.channel1.gain` | Gain/Trim ch1 |  | ☐ |
-| **Pad A1** | Note ch8 0x00  | `deck1.hotcue.1` | Hot cue 1 A | 0x00→deck1.hotcue.1<br>0x08→deck1.hotcue.1<br>0x40→deck1.hotcue.5<br>0x48→deck1.hotcue.5<br>0x60→mixer.channel1.eq.low.kill | ☐ |
+| **Pad A1** | Note ch8 0x00  | `deck1.hotcue.1` | Hot cue 1 A | 0x00→deck1.hotcue.1<br>0x08→deck1.hotcue.1<br>0x40→deck1.hotcue.5<br>0x48→deck1.hotcue.5<br>0x30→deck1.stem.vocals<br>0x38→deck1.stem.vocals<br>0x60→mixer.channel1.eq.low.kill | ☐ |
 |  | Note ch8 0x08  | `deck1.hotcue.1.clear` | Clear hot cue 1 A |  | ☐ |
 |  | Note ch8 0x40  | `deck1.hotcue.5` | Hot cue 5 A |  | ☐ |
 |  | Note ch8 0x48  | `deck1.hotcue.5.clear` | Clear hot cue 5 A |  | ☐ |
@@ -46,15 +46,15 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch8 0x18  | `deck1.beatloop.16` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x50  | `deck1.beatloop.roll.0.0625` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x58  | `deck1.beatloop.roll.1` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x30  | `sampler1.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x38  | `sampler1.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x30  | `deck1.stem.vocals.toggle` | Vocals mute/unmute A |  | ☐ |
+|  | Note ch8 0x38  | `deck1.stem.vocals.isolate` | Vocals solo A |  | ☐ |
 |  | Note ch8 0x70  | `sampler1.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x78  | `sampler1.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x20  | `deck1.loop.in` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x28  | `deck1.loop.move.back` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x60  | `mixer.channel1.eq.low.kill` | EQ Low kill ch1 |  | ☐ |
-|  | Note ch8 0x68 <br><sub>Mixxx: prev_chain</sub> | `fx.unit1.chain.prev` | _not implemented yet (logged once)_ |  | ☐ |
-| **Pad A2** | Note ch8 0x01  | `deck1.hotcue.2` | Hot cue 2 A | 0x01→deck1.hotcue.2<br>0x09→deck1.hotcue.2<br>0x41→deck1.hotcue.6<br>0x49→deck1.hotcue.6<br>0x61→mixer.channel1.eq.mid.kill | ☐ |
+|  | Note ch8 0x68 <br><sub>Mixxx: prev_chain</sub> | `fx.unit1.chain.prev` | FX1 previous effect |  | ☐ |
+| **Pad A2** | Note ch8 0x01  | `deck1.hotcue.2` | Hot cue 2 A | 0x01→deck1.hotcue.2<br>0x09→deck1.hotcue.2<br>0x41→deck1.hotcue.6<br>0x49→deck1.hotcue.6<br>0x31→deck1.stem.drums<br>0x39→deck1.stem.drums<br>0x61→mixer.channel1.eq.mid.kill | ☐ |
 |  | Note ch8 0x09  | `deck1.hotcue.2.clear` | Clear hot cue 2 A |  | ☐ |
 |  | Note ch8 0x41  | `deck1.hotcue.6` | Hot cue 6 A |  | ☐ |
 |  | Note ch8 0x49  | `deck1.hotcue.6.clear` | Clear hot cue 6 A |  | ☐ |
@@ -62,15 +62,15 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch8 0x19  | `deck1.beatloop.32` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x51  | `deck1.beatloop.roll.0.125` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x59  | `deck1.beatloop.roll.2` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x31  | `sampler2.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x39  | `sampler2.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x31  | `deck1.stem.drums.toggle` | Drums mute/unmute A |  | ☐ |
+|  | Note ch8 0x39  | `deck1.stem.drums.isolate` | Drums solo A |  | ☐ |
 |  | Note ch8 0x71  | `sampler2.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x79  | `sampler2.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x21  | `deck1.loop.out` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x29  | `deck1.loop.move.forward` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x61  | `mixer.channel1.eq.mid.kill` | EQ Mid kill ch1 |  | ☐ |
-|  | Note ch8 0x69 <br><sub>Mixxx: next_chain</sub> | `fx.unit1.chain.next` | _not implemented yet (logged once)_ |  | ☐ |
-| **Pad A3** | Note ch8 0x02  | `deck1.hotcue.3` | Hot cue 3 A | 0x02→deck1.hotcue.3<br>0x0A→deck1.hotcue.3<br>0x42→deck1.hotcue.7<br>0x4A→deck1.hotcue.7<br>0x62→mixer.channel1.eq.high.kill | ☐ |
+|  | Note ch8 0x69 <br><sub>Mixxx: next_chain</sub> | `fx.unit1.chain.next` | FX1 next effect |  | ☐ |
+| **Pad A3** | Note ch8 0x02  | `deck1.hotcue.3` | Hot cue 3 A | 0x02→deck1.hotcue.3<br>0x0A→deck1.hotcue.3<br>0x42→deck1.hotcue.7<br>0x4A→deck1.hotcue.7<br>0x32→deck1.stem.bass<br>0x3A→deck1.stem.bass<br>0x62→mixer.channel1.eq.high.kill | ☐ |
 |  | Note ch8 0x0A  | `deck1.hotcue.3.clear` | Clear hot cue 3 A |  | ☐ |
 |  | Note ch8 0x42  | `deck1.hotcue.7` | Hot cue 7 A |  | ☐ |
 |  | Note ch8 0x4A  | `deck1.hotcue.7.clear` | Clear hot cue 7 A |  | ☐ |
@@ -78,34 +78,34 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch8 0x1A  | `deck1.beatloop.64` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x52  | `deck1.beatloop.roll.0.25` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x5A  | `deck1.beatloop.roll.4` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x32  | `sampler3.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x3A  | `sampler3.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x32  | `deck1.stem.bass.toggle` | Bass mute/unmute A |  | ☐ |
+|  | Note ch8 0x3A  | `deck1.stem.bass.isolate` | Bass solo A |  | ☐ |
 |  | Note ch8 0x72  | `sampler3.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x7A  | `sampler3.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x22  | `deck1.loop.exit` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x62  | `mixer.channel1.eq.high.kill` | EQ High kill ch1 |  | ☐ |
-| **Pad A4** | Note ch8 0x03  | `deck1.hotcue.4` | Hot cue 4 A | 0x03→deck1.hotcue.4<br>0x0B→deck1.hotcue.4<br>0x43→deck1.hotcue.8<br>0x4B→deck1.hotcue.8<br>0x63→mixer.channel1.mute | ☐ |
+| **Pad A4** | Note ch8 0x03  | `deck1.hotcue.4` | Hot cue 4 A | 0x03→deck1.hotcue.4<br>0x0B→deck1.hotcue.4<br>0x43→deck1.hotcue.8<br>0x4B→deck1.hotcue.8<br>0x33→deck1.stem.instruments<br>0x3B→deck1.stem.instruments<br>0x63→mixer.channel1.mute | ☐ |
 |  | Note ch8 0x0B  | `deck1.hotcue.4.clear` | Clear hot cue 4 A |  | ☐ |
 |  | Note ch8 0x43  | `deck1.hotcue.8` | Hot cue 8 A |  | ☐ |
 |  | Note ch8 0x4B  | `deck1.hotcue.8.clear` | Clear hot cue 8 A |  | ☐ |
 |  | Note ch8 0x13  | `deck1.beatloop.8` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x53  | `deck1.beatloop.roll.0.5` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x5B  | `deck1.beatloop.roll.8` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x33  | `sampler4.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x3B  | `sampler4.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x33  | `deck1.stem.instruments.toggle` | Instruments mute/unmute A |  | ☐ |
+|  | Note ch8 0x3B  | `deck1.stem.instruments.isolate` | Instruments solo A |  | ☐ |
 |  | Note ch8 0x73  | `sampler4.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x7B  | `sampler4.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x23  | `deck1.loop.halve` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x2B  | `deck1.loop.double` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch8 0x63  | `mixer.channel1.mute` | Mute ch1 |  | ☐ |
-| **FX1 button 1** | Note ch5 0x47  | `fx.unit1.button1` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch5 0x63 <br><sub>SHIFT layer</sub> | `fx.unit1.button1` | _not implemented yet (logged once)_ |  | ☐ |
-| **FX1 button 2** | Note ch5 0x48  | `fx.unit1.button2` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch5 0x64 <br><sub>SHIFT layer</sub> | `fx.unit1.button2` | _not implemented yet (logged once)_ |  | ☐ |
-| **FX1 button 3** | Note ch5 0x49  | `fx.unit1.button3` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch5 0x65 <br><sub>SHIFT layer</sub> | `fx.unit1.button3` | _not implemented yet (logged once)_ |  | ☐ |
-| **FX1 knob** | CC14 ch5 0x06/0x26  | `fx.unit1.knob` | _not implemented yet (logged once)_ |  | ☐ |
-|  | CC14 ch5 0x00/0x20 <br><sub>SHIFT + FX knob</sub> | `fx.unit1.knob.shift` | _not implemented yet (logged once)_ |  | ☐ |
+| **FX1 button 1** | Note ch5 0x47  | `fx.unit1.button1` | FX1 on/off | 0x47→fx.unit1.on<br>0x63→fx.unit1.on | ☐ |
+|  | Note ch5 0x63 <br><sub>SHIFT layer</sub> | `fx.unit1.button1` | FX1 on/off |  | ☐ |
+| **FX1 button 2** | Note ch5 0x48  | `fx.unit1.button2` | FX1 next effect |  | ☐ |
+|  | Note ch5 0x64 <br><sub>SHIFT layer</sub> | `fx.unit1.button2` | FX1 next effect |  | ☐ |
+| **FX1 button 3** | Note ch5 0x49  | `fx.unit1.button3` | FX1 beat length |  | ☐ |
+|  | Note ch5 0x65 <br><sub>SHIFT layer</sub> | `fx.unit1.button3` | FX1 beat length |  | ☐ |
+| **FX1 knob** | CC14 ch5 0x06/0x26  | `fx.unit1.knob` | FX1 level (dry/wet) |  | ☐ |
+|  | CC14 ch5 0x00/0x20 <br><sub>SHIFT + FX knob</sub> | `fx.unit1.knob.shift` | FX1 parameter |  | ☐ |
 | **Play/Pause B** | Note ch2 0x0B  | `deck2.play` | Deck B toggles play/pause | 0x0B→deck2.playing<br>0x47→deck2.playing | ☐ |
 |  | Note ch2 0x47 <br><sub>SHIFT+PLAY (Mixxx: reverse roll)</sub> | `deck2.reverse` | _not implemented yet (logged once)_ |  | ☐ |
 | **Cue B** | Note ch2 0x0C  | `deck2.cue` | CDJ cue: set / return / preview while held | 0x0C→deck2.cue<br>0x48→deck2.cue | ☐ |
@@ -135,7 +135,7 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 | **Channel fader B** | CC14 ch2 0x13/0x33  | `mixer.channel2.volume` | Channel fader ch2 |  | ☐ |
 | **Filter B** | CC14 ch7 0x18/0x38  | `mixer.channel2.filter` | Filter ch2 |  | ☐ |
 |  | CC14 ch7 0x18/0x38 <br><sub>SHIFT layer</sub> | `mixer.channel2.gain` | Gain/Trim ch2 |  | ☐ |
-| **Pad B1** | Note ch9 0x00  | `deck2.hotcue.1` | Hot cue 1 B | 0x00→deck2.hotcue.1<br>0x08→deck2.hotcue.1<br>0x40→deck2.hotcue.5<br>0x48→deck2.hotcue.5<br>0x60→mixer.channel2.eq.low.kill | ☐ |
+| **Pad B1** | Note ch9 0x00  | `deck2.hotcue.1` | Hot cue 1 B | 0x00→deck2.hotcue.1<br>0x08→deck2.hotcue.1<br>0x40→deck2.hotcue.5<br>0x48→deck2.hotcue.5<br>0x30→deck2.stem.vocals<br>0x38→deck2.stem.vocals<br>0x60→mixer.channel2.eq.low.kill | ☐ |
 |  | Note ch9 0x08  | `deck2.hotcue.1.clear` | Clear hot cue 1 B |  | ☐ |
 |  | Note ch9 0x40  | `deck2.hotcue.5` | Hot cue 5 B |  | ☐ |
 |  | Note ch9 0x48  | `deck2.hotcue.5.clear` | Clear hot cue 5 B |  | ☐ |
@@ -143,15 +143,15 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch9 0x18  | `deck2.beatloop.16` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x50  | `deck2.beatloop.roll.0.0625` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x58  | `deck2.beatloop.roll.1` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x30  | `sampler1.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x38  | `sampler1.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x30  | `deck2.stem.vocals.toggle` | Vocals mute/unmute B |  | ☐ |
+|  | Note ch9 0x38  | `deck2.stem.vocals.isolate` | Vocals solo B |  | ☐ |
 |  | Note ch9 0x70  | `sampler1.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x78  | `sampler1.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x20  | `deck2.loop.in` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x28  | `deck2.loop.move.back` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x60  | `mixer.channel2.eq.low.kill` | EQ Low kill ch2 |  | ☐ |
-|  | Note ch9 0x68 <br><sub>Mixxx: prev_chain</sub> | `fx.unit2.chain.prev` | _not implemented yet (logged once)_ |  | ☐ |
-| **Pad B2** | Note ch9 0x01  | `deck2.hotcue.2` | Hot cue 2 B | 0x01→deck2.hotcue.2<br>0x09→deck2.hotcue.2<br>0x41→deck2.hotcue.6<br>0x49→deck2.hotcue.6<br>0x61→mixer.channel2.eq.mid.kill | ☐ |
+|  | Note ch9 0x68 <br><sub>Mixxx: prev_chain</sub> | `fx.unit2.chain.prev` | FX2 previous effect |  | ☐ |
+| **Pad B2** | Note ch9 0x01  | `deck2.hotcue.2` | Hot cue 2 B | 0x01→deck2.hotcue.2<br>0x09→deck2.hotcue.2<br>0x41→deck2.hotcue.6<br>0x49→deck2.hotcue.6<br>0x31→deck2.stem.drums<br>0x39→deck2.stem.drums<br>0x61→mixer.channel2.eq.mid.kill | ☐ |
 |  | Note ch9 0x09  | `deck2.hotcue.2.clear` | Clear hot cue 2 B |  | ☐ |
 |  | Note ch9 0x41  | `deck2.hotcue.6` | Hot cue 6 B |  | ☐ |
 |  | Note ch9 0x49  | `deck2.hotcue.6.clear` | Clear hot cue 6 B |  | ☐ |
@@ -159,15 +159,15 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch9 0x19  | `deck2.beatloop.32` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x51  | `deck2.beatloop.roll.0.125` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x59  | `deck2.beatloop.roll.2` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x31  | `sampler2.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x39  | `sampler2.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x31  | `deck2.stem.drums.toggle` | Drums mute/unmute B |  | ☐ |
+|  | Note ch9 0x39  | `deck2.stem.drums.isolate` | Drums solo B |  | ☐ |
 |  | Note ch9 0x71  | `sampler2.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x79  | `sampler2.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x21  | `deck2.loop.out` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x29  | `deck2.loop.move.forward` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x61  | `mixer.channel2.eq.mid.kill` | EQ Mid kill ch2 |  | ☐ |
-|  | Note ch9 0x69 <br><sub>Mixxx: next_chain</sub> | `fx.unit2.chain.next` | _not implemented yet (logged once)_ |  | ☐ |
-| **Pad B3** | Note ch9 0x02  | `deck2.hotcue.3` | Hot cue 3 B | 0x02→deck2.hotcue.3<br>0x0A→deck2.hotcue.3<br>0x42→deck2.hotcue.7<br>0x4A→deck2.hotcue.7<br>0x62→mixer.channel2.eq.high.kill | ☐ |
+|  | Note ch9 0x69 <br><sub>Mixxx: next_chain</sub> | `fx.unit2.chain.next` | FX2 next effect |  | ☐ |
+| **Pad B3** | Note ch9 0x02  | `deck2.hotcue.3` | Hot cue 3 B | 0x02→deck2.hotcue.3<br>0x0A→deck2.hotcue.3<br>0x42→deck2.hotcue.7<br>0x4A→deck2.hotcue.7<br>0x32→deck2.stem.bass<br>0x3A→deck2.stem.bass<br>0x62→mixer.channel2.eq.high.kill | ☐ |
 |  | Note ch9 0x0A  | `deck2.hotcue.3.clear` | Clear hot cue 3 B |  | ☐ |
 |  | Note ch9 0x42  | `deck2.hotcue.7` | Hot cue 7 B |  | ☐ |
 |  | Note ch9 0x4A  | `deck2.hotcue.7.clear` | Clear hot cue 7 B |  | ☐ |
@@ -175,34 +175,34 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch9 0x1A  | `deck2.beatloop.64` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x52  | `deck2.beatloop.roll.0.25` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x5A  | `deck2.beatloop.roll.4` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x32  | `sampler3.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x3A  | `sampler3.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x32  | `deck2.stem.bass.toggle` | Bass mute/unmute B |  | ☐ |
+|  | Note ch9 0x3A  | `deck2.stem.bass.isolate` | Bass solo B |  | ☐ |
 |  | Note ch9 0x72  | `sampler3.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x7A  | `sampler3.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x22  | `deck2.loop.exit` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x62  | `mixer.channel2.eq.high.kill` | EQ High kill ch2 |  | ☐ |
-| **Pad B4** | Note ch9 0x03  | `deck2.hotcue.4` | Hot cue 4 B | 0x03→deck2.hotcue.4<br>0x0B→deck2.hotcue.4<br>0x43→deck2.hotcue.8<br>0x4B→deck2.hotcue.8<br>0x63→mixer.channel2.mute | ☐ |
+| **Pad B4** | Note ch9 0x03  | `deck2.hotcue.4` | Hot cue 4 B | 0x03→deck2.hotcue.4<br>0x0B→deck2.hotcue.4<br>0x43→deck2.hotcue.8<br>0x4B→deck2.hotcue.8<br>0x33→deck2.stem.instruments<br>0x3B→deck2.stem.instruments<br>0x63→mixer.channel2.mute | ☐ |
 |  | Note ch9 0x0B  | `deck2.hotcue.4.clear` | Clear hot cue 4 B |  | ☐ |
 |  | Note ch9 0x43  | `deck2.hotcue.8` | Hot cue 8 B |  | ☐ |
 |  | Note ch9 0x4B  | `deck2.hotcue.8.clear` | Clear hot cue 8 B |  | ☐ |
 |  | Note ch9 0x13  | `deck2.beatloop.8` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x53  | `deck2.beatloop.roll.0.5` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x5B  | `deck2.beatloop.roll.8` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x33  | `sampler4.play` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x3B  | `sampler4.stop` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x33  | `deck2.stem.instruments.toggle` | Instruments mute/unmute B |  | ☐ |
+|  | Note ch9 0x3B  | `deck2.stem.instruments.isolate` | Instruments solo B |  | ☐ |
 |  | Note ch9 0x73  | `sampler4.load` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x7B  | `sampler4.eject` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x23  | `deck2.loop.halve` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x2B  | `deck2.loop.double` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch9 0x63  | `mixer.channel2.mute` | Mute ch2 |  | ☐ |
-| **FX2 button 1** | Note ch6 0x47  | `fx.unit2.button1` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch6 0x63 <br><sub>SHIFT layer</sub> | `fx.unit2.button1` | _not implemented yet (logged once)_ |  | ☐ |
-| **FX2 button 2** | Note ch6 0x48  | `fx.unit2.button2` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch6 0x64 <br><sub>SHIFT layer</sub> | `fx.unit2.button2` | _not implemented yet (logged once)_ |  | ☐ |
-| **FX2 button 3** | Note ch6 0x49  | `fx.unit2.button3` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch6 0x65 <br><sub>SHIFT layer</sub> | `fx.unit2.button3` | _not implemented yet (logged once)_ |  | ☐ |
-| **FX2 knob** | CC14 ch6 0x06/0x26  | `fx.unit2.knob` | _not implemented yet (logged once)_ |  | ☐ |
-|  | CC14 ch6 0x00/0x20 <br><sub>SHIFT + FX knob</sub> | `fx.unit2.knob.shift` | _not implemented yet (logged once)_ |  | ☐ |
+| **FX2 button 1** | Note ch6 0x47  | `fx.unit2.button1` | FX2 on/off | 0x47→fx.unit2.on<br>0x63→fx.unit2.on | ☐ |
+|  | Note ch6 0x63 <br><sub>SHIFT layer</sub> | `fx.unit2.button1` | FX2 on/off |  | ☐ |
+| **FX2 button 2** | Note ch6 0x48  | `fx.unit2.button2` | FX2 next effect |  | ☐ |
+|  | Note ch6 0x64 <br><sub>SHIFT layer</sub> | `fx.unit2.button2` | FX2 next effect |  | ☐ |
+| **FX2 button 3** | Note ch6 0x49  | `fx.unit2.button3` | FX2 beat length |  | ☐ |
+|  | Note ch6 0x65 <br><sub>SHIFT layer</sub> | `fx.unit2.button3` | FX2 beat length |  | ☐ |
+| **FX2 knob** | CC14 ch6 0x06/0x26  | `fx.unit2.knob` | FX2 level (dry/wet) |  | ☐ |
+|  | CC14 ch6 0x00/0x20 <br><sub>SHIFT + FX knob</sub> | `fx.unit2.knob.shift` | FX2 parameter |  | ☐ |
 | **Crossfader** | CC14 ch7 0x1F/0x3F  | `mixer.crossfader` | Crossfader moves; A/B levels change |  | ☐ |
 | **Headphone mix** | CC14 ch7 0x05/0x25  | `mixer.headphone.mix` | Headphone cue/master mix |  | ☐ |
 | **Browse encoder** | CC ch7 0x40  | `browser.scroll` | Library selection moves |  | ☐ |
@@ -210,4 +210,4 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 | **Browse push** | Note ch7 0x41  | `browser.select` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch7 0x42 <br><sub>SHIFT + push</sub> | `browser.back` | _not implemented yet (logged once)_ |  | ☐ |
 
-Totals: 52 physical controls, 200 input bindings, 58 LED outputs.
+Totals: 52 physical controls, 200 input bindings, 78 LED outputs.

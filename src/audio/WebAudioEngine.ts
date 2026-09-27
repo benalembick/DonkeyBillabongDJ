@@ -20,7 +20,7 @@ import type {
   OutputDevice,
 } from "../core/engine/types";
 import { DEFAULT_AUDIO_CONFIG } from "../core/engine/types";
-import { FxSlot } from "./fx";
+import { FxSlot, INSERT_TYPES } from "./fx";
 
 const PARAM_SMOOTH_S = 0.008;
 
@@ -55,10 +55,13 @@ interface DeckModel {
   /** Context time at which `pos` was valid. */
   time: number;
   dsp: ChannelDsp | null;
+  stemsLoaded: boolean;
+  stemsReady: boolean;
+  stemsMix: { enabled: boolean; gains: number[] };
 }
 
 type WorkletReport =
-  | { type: "pos"; seconds: number; speed: number; time: number; seq: number }
+  | { type: "pos"; seconds: number; speed: number; time: number; seq: number; stemsReady?: boolean }
   | { type: "ended"; seq: number };
 
 export class WebAudioEngine implements AudioEngine {
@@ -92,6 +95,9 @@ export class WebAudioEngine implements AudioEngine {
       speed: 0,
       time: 0,
       dsp: null,
+      stemsLoaded: false,
+      stemsReady: false,
+      stemsMix: { enabled: false, gains: [1, 1, 1, 1] },
     }));
   }
 
@@ -223,10 +229,11 @@ export class WebAudioEngine implements AudioEngine {
 
     this.decks = [];
     for (let i = 0; i < this.deckCount; i++) {
+      // Output 0 = deck audio; outputs 1/2 = per-stem sends for FX units 1/2.
       const node = new AudioWorkletNode(ctx, "dbdj-deck", {
         numberOfInputs: 0,
-        numberOfOutputs: 1,
-        outputChannelCount: [2],
+        numberOfOutputs: 3,
+        outputChannelCount: [2, 2, 2],
       });
       const trim = ctx.createGain();
       const eqLow = ctx.createBiquadFilter();
@@ -257,7 +264,7 @@ export class WebAudioEngine implements AudioEngine {
       const dry = ctx.createGain();
       const post = ctx.createGain();
       lpf.connect(dry).connect(post);
-      const fx = [0, 1].map(() => new FxSlot(ctx, lpf, post));
+      const fx = [0, 1].map((u) => new FxSlot(ctx, lpf, post, { node, output: u + 1 }));
       post.connect(out).connect(meter);
       out.connect(masterBus);
       post.connect(pfl).connect(cueBus);
@@ -370,6 +377,8 @@ export class WebAudioEngine implements AudioEngine {
     m.buffer = buffer;
     m.playing = false;
     m.scratching = false;
+    m.stemsLoaded = false;
+    m.stemsReady = false;
     m.pos = 0;
     m.speed = 0;
     m.time = this.now();
@@ -460,6 +469,7 @@ export class WebAudioEngine implements AudioEngine {
     const m = this.models[deck];
     if (msg.seq !== m.seq) return; // stale: a newer local command has not been processed yet
     if (msg.type === "pos") {
+      m.stemsReady = !!msg.stemsReady;
       m.pos = msg.seconds;
       m.speed = msg.speed;
       m.time = msg.time;
@@ -497,6 +507,39 @@ export class WebAudioEngine implements AudioEngine {
     set(g.pfl.gain, dsp.pfl ? 1 : 0);
   }
 
+  // ─────────────────────────── STEMS ───────────────────────────
+
+  stemsInit(deck: number, info: { stride: number; regions: number; rate: number }): void {
+    const m = this.models[deck];
+    m.stemsLoaded = true;
+    m.stemsReady = false;
+    this.post(deck, { type: "stemsInit", ...info });
+    this.post(deck, { type: "stemsMix", ...m.stemsMix });
+    this.applyFx();
+  }
+
+  stemsRegion(deck: number, region: number, data: Int16Array): void {
+    // Transferred (zero-copy): the audio thread never allocates or copies large buffers.
+    this.decks[deck]?.node.port.postMessage({ type: "stemsRegion", region, data }, [data.buffer]);
+  }
+
+  stemsMix(deck: number, enabled: boolean, gains: number[]): void {
+    this.models[deck].stemsMix = { enabled, gains: gains.slice(0, 4) };
+    this.post(deck, { type: "stemsMix", enabled, gains });
+  }
+
+  stemsClear(deck: number): void {
+    const m = this.models[deck];
+    m.stemsLoaded = false;
+    m.stemsReady = false;
+    this.post(deck, { type: "stemsClear" });
+    this.applyFx();
+  }
+
+  stemsReadyAtPlayhead(deck: number): boolean {
+    return this.models[deck]?.stemsReady ?? false;
+  }
+
   setFx(unit: number, fx: FxDsp): void {
     this.fxDsp[unit] = fx;
     this.applyFx();
@@ -511,7 +554,9 @@ export class WebAudioEngine implements AudioEngine {
         const slot = g.fx[unit];
         if (!fx || !slot) return;
         const active = fx.enabled && !!fx.decks[deck];
-        slot.update(fx, active);
+        const useStems = !!fx.stemMask && !INSERT_TYPES.has(fx.type) && this.models[deck].stemsLoaded;
+        slot.update(fx, active, useStems);
+        g.node.port.postMessage({ type: "stemsFx", unit, mask: active && useStems ? fx.stemMask : [0, 0, 0, 0] });
         dryCut += slot.dryReduction(fx, active);
       });
       g.dry.gain.setTargetAtTime(Math.max(0, 1 - dryCut), ctx.currentTime, 0.02);

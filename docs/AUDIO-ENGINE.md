@@ -92,3 +92,7 @@ A tag or service BPM is used as a hint and is octave-aware. The result is an **e
 1. Create `src/audio/effects/<Name>.ts` that exposes `{ input: AudioNode, output: AudioNode, setParam(name, value) }`, or an AudioWorklet processor for custom DSP.
 2. Register it in the effect registry, then add actions (`fx.unitN.*` already exist in the catalogue) and map them in the DJ engine.
 3. Insert it after the LPF in the channel chain (a per-channel FX send) or on the master bus.
+
+## STEMS (implemented)
+
+The deck worklet has three outputs: output 0 is the deck audio, outputs 1 and 2 are the per-stem sends for FX units 1 and 2. Separated vocals, drums and bass arrive as Int16 regions (`stemsInit` / `stemsRegion` messages; buffers are transferred, never copied on the audio thread). The worklet reads them at the same fractional position as the original, computes instruments as `original − vocals − drums − bass`, applies smoothed per-stem gains (6 ms), and crossfades between the original and the stem mix (12 ms) depending on whether the region under the playhead is ready. Separation itself runs in a separate process. See [STEMS.md](STEMS.md).

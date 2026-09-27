@@ -12,6 +12,7 @@ import type { ResolutionResult } from "../matching/SmartTrackResolver";
 import type { StreamingProviderId } from "../providers/streamingTypes";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
+import { useStemIndex, useStemStatus } from "./stemHooks";
 
 type Source = "local" | "audius" | StreamingProviderId;
 
@@ -131,6 +132,8 @@ function LocalView({ collection }: { collection: LocalCollection }) {
   const [dropping, setDropping] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: collection === "recent" ? "addedAt" : "artist", dir: collection === "recent" ? -1 : 1 });
+  const stemIdx = useStemIndex();
+  const [menu, setMenu] = useState<{ x: number; y: number; track: TrackInfo } | null>(null);
 
   useEffect(() => {
     if (collection === "recent") setSort({ key: "addedAt", dir: -1 });
@@ -256,6 +259,11 @@ function LocalView({ collection }: { collection: LocalCollection }) {
                     e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(t));
                     e.dataTransfer.effectAllowed = "copy";
                   }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    library.select(state.tracks.indexOf(t));
+                    setMenu({ x: e.clientX, y: e.clientY, track: t });
+                  }}
                 >
                   <td className="col-art">
                     <span className="art-tile" style={{ background: artColor(t.album || t.artist || t.title) }}>
@@ -273,7 +281,12 @@ function LocalView({ collection }: { collection: LocalCollection }) {
                     <Stars value={t.rating ?? 0} onChange={(n) => void app.setRating(t.ref, n)} />
                   </td>
                   <td>
-                    <span className="source-badge">LOCAL</span>
+                    <span className="source-badge">LOCAL</span>{" "}
+                    {stemIdx[t.ref] && (
+                      <span className={`lib-stem ${stemIdx[t.ref]}`} title={stemIdx[t.ref] === "complete" ? "STEMS analysed and cached" : "STEMS partly analysed"}>
+                        {stemIdx[t.ref] === "complete" ? "STEMS" : "STEMS…"}
+                      </span>
+                    )}
                   </td>
                   <td className="hint">{t.addedAt ? new Date(t.addedAt).toLocaleDateString() : ""}</td>
                   <td className="row-actions">
@@ -285,6 +298,47 @@ function LocalView({ collection }: { collection: LocalCollection }) {
           </tbody>
         </table>
       </div>
+      {menu && <TrackMenu {...menu} cached={!!stemIdx[menu.track.ref]} onClose={() => setMenu(null)} />}
+    </div>
+  );
+}
+
+/** Right-click menu for a local track: load, and STEM cache management. */
+function TrackMenu({ x, y, track, cached, onClose }: { x: number; y: number; track: TrackInfo; cached: boolean; onClose: () => void }) {
+  const { engine, stems, platform } = useApp();
+  const s = useEngineState();
+  const stemStatus = useStemStatus();
+  useEffect(() => {
+    const close = () => onClose();
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [onClose]);
+  const act = (fn: () => void) => (e: React.PointerEvent | React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+    onClose();
+  };
+  const canAnalyse = stemStatus.modelInstalled && platform.kind === "desktop";
+  return (
+    <div className="ctx-menu" style={{ left: Math.min(x, window.innerWidth - 210), top: Math.min(y, window.innerHeight - 160) }} onPointerDown={(e) => e.stopPropagation()}>
+      {s.decks.map((d, i) => (
+        <button key={i} disabled={d.playing} onClick={act(() => void engine.loadTrack(i, track))}>
+          Load to Deck {String.fromCharCode(65 + i)}
+        </button>
+      ))}
+      <hr />
+      <button disabled={!canAnalyse} title={canAnalyse ? "" : stemStatus.reason} onClick={act(() => stems.analyse([track], (r) => platform.readAudio(r)))}>
+        Analyse STEMS
+      </button>
+      <button disabled={!cached} onClick={act(() => void stems.removeCache([track.ref]))}>
+        Remove STEM Cache
+      </button>
     </div>
   );
 }

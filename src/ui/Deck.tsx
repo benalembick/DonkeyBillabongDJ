@@ -4,10 +4,10 @@
  *  - "compact": header, overview, one row of transport/pads/tempo (Classic layout).
  */
 import { useRef, useState } from "react";
-import { deckLetter } from "../core/actions";
+import { deckLetter, STEM_LABELS, STEM_NAMES } from "../core/actions";
 import { useApp, useEngineState, useSend } from "./context";
 import { formatTime, useAnimationFrame } from "./hooks";
-import { HOTCUE_COLORS } from "./layout";
+import { HOTCUE_COLORS, STEM_COLORS } from "./layout";
 import { OverviewWaveform } from "./Waveforms";
 
 const RANGE_LABEL: Record<string, string> = { "0.06": "±6", "0.1": "±10", "0.16": "±16", "1": "WIDE" };
@@ -164,6 +164,83 @@ function LoopSection({ deck }: { deck: number }) {
   );
 }
 
+const STEM_STATUS: Record<string, string> = {
+  off: "",
+  waiting: "READY TO ANALYSE",
+  loading: "LOADING STEMS…",
+  analysing: "ANALYSING STEMS",
+  ready: "STEMS READY",
+  error: "STEMS ERROR",
+  unavailable: "STEMS UNAVAILABLE",
+};
+
+/**
+ * STEMS strip: on/off, then one control per stem (click = mute/unmute,
+ * Shift+click or right-click = isolate, slider = stem volume). Separated audio
+ * plays only where the worker has finished; elsewhere the deck plays the original.
+ */
+function StemStrip({ deck }: { deck: number }) {
+  const send = useSend();
+  const d = useEngineState().decks[deck];
+  const p = `deck${deck + 1}`;
+  const st = d.stems;
+  if (!d.track) return null;
+  const unavailable = st.status === "unavailable";
+  const pct = Math.round(st.progress * 100);
+  const label =
+    st.status === "analysing" ? `ANALYSING STEMS… ${pct}%` : st.status === "loading" ? `LOADING STEMS… ${pct}%` : STEM_STATUS[st.status];
+  return (
+    <div className={`stem-strip ${st.enabled ? "on" : ""} ${unavailable ? "disabled" : ""}`}>
+      <button
+        className={`tiny stems-btn ${st.enabled ? "lit" : ""}`}
+        disabled={unavailable}
+        onClick={() => send(`${p}.stems`)}
+        title={unavailable ? st.message ?? "STEMS unavailable" : "STEMS on/off — the original track is always available"}
+      >
+        STEMS
+      </button>
+      {STEM_NAMES.map((s, k) => {
+        const muted = st.muted[k] || st.volume[k] === 0;
+        return (
+          <div key={s} className={`stem ${muted ? "muted" : ""}`} style={{ "--stem": STEM_COLORS[s] } as React.CSSProperties}>
+            <button
+              className="stem-btn"
+              disabled={unavailable}
+              onClick={(e) => send(`${p}.stem.${s}.${e.shiftKey ? "isolate" : "toggle"}`)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                send(`${p}.stem.${s}.isolate`);
+              }}
+              title={`${STEM_LABELS[s]}: click to mute/unmute, Shift+click or right-click to solo`}
+            >
+              {STEM_LABELS[s].slice(0, 3).toUpperCase()}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={st.volume[k]}
+              disabled={unavailable}
+              onChange={(e) => send(`${p}.stem.${s}.volume`, Number(e.target.value))}
+              onDoubleClick={() => send(`${p}.stem.${s}.volume`, 1)}
+              title={`${STEM_LABELS[s]} volume (double-click to reset)`}
+            />
+          </div>
+        );
+      })}
+      <span className={`stem-status ${st.status}`} title={st.message}>
+        {label}
+        {(st.status === "analysing" || st.status === "loading") && (
+          <span className="stem-progress">
+            <span style={{ width: `${pct}%` }} />
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 function StateButtons({ deck }: { deck: number }) {
   const send = useSend();
   const d = useEngineState().decks[deck];
@@ -287,6 +364,7 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
       )}
 
       <OverviewWaveform deck={deck} />
+      <StemStrip deck={deck} />
 
       {variant === "full" ? (
         <div className="deck-body">

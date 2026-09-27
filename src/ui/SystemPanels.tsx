@@ -7,6 +7,7 @@ import { useApp, useEngineState } from "./context";
 import { MatchDiagnostics } from "./MatchDialog";
 import { useAudiusState } from "./AudiusPane";
 import { AUDIUS_APP_NAME } from "../providers/audius/AudiusClient";
+import { StemDiagnostics, StemSettings } from "./StemSettings";
 
 const audiusAppName = () => AUDIUS_APP_NAME;
 import type { SourceId } from "../matching/sources";
@@ -135,6 +136,7 @@ export function Diagnostics() {
           <dd>{mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(0)} MB` : "n/a"}</dd>
         </dl>
       </div>
+      <StemDiagnostics />
       <AudiusDiagnostics />
       <SmartMatchDiagnostics />
       <h4>Event log</h4>
@@ -466,6 +468,7 @@ export function Settings() {
       </fieldset>
 
       <StreamingSettings />
+      <StemSettings />
       <AudiusSettings />
       <ProviderStatusTable />
       <SmartMatchSettings />

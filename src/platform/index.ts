@@ -11,6 +11,7 @@ import type { TagResult } from "../library/tags";
 import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackResolver";
 import type { SourceId } from "../matching/sources";
 import { LocalStorageStore } from "../providers/web";
+import type { StemBridge } from "../stems/StemService";
 
 /**
  * Platform abstraction: desktop (Electron, full filesystem access) vs browser
@@ -56,6 +57,7 @@ export interface DesktopBridge {
     removeMapping(key: string): Promise<void>;
   };
   streaming: StreamingBridge;
+  stems: StemBridge;
 }
 
 /** Row shapes of the desktop SQLite database (electron/library/db.ts). */

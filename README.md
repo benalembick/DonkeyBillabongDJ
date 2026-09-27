@@ -32,7 +32,8 @@ Streaming: Library → MUSIC → **Spotify** or **Apple Music** walks you throug
 - DDJ-SB auto-detection and hot-plug ("Pioneer DDJ-SB — Connected" / "disconnected — playback continues"), full MIDI mapping (52 physical controls, 200 bindings), LED feedback.
 - **Live controller events** feed (`PLAY A`, `JOG A +4`, `TEMPO A +1.7%`, `EQ HIGH A 64`…), **MIDI monitor**, **controller test** screen with a copyable pass/fail report.
 - **Mixxx mapping importer**: translates any Mixxx `.midi.xml` into our format. On the real DDJ-SB mapping it translates 183 of 220 controls, all identical to our built-in mapping.
-- Keyboard shortcuts (Space = Deck A play, Shift+Space = Deck B, C/M = cue, 1–4 / 7–0 = hot cues, A/D and J/L = jog, ↑/↓ browse, Shift+←/→ load).
+- **STEMS**: real stem separation (vocals, drums, bass, instruments) with a local HT-Demucs model (ONNX Runtime, GPU when available). Per-deck mute, solo and volume, per-stem FX sends, STEM waveform view, DDJ-SB SAMPLER pads and keyboard control, and a content-keyed disk cache with library pre-analysis. See [docs/STEMS.md](docs/STEMS.md).
+- Keyboard shortcuts (Space = Deck A play, Shift+Space = Deck B, C/M = cue, 1–4 / 7–0 = hot cues, A/D and J/L = jog, ↑/↓ browse, Shift+←/→ load, Q W E R / U I O P = stems mute, with Shift = solo).
 - Diagnostics (audio backend, sample rate, latency estimate, MIDI devices, messages/sec, event log) and settings (audio device, routing, latency, sample rate, jog calibration and sensitivities, tempo direction, crossfader curve, mapping import/export).
 
 ## Interface
@@ -75,6 +76,7 @@ Choose a layout in the top bar. Your choice, the library height and the waveform
 - [Audius integration](docs/AUDIUS-INTEGRATION.md): free streaming source that plays in the decks, with a tested DJ capability matrix
 - [Streaming providers](docs/STREAMING-PROVIDERS.md): which service does what (metadata vs playable audio)
 - [Smart Metadata Matching](docs/SMART-METADATA-MATCHING.md): Spotify/Apple Music playlists resolved to your own files (ISRC + metadata scoring)
+- [STEMS](docs/STEMS.md): stem separation architecture, model, acceleration, measured speed, cache, controls
 - [Development](docs/DEVELOPMENT.md): running, building macOS / Windows, layout, conventions
 - [Hardware test plan](docs/HARDWARE-TEST-PLAN.md) and the generated [DDJ-SB test matrix](docs/DDJ-SB-TEST-MATRIX.md)
 

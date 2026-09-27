@@ -12,6 +12,8 @@ export interface LayoutPrefs {
   libraryHeight: Record<LayoutMode, number>;
   /** Seconds of audio visible across a scrolling waveform. */
   zoomSeconds: number;
+  /** Scrolling waveform colouring: frequency bands or separated STEMS lanes. */
+  waveMode: "standard" | "stems";
 }
 
 const KEY = "dbdj.ui.layout.v1";
@@ -21,6 +23,7 @@ const DEFAULTS: LayoutPrefs = {
   // Proportional to the screen so 1080p laptops and 1440p+ monitors both start sensibly.
   libraryHeight: { horizontal: Math.round(vh * 0.32), vertical: Math.round(vh * 0.3), classic: Math.round(vh * 0.45) },
   zoomSeconds: 10,
+  waveMode: "standard",
 };
 export const ZOOM_STEPS = [2, 4, 6, 8, 10, 14, 20, 30];
 
@@ -68,3 +71,6 @@ export function useLayout(): LayoutPrefs {
 
 /** Hot cue colours (also used on the pads). */
 export const HOTCUE_COLORS = ["#ff3b6b", "#ff9f1c", "#ffd60a", "#2ee59d", "#00c2ff", "#4f7dff", "#b36bff", "#ff6bd6"];
+
+/** STEM colours (deck strip, waveform lanes). */
+export const STEM_COLORS: Record<string, string> = { vocals: "#ff4fa3", drums: "#ffcc33", bass: "#3fa9ff", instruments: "#5ee07a" };

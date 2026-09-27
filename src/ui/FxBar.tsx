@@ -1,6 +1,6 @@
 /** FX units across the top (FX1 / FX2): effect, beat length, level, parameter, ON, deck assign. */
 import { deckLetter } from "../core/actions";
-import { FX_BEATS, FX_TYPES } from "../core/engine/DJEngine";
+import { FX_BEATS, FX_TARGETS, FX_TYPES } from "../core/engine/DJEngine";
 import { useEngineState, useSend } from "./context";
 import { Knob } from "./Mixer";
 
@@ -50,6 +50,23 @@ export function FxBar() {
                 </button>
               ))}
             </div>
+            <select
+              className="fx-target"
+              value={f.target}
+              disabled={f.type === "flanger" || f.type === "filter"}
+              onChange={(e) => {
+                const steps = (FX_TARGETS.indexOf(e.target.value as (typeof FX_TARGETS)[number]) - FX_TARGETS.indexOf(f.target) + FX_TARGETS.length) % FX_TARGETS.length;
+                for (let i = 0; i < steps; i++) send(`${a}.target.next`);
+              }}
+              title="Send the whole deck, or only one stem, to this FX (echo / delay / reverb; needs STEMS analysed)"
+              aria-label={`FX${u + 1} target`}
+            >
+              {FX_TARGETS.map((t) => (
+                <option key={t} value={t}>
+                  {t === "deck" ? "DECK" : t.toUpperCase()}
+                </option>
+              ))}
+            </select>
             <button className={`fx-on ${f.on ? "lit" : ""}`} onClick={() => send(`${a}.on`)}>
               {f.on ? "ON" : "OFF"}
             </button>

@@ -40,7 +40,18 @@ export const DEFAULT_KEYMAP: KeyBinding[] = [
   { code: "ArrowDown", action: "browser.scroll", value: 1, release: false, repeat: true },
   { code: "ArrowLeft", shift: true, action: "browser.load.deck1" },
   { code: "ArrowRight", shift: true, action: "browser.load.deck2" },
+  // STEMS: Q/W/E/R = deck A vocals/drums/bass/instruments mute, U/I/O/P = deck B; Shift = solo.
+  ...stemKeys(1, ["KeyQ", "KeyW", "KeyE", "KeyR"]),
+  ...stemKeys(2, ["KeyU", "KeyI", "KeyO", "KeyP"]),
 ];
+
+function stemKeys(deck: number, codes: string[]): KeyBinding[] {
+  const stems = ["vocals", "drums", "bass", "instruments"];
+  return codes.flatMap((code, i) => [
+    { code, action: `deck${deck}.stem.${stems[i]}.toggle` },
+    { code, shift: true, action: `deck${deck}.stem.${stems[i]}.isolate` },
+  ]);
+}
 
 function matches(b: KeyBinding, e: KeyboardEvent): boolean {
   return b.code === e.code && !!b.shift === e.shiftKey && !!b.ctrl === (e.ctrlKey || e.metaKey) && !!b.alt === e.altKey;
