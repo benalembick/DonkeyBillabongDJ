@@ -221,3 +221,30 @@ describe("loading", () => {
     expect(bus.send("fx.unit1.knob", 0.3)).toBe(true);
   });
 });
+
+describe("FX", () => {
+  it("on/off, type cycling, level and deck assignment reach the audio engine", async () => {
+    await loaded();
+    bus.send("fx.unit1.button1", 1);
+    expect(audio.fx[0]).toMatchObject({ enabled: true, type: "echo", decks: [true, false] });
+    expect(engine.getFeedback("fx.unit1.on")).toBe(1);
+    bus.send("fx.unit1.button2", 1);
+    expect(audio.fx[0].type).toBe("delay");
+    bus.send("fx.unit1.knob", 0.8);
+    expect(audio.fx[0].mix).toBeCloseTo(0.8);
+    bus.send("fx.unit1.assign.deck2", 1);
+    expect(audio.fx[0].decks).toEqual([true, true]);
+  });
+
+  it("echo time follows the deck's beat grid and pitch", async () => {
+    await loaded();
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0.1, confidence: 3, source: "analysis" });
+    // default 3/4 beat at 120 BPM = 0.375 s
+    expect(audio.fx[0].timeSec).toBeCloseTo(0.375);
+    bus.send("deck1.tempo", 1); // +10% → 132 BPM
+    expect(audio.fx[0].timeSec).toBeCloseTo((0.75 * 60) / 132);
+    bus.send("fx.unit1.button3", 1); // next beat length (1 beat)
+    expect(audio.fx[0].timeSec).toBeCloseTo(60 / 132);
+    expect(engine.getBpm(0)).toBeCloseTo(132);
+  });
+});

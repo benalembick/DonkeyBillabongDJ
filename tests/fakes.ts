@@ -1,4 +1,4 @@
-import type { AudioEngine, AudioEngineEvent, AudioStatus, ChannelDsp, DecodedAudio, MasterDsp } from "../src/core/engine/types";
+import type { AudioEngine, AudioEngineEvent, AudioStatus, ChannelDsp, DecodedAudio, FxDsp, MasterDsp } from "../src/core/engine/types";
 
 /** In-memory AudioEngine that records calls and simulates a playhead. */
 export class FakeAudioEngine implements AudioEngine {
@@ -60,6 +60,10 @@ export class FakeAudioEngine implements AudioEngine {
   }
   setMaster(dsp: MasterDsp) {
     this.master = dsp;
+  }
+  fx: FxDsp[] = [];
+  setFx(unit: number, dsp: FxDsp) {
+    this.fx[unit] = dsp;
   }
   getPosition(deck: number) {
     return this.positions[deck];

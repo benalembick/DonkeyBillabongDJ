@@ -242,6 +242,26 @@ function runSmokeTest(win: BrowserWindow): void {
             audius.apiStats = { ...a.audius.client.stats, lastStream: undefined };
           }
 
+          // Demo (DBDJ_SMOKE_DEMO=1): two Audius tracks playing, hot cues and FX set — for layout screenshots.
+          let demo = null;
+          if (${JSON.stringify(!!process.env.DBDJ_SMOKE_DEMO)}) {
+            const pool = (await a.audius.client.searchTracks("deep house", 20)).filter((t) => t.streamable && t.durationMs > 120000 && t.durationMs < 420000);
+            for (let d = 0; d < 2 && pool[d]; d++) {
+              const t = pool[d];
+              await a.engine.loadTrack(d, { ref: "audius:" + t.id, title: t.title, artist: t.artist, album: "", source: "audius", bpm: t.bpm, key: t.key, durationMs: t.durationMs, artworkUrl: t.artworkUrl });
+            }
+            for (let i = 0; i < 600 && a.engine.getState().decks.some((d) => d.status === "loading"); i++) await sleep(50);
+            for (let i = 0; i < 100 && a.engine.getState().decks.some((d) => d.status === "ready" && !d.beatGrid); i++) await sleep(50);
+            a.bus.send("deck1.seek", 0.3); a.bus.send("deck2.seek", 0.45);
+            a.bus.send("deck1.hotcue.1", 1); a.bus.send("deck1.hotcue.1", 0);
+            a.bus.send("deck2.hotcue.3", 1); a.bus.send("deck2.hotcue.3", 0);
+            a.bus.send("mixer.channel1.volume", 0.25); a.bus.send("mixer.channel2.volume", 0.25);
+            a.bus.send("deck1.play"); a.bus.send("deck2.play");
+            a.bus.send("fx.unit1.on");
+            await sleep(1500);
+            demo = a.engine.getState().decks.map((d) => ({ title: d.track?.title, status: d.status, playing: d.playing, grid: d.beatGrid }));
+          }
+
           // Isolation (DBDJ_SMOKE_ISOLATION=/path/local.wav): local track plays on deck B while an Audius load fails on deck A.
           let isolation = null;
           const isoFile = ${JSON.stringify(process.env.DBDJ_SMOKE_ISOLATION ?? "")};
@@ -337,18 +357,36 @@ function runSmokeTest(win: BrowserWindow): void {
           await a.engine.loadTrack(0, { ref: "spotify:x", title: "Streamed", artist: "", album: "", source: "spotify", bpm: null, key: null });
           checks.streamingRefused = a.engine.getState().decks[0].track?.title !== "Streamed";
 
-          // Render every tab once and collect any panel that crashed.
+          // Render every tool tab, every layout and every library source once; collect crashes.
           const tabErrors = [];
-          for (const btn of document.querySelectorAll(".tabs button")) {
-            btn.click();
-            await sleep(250);
-            const err = document.querySelector(".panel-error");
-            if (err) tabErrors.push(btn.textContent + ": " + err.textContent);
-          }
-          document.querySelector(".tabs button:nth-child(1)")?.click();
+          const crash = (what) => { const err = document.querySelector(".panel-error"); if (err) tabErrors.push(what + ": " + err.textContent); };
+          document.querySelector(".open-tools")?.click();
           await sleep(200);
-          document.querySelectorAll(".browser-sources button")[1]?.click();
-          await sleep(400);
+          for (const btn of document.querySelectorAll(".tools-overlay .tabs button")) { btn.click(); await sleep(250); crash(btn.textContent); }
+          document.querySelector(".tools-overlay .modal-close")?.click();
+          for (const btn of document.querySelectorAll(".browser-sources button")) { btn.click(); await sleep(200); crash("library " + btn.textContent); }
+          document.querySelector('.browser-sources [data-source="local-all"]')?.click();
+          // Layout switching must not touch the engine: same tracks, positions and play state before/after.
+          const snap = () => JSON.stringify(a.engine.getState().decks.map((d) => [d.track?.ref, d.status, d.playing, d.hotcues]));
+          const before = snap();
+          const layoutFps = {};
+          for (const mode of ["vertical", "classic", "horizontal"]) {
+            document.querySelectorAll(".layout-switch > button").forEach((b) => b.textContent === mode.toUpperCase() && b.click());
+            await sleep(300);
+            crash("layout " + mode);
+            await sleep(1500); // steady state, not the mount
+            if (window.__waveStats) window.__waveStats.samples.length = 0;
+            let frames = 0; let worst = 0; let last = performance.now(); const t0 = last;
+            await new Promise((r) => { const tick = () => { const now = performance.now(); worst = Math.max(worst, now - last); last = now; frames++; if (now - t0 < 2000) requestAnimationFrame(tick); else r(); }; requestAnimationFrame(tick); });
+            layoutFps[mode] = Math.round(frames / 2) + " fps (worst frame " + worst.toFixed(0) + " ms)" + " fps, wave draw " + (window.__waveStats ? window.__waveStats.avg().toFixed(2) : "?") + " ms";
+          }
+          checks.layoutSwitchPreservedEngineState = snap() === before;
+          checks.layoutFps = layoutFps;
+          const wantLayout = ${JSON.stringify(process.env.DBDJ_SMOKE_LAYOUT ?? "")};
+          if (wantLayout) {
+            document.querySelectorAll(".layout-switch > button").forEach((b) => b.textContent === wantLayout.toUpperCase() && b.click());
+            await sleep(400);
+          }
           // Simulate what an OS file drop does by default: navigate to the file. Must be blocked.
           if (ref) location.href = "file:///" + ref.replace(/\\\\/g, "/");
           await sleep(800);
@@ -356,6 +394,7 @@ function runSmokeTest(win: BrowserWindow): void {
           const clickSel = ${JSON.stringify(process.env.DBDJ_SMOKE_BROWSER_CLICK ?? "")};
           if (clickSel) { document.querySelector(clickSel)?.click(); await sleep(1500); }
           return {
+            demo,
             isolation,
             spotifyAudius,
             audius,
@@ -380,7 +419,9 @@ function runSmokeTest(win: BrowserWindow): void {
           errors.push(`screenshot: ${String(err)}`);
         }
       }
-      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors }, null, 2)}\n`);
+      const gpuStatus = app.getGPUFeatureStatus() as unknown as Record<string, string>;
+      const gpu = { canvas: gpuStatus["2d_canvas"], compositing: gpuStatus.gpu_compositing, rasterization: gpuStatus.rasterization };
+      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu }, null, 2)}\n`);
       app.exit(errors.length ? 1 : 0);
     }, Number(process.env.DBDJ_SMOKE_WAIT_MS ?? 8000));
   });
@@ -411,6 +452,8 @@ function createWindow(): void {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
+  const smokeSize = /^(\d+)x(\d+)$/.exec(process.env.DBDJ_SMOKE_SIZE ?? "");
+  if (process.env.DBDJ_SMOKE_TEST && smokeSize) win.setContentSize(Number(smokeSize[1]), Number(smokeSize[2]));
   if (process.env.DBDJ_SMOKE_TEST) runSmokeTest(win);
 
   const devServer = process.env.DBDJ_DEV_SERVER;

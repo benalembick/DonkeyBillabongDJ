@@ -20,6 +20,10 @@ export interface TrackInfo {
   year?: number;
   /** Set when this specific track can't be played (e.g. gated on its service); shown as the reason. */
   unavailableReason?: string;
+  /** 0–5 stars (local library). */
+  rating?: number;
+  /** When the track was added to the library (ms since epoch). */
+  addedAt?: number;
   /** Embedded tags have been read (local files). */
   tagsRead?: boolean;
   /** Set when this playable track was resolved from another service's metadata (Smart Match). */
@@ -65,6 +69,22 @@ export interface MasterDsp {
   headCueGain: number;
   headMasterGain: number;
   headphoneGain: number;
+}
+
+export type FxType = "echo" | "delay" | "reverb" | "flanger" | "filter";
+
+/** Final parameters for one FX unit (computed by the DJ engine). */
+export interface FxDsp {
+  type: FxType;
+  enabled: boolean;
+  /** Dry/wet level 0..1 (for "filter": 0 = bypass, 1 = fully filtered). */
+  mix: number;
+  /** Effect-specific 0..1 (echo/delay feedback, reverb size, flanger rate, filter cutoff). */
+  param: number;
+  /** Beat-synced time in seconds (echo/delay). */
+  timeSec: number;
+  /** Which mixer channels feed this unit. */
+  decks: boolean[];
 }
 
 export type AudioRouting = "stereo" | "quad";
@@ -131,6 +151,7 @@ export interface AudioEngine {
   scratchMove(deck: number, seconds: number): void;
   setChannel(deck: number, dsp: ChannelDsp): void;
   setMaster(dsp: MasterDsp): void;
+  setFx(unit: number, fx: FxDsp): void;
   /** Current playhead in seconds (extrapolated between engine reports). */
   getPosition(deck: number): number;
   /** Peak levels 0..1: decks then master. */

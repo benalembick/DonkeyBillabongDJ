@@ -72,6 +72,7 @@ export interface TrackRow {
   key: string | null;
   tags_read: number;
   added_at: number;
+  rating?: number;
 }
 export interface MappingRow {
   key: string;
@@ -137,6 +138,8 @@ function rowToTrack(r: TrackRow): TrackInfo {
     genre: r.genre ?? undefined,
     year: r.year ?? undefined,
     tagsRead: !!r.tags_read,
+    rating: r.rating ?? 0,
+    addedAt: r.added_at,
   };
 }
 
@@ -153,7 +156,8 @@ function trackToRow(t: TrackInfo): TrackRow {
     bpm: t.bpm,
     key: t.key,
     tags_read: t.tagsRead ? 1 : 0,
-    added_at: Date.now(),
+    added_at: t.addedAt ?? Date.now(),
+    rating: t.rating ?? 0,
   };
 }
 

@@ -20,6 +20,7 @@ export interface TrackRow {
   key: string | null;
   tags_read: number;
   added_at: number;
+  rating: number;
 }
 
 export interface MappingRow {
@@ -57,6 +58,7 @@ function open(): DatabaseSync {
       added_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_tracks_isrc ON tracks(isrc);
+    -- (rating column is added by migrate() for databases created before it existed)
     CREATE TABLE IF NOT EXISTS track_resolutions (
       key TEXT PRIMARY KEY,
       metadata_source TEXT NOT NULL,
@@ -70,7 +72,14 @@ function open(): DatabaseSync {
       resolved_at INTEGER NOT NULL
     );
   `);
+  migrate(db);
   return db;
+}
+
+/** Additive schema migrations for existing databases. */
+function migrate(d: DatabaseSync): void {
+  const cols = (d.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes("rating")) d.exec("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
 }
 
 export function loadTracks(): TrackRow[] {
@@ -80,15 +89,15 @@ export function loadTracks(): TrackRow[] {
 export function upsertTracks(rows: TrackRow[]): void {
   const d = open();
   const stmt = d.prepare(`
-    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at, rating)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(ref) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
       genre=excluded.genre, year=excluded.year, duration_ms=excluded.duration_ms, isrc=excluded.isrc,
-      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read`);
+      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read, rating=excluded.rating`);
   d.exec("BEGIN");
   try {
     for (const r of rows) {
-      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at);
+      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at, r.rating ?? 0);
     }
     d.exec("COMMIT");
   } catch (err) {

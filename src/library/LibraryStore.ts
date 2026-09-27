@@ -37,7 +37,8 @@ export class LibraryStore extends Emitter<{ change: LibraryState }> implements B
   /** Adds new files; returns the tracks that were actually added (duplicates skipped). */
   addFiles(files: AudioFileRef[]): TrackInfo[] {
     const existing = new Set(this.state.tracks.map((t) => t.ref));
-    const added = files.filter((f) => !existing.has(f.ref)).map((f) => trackInfoFromFileName(f.ref, f.name));
+    const now = Date.now();
+    const added = files.filter((f) => !existing.has(f.ref)).map((f) => ({ ...trackInfoFromFileName(f.ref, f.name), addedAt: now }));
     if (added.length === 0) return [];
     const tracks = [...this.state.tracks, ...added];
     this.set({ tracks, selected: this.state.selected < 0 ? 0 : this.state.selected });
@@ -54,6 +55,14 @@ export class LibraryStore extends Emitter<{ change: LibraryState }> implements B
     if (updated.length === 0) return;
     const byRef = new Map(updated.map((t) => [t.ref, t]));
     this.set({ ...this.state, tracks: this.state.tracks.map((t) => byRef.get(t.ref) ?? t) });
+  }
+
+  setRating(ref: string, rating: number): TrackInfo | null {
+    const t = this.getByRef(ref);
+    if (!t) return null;
+    const updated = { ...t, rating: Math.max(0, Math.min(5, Math.round(rating))) };
+    this.patchTracks([updated]);
+    return updated;
   }
 
   getByRef(ref: string): TrackInfo | null {

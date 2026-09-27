@@ -169,6 +169,11 @@ export function buildDdjSbMapping(): ControllerMapping {
       control(id, `FX${s + 1} button ${b + 1}`, "button", fx, `FX${s + 1}-${b + 1}`);
       note(id, fxCh, 0x47 + b, `fx.unit${s + 1}.button${b + 1}`);
       note(id, fxCh, 0x63 + b, `fx.unit${s + 1}.button${b + 1}`, { note: "SHIFT layer" });
+      if (b === 0) {
+        // FX button 1 lights while the unit is on.
+        led(id, fxCh, 0x47, `fx.unit${s + 1}.on`);
+        led(id, fxCh, 0x63, `fx.unit${s + 1}.on`);
+      }
     }
     control(`${fx}.knob`, `FX${s + 1} knob`, "knob", fx, `FX${s + 1} KNOB`);
     cc14(`${fx}.knob`, fxCh, 0x06, `fx.unit${s + 1}.knob`);

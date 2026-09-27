@@ -42,6 +42,8 @@ export interface App {
   audius: AudiusStore;
   /** Which list the controller's browse encoder / LOAD buttons act on. */
   browser: BrowserRouter;
+  /** Set a local track's star rating (persisted). */
+  setRating(ref: string, rating: number): Promise<void>;
   /** Add files to the library and optionally load the first one into a deck. */
   addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number>;
   saveAudioConfig(c: AudioConfig): void;
@@ -189,6 +191,10 @@ export function createApp(): App {
     matching,
     audius: audiusStore,
     browser,
+    setRating: async (ref, rating) => {
+      const t = library.setRating(ref, rating);
+      if (t) await platform.library?.save([t]).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+    },
     addFiles: async (refs, loadIntoDeck) => {
       const added = library.addFiles(refs);
       if (refs.length === 0) {

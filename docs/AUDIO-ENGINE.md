@@ -66,6 +66,27 @@ If Windows shared-mode latency is not good enough, implement `AudioEngine` (`src
 
 The DJ engine, mappings and UI stay unchanged. That independence is the reason the interface exists.
 
+## FX engine (implemented)
+
+- **Two FX units** (`src/audio/fx.ts`). Each mixer channel has one slot per unit, placed after the channel filter and before the fader and PFL.
+- **Types:**
+  - Echo and Delay: tempo-synced feedback delays. Echo has a darkening low-pass in the feedback loop.
+  - Reverb: convolution with a generated impulse, size set by the parameter.
+  - Flanger: LFO-modulated short delay with feedback.
+  - Filter: resonant low-pass or high-pass sweep.
+- **Send vs insert:** Echo, Delay and Reverb are *send* effects. The dry signal stays at full level, and turning the unit off closes the send so tails ring out. Flanger and Filter are *insert* effects: dry drops as the level rises.
+- **Timing:** `timeSec = beats × 60 / BPM` of the first assigned deck (analysed or tagged BPM × pitch). It is recomputed on every tempo change.
+- **Actions:** `fx.unitN.on / mix / param / chain.next|prev / beats.next|prev / assign.deckK`. DDJ-SB: FX button 1 = on (LED), 2 = next effect, 3 = beat length; FX knob = level; SHIFT + knob = parameter.
+
+## Track analysis (waveforms + beat grid)
+
+`src/analysis/analyzeTrack.ts` runs in a Web Worker. It produces:
+
+- a 3-band waveform: one-pole crossovers at 200 Hz and 2.5 kHz, with peaks stored 150 times per second;
+- a tempo estimate: onset-strength envelope, then autocorrelation to find the tempo family, then a fine comb search (±2 %) for exact BPM and phase.
+
+A tag or service BPM is used as a hint and is octave-aware. The result is an **estimated** beat grid: BPM, first beat, and downbeats assumed every 4 beats. Unit tests confirm 96, 128 and 174 BPM are detected within ±0.3 BPM and 30 ms of phase on synthetic tracks. Manual grid editing, key detection and sync are Phase 2.
+
 ## Adding an audio effect (Phase 6 structure)
 
 1. Create `src/audio/effects/<Name>.ts` that exposes `{ input: AudioNode, output: AudioNode, setParam(name, value) }`, or an AudioWorklet processor for custom DSP.

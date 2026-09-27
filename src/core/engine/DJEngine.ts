@@ -20,9 +20,27 @@ import {
   headMixGains,
   type CrossfaderCurve,
 } from "./mixerMath";
-import type { AudioEngine, TrackInfo } from "./types";
+import type { AudioEngine, FxType, TrackInfo } from "./types";
 
 export const TEMPO_RANGES = [0.06, 0.1, 0.16, 1.0] as const;
+export const FX_TYPES: FxType[] = ["echo", "delay", "reverb", "flanger", "filter"];
+export const FX_BEATS = [0.25, 0.5, 0.75, 1, 2, 4] as const;
+
+export interface BeatGrid {
+  bpm: number;
+  firstBeat: number;
+  confidence: number;
+  source: "analysis" | "metadata" | "none";
+}
+
+export interface FxUnitState {
+  type: FxType;
+  on: boolean;
+  mix: number;
+  param: number;
+  beats: number;
+  decks: boolean[];
+}
 const AT_CUE_TOLERANCE_S = 0.02;
 
 export interface DeckState {
@@ -49,6 +67,8 @@ export interface DeckState {
   jogTouched: boolean;
   scratching: boolean;
   hotcues: (number | null)[];
+  /** Estimated beat grid from analysis (null until analysed). */
+  beatGrid: BeatGrid | null;
 }
 
 export interface ChannelState {
@@ -76,6 +96,7 @@ export interface MixerState {
 export interface EngineState {
   decks: DeckState[];
   mixer: MixerState;
+  fx: FxUnitState[];
 }
 
 export interface EngineSettings {
@@ -134,6 +155,7 @@ function initialDeck(index: number): DeckState {
     jogTouched: false,
     scratching: false,
     hotcues: new Array(HOTCUE_COUNT).fill(null),
+    beatGrid: null,
   };
 }
 
@@ -204,6 +226,10 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         headMix: 0.3,
         headLevel: 0.8,
       },
+      fx: [
+        { type: "echo", on: false, mix: 0.5, param: 0.5, beats: 0.75, decks: Array.from({ length: this.deckCount }, (_, i) => i === 0) },
+        { type: "reverb", on: false, mix: 0.5, param: 0.5, beats: 1, decks: Array.from({ length: this.deckCount }, (_, i) => i === 1) },
+      ],
     };
     this.loadTokens = new Array(this.deckCount).fill(0);
     this.preview = Array.from({ length: this.deckCount }, () => ({ origin: 0, latchPlay: false }));
@@ -215,6 +241,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
 
     this.registerHandlers();
     this.applyMixer();
+    this.applyAllFx();
   }
 
   // ───────────────────────────── public API ─────────────────────────────
@@ -231,6 +258,21 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.settings = { ...this.settings, ...patch, jog: { ...this.settings.jog, ...patch.jog } };
     this.applyMixer();
     for (let d = 0; d < this.deckCount; d++) this.applyTempo(d, this.state.decks[d].tempo);
+  }
+
+  /** Called by the analysis service when a deck's beat grid is known. */
+  setBeatGrid(deck: number, grid: BeatGrid): void {
+    if (!this.state.decks[deck] || this.state.decks[deck].status !== "ready") return;
+    this.patchDeck(deck, { beatGrid: grid });
+    this.applyAllFx();
+  }
+
+  /** Current tempo of a deck in BPM (analysed or metadata BPM x pitch), or null. */
+  getBpm(deck: number): number | null {
+    const d = this.state.decks[deck];
+    if (!d) return null;
+    const base = d.beatGrid?.bpm ?? d.track?.bpm ?? null;
+    return base ? base * d.rate : null;
   }
 
   getPosition(deck: number): number {
@@ -273,6 +315,13 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       const hc = /^hotcue\.(\d+)$/.exec(f);
       if (hc) return d.hotcues[Number(hc[1]) - 1] != null ? 1 : 0;
       return 0;
+    }
+    const fxMatch = /^fx\.unit(\d+)\.(on|assign\.deck(\d+))$/.exec(key);
+    if (fxMatch) {
+      const u = this.state.fx[Number(fxMatch[1]) - 1];
+      if (!u) return 0;
+      if (fxMatch[2] === "on") return u.on ? 1 : 0;
+      return u.decks[Number(fxMatch[3]) - 1] ? 1 : 0;
     }
     const chMatch = /^mixer\.channel(\d+)\.(.+)$/.exec(key);
     if (chMatch) {
@@ -339,6 +388,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         previewing: false,
         cuePoint: 0,
         hotcues: new Array(HOTCUE_COUNT).fill(null),
+        beatGrid: null,
       });
       this.applyTempo(deck, this.state.decks[deck].tempo);
       this.log.info("engine", `Loaded "${track.title}" into deck ${deckLetter(deck)} (${decoded.duration.toFixed(1)} s)`);
@@ -411,6 +461,45 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     on("mixer.headphone.mix", (v) => this.patchMixer({ headMix: clamp(v, 0, 1) }));
     on("mixer.headphone.level", (v) => this.patchMixer({ headLevel: clamp(v, 0, 1) }));
     on("browser.scroll", (v) => this.browser.moveSelection(Math.sign(v) * Math.max(1, Math.round(Math.abs(v)))));
+
+    for (let u = 0; u < this.state.fx.length; u++) {
+      const f = `fx.unit${u + 1}`;
+      const toggleOn = pressed(() => this.patchFx(u, { on: !this.state.fx[u].on }));
+      on(`${f}.on`, toggleOn);
+      on(`${f}.button1`, toggleOn);
+      const nextType = (d: 1 | -1) =>
+        pressed(() => {
+          const i = FX_TYPES.indexOf(this.state.fx[u].type);
+          this.patchFx(u, { type: FX_TYPES[(i + d + FX_TYPES.length) % FX_TYPES.length] });
+        });
+      on(`${f}.button2`, nextType(1));
+      on(`${f}.chain.next`, nextType(1));
+      on(`${f}.chain.prev`, nextType(-1));
+      const nextBeats = (d: 1 | -1, wrap: boolean) =>
+        pressed(() => {
+          const i = FX_BEATS.indexOf(this.state.fx[u].beats as (typeof FX_BEATS)[number]);
+          let j = i + d;
+          if (wrap) j = (j + FX_BEATS.length) % FX_BEATS.length;
+          this.patchFx(u, { beats: FX_BEATS[clamp(j, 0, FX_BEATS.length - 1)] });
+        });
+      on(`${f}.button3`, nextBeats(1, true));
+      on(`${f}.beats.next`, nextBeats(1, false));
+      on(`${f}.beats.prev`, nextBeats(-1, false));
+      on(`${f}.knob`, (v) => this.patchFx(u, { mix: clamp(v, 0, 1) }));
+      on(`${f}.mix`, (v) => this.patchFx(u, { mix: clamp(v, 0, 1) }));
+      on(`${f}.knob.shift`, (v) => this.patchFx(u, { param: clamp(v, 0, 1) }));
+      on(`${f}.param`, (v) => this.patchFx(u, { param: clamp(v, 0, 1) }));
+      for (let d = 0; d < this.deckCount; d++) {
+        on(
+          `${f}.assign.deck${d + 1}`,
+          pressed(() => {
+            const decks = this.state.fx[u].decks.slice();
+            decks[d] = !decks[d];
+            this.patchFx(u, { decks });
+          }),
+        );
+      }
+    }
 
     // Everything else in the catalogue is accepted (so mappings validate and the
     // MIDI monitor shows the resolved action) but reported as not yet implemented.
@@ -555,6 +644,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     const rate = 1 + tempo * d.tempoRange;
     this.audio.setRate(deck, rate);
     this.patchDeck(deck, { tempo, rate });
+    this.applyAllFx();
   }
 
   private cycleTempoRange(deck: number): void {
@@ -625,6 +715,35 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       headMasterGain: mstG,
       headphoneGain: faderToGain(mx.headLevel),
     });
+  }
+
+  // ───────────────────────────── FX ─────────────────────────────
+
+  private applyAllFx(): void {
+    for (let u = 0; u < this.state.fx.length; u++) this.applyFx(u);
+  }
+
+  /** Beat-synced FX time from the first assigned deck's tempo (120 BPM if unknown). */
+  private applyFx(u: number): void {
+    const f = this.state.fx[u];
+    const deck = f.decks.findIndex(Boolean);
+    const bpm = (deck >= 0 ? this.getBpm(deck) : null) ?? 120;
+    this.audio.setFx(u, {
+      type: f.type,
+      enabled: f.on,
+      mix: f.mix,
+      param: f.param,
+      timeSec: clamp((f.beats * 60) / bpm, 0.01, 3.9),
+      decks: f.decks,
+    });
+  }
+
+  private patchFx(u: number, patch: Partial<FxUnitState>): void {
+    const fx = this.state.fx.slice();
+    fx[u] = { ...fx[u], ...patch };
+    this.state = { ...this.state, fx };
+    this.applyFx(u);
+    this.emit("state", this.state);
   }
 
   // ───────────────────────────── state plumbing ─────────────────────────────

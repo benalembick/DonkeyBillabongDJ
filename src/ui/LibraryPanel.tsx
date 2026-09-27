@@ -2,7 +2,7 @@
  * Music browser: Local Library + streaming providers (Spotify, Apple Music).
  * Streaming tracks are browse-only; when a matching local file exists it can be loaded instead.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TrackInfo } from "../core/engine/types";
 import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
 import { PROVIDER_NAMES, toTrackInfo, type ProviderView } from "../providers/StreamingStore";
@@ -36,31 +36,51 @@ function useFreeDeck(): number | null {
   return i >= 0 ? i : null;
 }
 
+type LocalCollection = "all" | "recent" | "rated";
+
 export function LibraryPanel() {
-  const [source, setSource] = useState<Source>("local");
+  const [source, setSource] = useState<Source>(() => {
+    try {
+      return (localStorage.getItem("dbdj.ui.librarySource") as Source) || "local";
+    } catch {
+      return "local";
+    }
+  });
+  const [collection, setCollection] = useState<LocalCollection>("all");
   const lib = useLibraryState();
   const streams = useStreamingState();
   const audiusState = useAudiusState();
   const dot = (v: ProviderView) => (v.status?.connected ? "● " : v.status?.configured ? "◐ " : "○ ");
+  const choose = (s: Source, c?: LocalCollection) => {
+    setSource(s);
+    if (c) setCollection(c);
+    try {
+      localStorage.setItem("dbdj.ui.librarySource", s);
+    } catch {
+      /* ignore */
+    }
+  };
+  const recent = lib.tracks.filter((t) => t.addedAt && Date.now() - t.addedAt < 30 * 86400_000).length;
+  const rated = lib.tracks.filter((t) => (t.rating ?? 0) >= 4).length;
+  const item = (s: Source, label: React.ReactNode, c?: LocalCollection) => (
+    <button data-source={c ? `local-${c}` : s} className={source === s && (!c || collection === c) ? "active" : ""} onClick={() => choose(s, c)}>
+      {label}
+    </button>
+  );
   return (
     <div className="browser">
       <nav className="browser-sources">
-        <div className="browser-heading">MUSIC</div>
-        <button className={source === "local" ? "active" : ""} onClick={() => setSource("local")}>
-          Local Library <span className="count">{lib.tracks.length}</span>
-        </button>
-        <button className={source === "spotify" ? "active" : ""} onClick={() => setSource("spotify")}>
-          {dot(streams.spotify)}Spotify
-        </button>
-        <button className={source === "apple-music" ? "active" : ""} onClick={() => setSource("apple-music")}>
-          {dot(streams["apple-music"])}Apple Music
-        </button>
-        <button className={source === "audius" ? "active" : ""} onClick={() => setSource("audius")}>
-          {audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span>
-        </button>
+        <div className="browser-heading">COLLECTION</div>
+        {item("local", <>♫ All Tracks <span className="count">{lib.tracks.length}</span></>, "all")}
+        {item("local", <>⏱ Recently Added <span className="count">{recent}</span></>, "recent")}
+        {item("local", <>★ Top Rated <span className="count">{rated}</span></>, "rated")}
+        <div className="browser-heading">STREAMING</div>
+        {item("spotify", <>{dot(streams.spotify)}Spotify</>)}
+        {item("apple-music", <>{dot(streams["apple-music"])}Apple Music</>)}
+        {item("audius", <>{audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span></>)}
       </nav>
       <div className="browser-body">
-        {source === "local" ? <LocalView /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
+        {source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
       </div>
     </div>
   );
@@ -68,15 +88,93 @@ export function LibraryPanel() {
 
 // ─────────────────────────────── Local ───────────────────────────────
 
-function LocalView() {
+type SortKey = "title" | "artist" | "album" | "genre" | "bpm" | "key" | "durationMs" | "rating" | "addedAt";
+const COLUMNS: { key: SortKey | null; label: string; cls?: string }[] = [
+  { key: null, label: "", cls: "col-art" },
+  { key: "title", label: "Title" },
+  { key: "artist", label: "Artist" },
+  { key: "album", label: "Album" },
+  { key: "genre", label: "Genre" },
+  { key: "bpm", label: "BPM", cls: "num" },
+  { key: "key", label: "Key" },
+  { key: "durationMs", label: "Time", cls: "num" },
+  { key: "rating", label: "Rating" },
+  { key: null, label: "Source" },
+  { key: "addedAt", label: "Added" },
+  { key: null, label: "Load" },
+];
+
+function artColor(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360} 45% 32%)`;
+}
+
+function Stars({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <span className="stars" onClick={(e) => e.stopPropagation()}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} className={n <= value ? "on" : ""} onClick={() => onChange(n === value ? 0 : n)} aria-label={`${n} stars`}>
+          ★
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function LocalView({ collection }: { collection: LocalCollection }) {
   const app = useApp();
-  const { library, platform, engine, log } = app;
+  const { library, platform, engine, log, browser } = app;
   const state = useLibraryState();
   const freeDeck = useFreeDeck();
   const selectedRef = useRef<HTMLTableRowElement>(null);
   const [dropping, setDropping] = useState(false);
-  const { browser } = app;
-  useEffect(() => browser.setActive(library), [browser, library]);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: collection === "recent" ? "addedAt" : "artist", dir: collection === "recent" ? -1 : 1 });
+
+  useEffect(() => {
+    if (collection === "recent") setSort({ key: "addedAt", dir: -1 });
+    if (collection === "rated") setSort({ key: "rating", dir: -1 });
+  }, [collection]);
+
+  // What's on screen, in on-screen order (filter → collection → sort).
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = state.tracks;
+    if (collection === "recent") list = list.filter((t) => t.addedAt && Date.now() - t.addedAt < 30 * 86400_000);
+    if (collection === "rated") list = list.filter((t) => (t.rating ?? 0) >= 4);
+    if (q) list = list.filter((t) => `${t.title} ${t.artist} ${t.album} ${t.genre ?? ""} ${t.key ?? ""}`.toLowerCase().includes(q));
+    const k = sort.key;
+    return [...list].sort((a, b) => {
+      const va = (a as unknown as Record<string, unknown>)[k] ?? (typeof (b as unknown as Record<string, unknown>)[k] === "number" ? -1 : "");
+      const vb = (b as unknown as Record<string, unknown>)[k] ?? (typeof va === "number" ? -1 : "");
+      const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
+      return c * sort.dir;
+    });
+  }, [state.tracks, query, sort, collection]);
+
+  const selectedTrack = state.tracks[state.selected];
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+
+  // The controller's browse encoder / LOAD follow the on-screen order.
+  useEffect(() => {
+    const port = {
+      moveSelection: (delta: number) => {
+        const list = visibleRef.current;
+        if (!list.length) return;
+        const cur = list.findIndex((t) => t.ref === library.getSelected()?.ref);
+        const next = list[Math.max(0, Math.min(list.length - 1, (cur < 0 ? 0 : cur + delta)))];
+        library.select(library.getState().tracks.findIndex((t) => t.ref === next.ref));
+      },
+      getSelected: () => {
+        const sel = library.getSelected();
+        return sel && visibleRef.current.some((t) => t.ref === sel.ref) ? sel : visibleRef.current[0] ?? null;
+      },
+    };
+    browser.setActive(port);
+    return () => browser.setActive(library);
+  }, [browser, library]);
 
   useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: "nearest" });
@@ -90,6 +188,8 @@ function LocalView() {
       log.error("library", String(err));
     }
   };
+
+  const headerClick = (k: SortKey | null) => k && setSort((s) => ({ key: k, dir: s.key === k ? (s.dir === 1 ? -1 : 1) : 1 }));
 
   return (
     <div
@@ -111,67 +211,77 @@ function LocalView() {
       }}
     >
       <div className="toolbar">
+        <input className="search-input" placeholder="Search title, artist, album, genre, key…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button className="primary" onClick={() => void add(false)}>+ Add files…</button>
         <button onClick={() => void add(true)}>+ Add folder…</button>
         <span className="hint">
-          Drop files or folders here · drag a row onto a deck · double-click loads into a free deck · browse encoder + LOAD A/B on the DDJ-SB
+          {visible.length} of {state.tracks.length} tracks · double-click loads into a free deck · drag to a deck · browse knob + LOAD on the DDJ-SB
         </span>
       </div>
       <div className="table-wrap">
-        <table>
+        <table className="tracks">
           <thead>
             <tr>
-              <th>#</th>
-              <th>Title</th>
-              <th>Artist</th>
-              <th>Time</th>
-              <th>BPM</th>
-              <th>Key</th>
-              <th>ISRC</th>
-              <th>Source</th>
-              <th>Load</th>
+              {COLUMNS.map((c) => (
+                <th key={c.label || "art"} className={`${c.cls ?? ""} ${c.key ? "sortable" : ""}`} onClick={() => headerClick(c.key)}>
+                  {c.label}
+                  {c.key && sort.key === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {state.tracks.length === 0 && (
               <tr>
-                <td colSpan={9} className="empty dropzone">
+                <td colSpan={COLUMNS.length} className="empty dropzone">
                   <div className="dropzone-big">⤓ Drop audio files or folders here</div>
                   or use <b>+ Add files…</b> / <b>+ Add folder…</b>. Files are referenced in place, never moved or modified.
                 </td>
               </tr>
             )}
-            {state.tracks.map((t, i) => (
-              <tr
-                key={t.ref}
-                ref={i === state.selected ? selectedRef : undefined}
-                className={i === state.selected ? "selected" : ""}
-                onClick={() => library.select(i)}
-                onDoubleClick={() => {
-                  if (freeDeck === null) log.warn("engine", "Both decks are playing — pause one to load.");
-                  else void engine.loadTrack(freeDeck, t);
-                }}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(t));
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-              >
-                <td>{i + 1}</td>
-                <td>{t.title}</td>
-                <td>{t.artist}</td>
-                <td>{fmtDuration(t.durationMs)}</td>
-                <td>{t.bpm ?? "—"}</td>
-                <td>{t.key ?? "—"}</td>
-                <td className="mono">{t.isrc ?? (t.tagsRead ? "—" : "…")}</td>
-                <td>
-                  <span className="source-badge">LOCAL</span>
-                </td>
-                <td className="row-actions">
-                  <LoadButtons track={t} />
-                </td>
-              </tr>
-            ))}
+            {visible.map((t) => {
+              const sel = t.ref === selectedTrack?.ref;
+              return (
+                <tr
+                  key={t.ref}
+                  ref={sel ? selectedRef : undefined}
+                  className={sel ? "selected" : ""}
+                  onClick={() => library.select(state.tracks.indexOf(t))}
+                  onDoubleClick={() => {
+                    if (freeDeck === null) log.warn("engine", "Both decks are playing — pause one to load.");
+                    else void engine.loadTrack(freeDeck, t);
+                  }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(t));
+                    e.dataTransfer.effectAllowed = "copy";
+                  }}
+                >
+                  <td className="col-art">
+                    <span className="art-tile" style={{ background: artColor(t.album || t.artist || t.title) }}>
+                      {(t.artist || t.title).slice(0, 1).toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="title-cell">{t.title}</td>
+                  <td>{t.artist}</td>
+                  <td>{t.album}</td>
+                  <td>{t.genre ?? ""}</td>
+                  <td className="num">{t.bpm ? t.bpm.toFixed(1) : "—"}</td>
+                  <td>{t.key ?? "—"}</td>
+                  <td className="num">{fmtDuration(t.durationMs)}</td>
+                  <td>
+                    <Stars value={t.rating ?? 0} onChange={(n) => void app.setRating(t.ref, n)} />
+                  </td>
+                  <td>
+                    <span className="source-badge">LOCAL</span>
+                  </td>
+                  <td className="hint">{t.addedAt ? new Date(t.addedAt).toLocaleDateString() : ""}</td>
+                  <td className="row-actions">
+                    <LoadButtons track={t} />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

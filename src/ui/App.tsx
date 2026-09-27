@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { App as AppServices } from "../app/createApp";
 import type { ControllerInfo } from "../controllers/ControllerManager";
 import type { LogEntry } from "../core/log";
@@ -11,6 +11,9 @@ import { LibraryPanel } from "./LibraryPanel";
 import { MatchDialogHost } from "./MatchDialog";
 import { Mixer } from "./Mixer";
 import { Diagnostics, Settings } from "./SystemPanels";
+import { FxBar } from "./FxBar";
+import { getLayout, setLayout, useLayout, zoom, type LayoutMode } from "./layout";
+import { WaveformStack } from "./Waveforms";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -67,8 +70,8 @@ function AudioStatusBadge() {
   );
 }
 
-const TABS = ["Library", "Live controller events", "Controller test", "MIDI monitor", "Diagnostics", "Settings"] as const;
-type Tab = (typeof TABS)[number];
+const TOOL_TABS = ["Controller events", "Controller test", "MIDI monitor", "Diagnostics", "Settings"] as const;
+type ToolTab = (typeof TOOL_TABS)[number];
 
 /** Transient notices for warnings/errors (e.g. "deck is playing", "Spotify audio can't be mixed"). */
 function Toasts() {
@@ -96,10 +99,114 @@ function Toasts() {
   );
 }
 
+const MODES: { id: LayoutMode; label: string; title: string }[] = [
+  { id: "horizontal", label: "HORIZONTAL", title: "Stacked horizontal waveforms, decks and mixer below" },
+  { id: "vertical", label: "VERTICAL", title: "Parallel vertical waveforms in the centre, decks either side" },
+  { id: "classic", label: "CLASSIC", title: "Slim waveforms, compact decks, bigger library" },
+];
+
+function LayoutSwitch() {
+  const { mode, zoomSeconds } = useLayout();
+  return (
+    <div className="layout-switch" role="group" aria-label="Layout">
+      {MODES.map((m) => (
+        <button key={m.id} className={mode === m.id ? "active" : ""} title={m.title} onClick={() => setLayout({ mode: m.id })}>
+          {m.label}
+        </button>
+      ))}
+      <span className="zoom" title="Waveform zoom (or scroll over a waveform)">
+        <button className="tiny" onClick={() => zoom(-1)} aria-label="Zoom in">＋</button>
+        <span>{zoomSeconds}s</span>
+        <button className="tiny" onClick={() => zoom(1)} aria-label="Zoom out">－</button>
+      </span>
+    </div>
+  );
+}
+
+function ToolsOverlay({ tab, setTab, onClose }: { tab: ToolTab; setTab: (t: ToolTab) => void; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="tools-overlay" role="dialog" aria-label="Tools">
+      <div className="tools-head">
+        <nav className="tabs">
+          {TOOL_TABS.map((t) => (
+            <button key={t} className={t === tab ? "active" : ""} onClick={() => setTab(t)}>
+              {t}
+            </button>
+          ))}
+        </nav>
+        <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+      </div>
+      <div className="tools-body">
+        <Boundary name={tab}>
+          {tab === "Controller events" && <LiveEvents />}
+          {tab === "Controller test" && <ControllerTest />}
+          {tab === "MIDI monitor" && <MidiMonitor />}
+          {tab === "Diagnostics" && <Diagnostics />}
+          {tab === "Settings" && <Settings />}
+        </Boundary>
+      </div>
+    </div>
+  );
+}
+
+/** Drag handle between the performance area and the library (height saved per layout). */
+function Splitter({ mode }: { mode: LayoutMode }) {
+  const start = useRef<{ y: number; h: number } | null>(null);
+  return (
+    <div
+      className="splitter"
+      title="Drag to resize the library"
+      onPointerDown={(e) => {
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        start.current = { y: e.clientY, h: getLayout().libraryHeight[mode] };
+      }}
+      onPointerMove={(e) => {
+        const s = start.current;
+        if (!s) return;
+        const h = Math.max(160, Math.min(window.innerHeight * 0.75, s.h - (e.clientY - s.y)));
+        setLayout({ libraryHeight: { ...getLayout().libraryHeight, [mode]: Math.round(h) } });
+      }}
+      onPointerUp={() => (start.current = null)}
+    />
+  );
+}
+
+function Stage({ mode }: { mode: LayoutMode }) {
+  if (mode === "vertical") {
+    return (
+      <main className="stage vertical">
+        <Boundary name="Deck A"><Deck deck={0} /></Boundary>
+        <div className="center-col">
+          <Boundary name="Waveforms"><WaveformStack orientation="vertical" /></Boundary>
+          <Boundary name="Mixer"><Mixer dense /></Boundary>
+        </div>
+        <Boundary name="Deck B"><Deck deck={1} /></Boundary>
+      </main>
+    );
+  }
+  const compact = mode === "classic";
+  return (
+    <main className={`stage ${mode}`}>
+      <Boundary name="Waveforms"><WaveformStack orientation="horizontal" /></Boundary>
+      <div className="deck-row-3">
+        <Boundary name="Deck A"><Deck deck={0} variant={compact ? "compact" : "full"} /></Boundary>
+        <Boundary name="Mixer"><Mixer dense={compact} /></Boundary>
+        <Boundary name="Deck B"><Deck deck={1} variant={compact ? "compact" : "full"} /></Boundary>
+      </div>
+    </main>
+  );
+}
+
 function Shell() {
-  const [tab, setTab] = useState<Tab>("Library");
+  const [tool, setTool] = useState<ToolTab | null>(null);
   const app = useApp();
   const { platform } = app;
+  const layout = useLayout();
   useEffect(() => {
     document.title = "Donkey Billabong DJ";
   }, []);
@@ -116,7 +223,6 @@ function Shell() {
       if (!e.dataTransfer?.files.length) return;
       e.preventDefault();
       const files = [...e.dataTransfer.files];
-      setTab("Library");
       void platform.refsFromDrop(files).then((refs) => app.addFiles(refs));
     };
     window.addEventListener("dragover", over);
@@ -126,44 +232,30 @@ function Shell() {
       window.removeEventListener("drop", drop);
     };
   }, [platform, app]);
+
   return (
-    <div className="app">
+    <div className={`app layout-${layout.mode}`} style={{ ["--lib-h" as string]: `${layout.libraryHeight[layout.mode]}px` }}>
       <header className="topbar">
         <div className="brand">
           <span className="logo">◐</span> DONKEY BILLABONG <span className="thin">DJ</span>
-          <span className="phase">Phase 1 · hardware spike</span>
         </div>
+        <LayoutSwitch />
         <div className="statuses">
           <AudioStatusBadge />
           <ControllerStatus />
-          {platform.kind === "desktop" ? <span className="status idle">Desktop</span> : <DownloadDesktopButton />}
-          <button className="status" onClick={() => setTab("Settings")}>⚙ Settings</button>
+          {platform.kind === "desktop" ? null : <DownloadDesktopButton />}
+          <button className="status open-tools" onClick={() => setTool("Controller events")} title="Controller events, test, MIDI monitor">🎛 Controller</button>
+          <button className="status" onClick={() => setTool("Diagnostics")}>Diagnostics</button>
+          <button className="status" onClick={() => setTool("Settings")}>⚙ Settings</button>
         </div>
       </header>
-      <main className="main">
-        <Boundary name="Deck A"><Deck deck={0} /></Boundary>
-        <Boundary name="Mixer"><Mixer /></Boundary>
-        <Boundary name="Deck B"><Deck deck={1} /></Boundary>
-      </main>
+      <Boundary name="FX"><FxBar /></Boundary>
+      <Stage mode={layout.mode} />
+      {layout.mode !== "classic" && <Splitter mode={layout.mode} />}
       <section className="lower">
-        <nav className="tabs">
-          {TABS.map((t) => (
-            <button key={t} className={t === tab ? "active" : ""} onClick={() => setTab(t)}>
-              {t}
-            </button>
-          ))}
-        </nav>
-        <div className="tab-body">
-          <Boundary name={tab}>
-            {tab === "Library" && <LibraryPanel />}
-            {tab === "Live controller events" && <LiveEvents />}
-            {tab === "Controller test" && <ControllerTest />}
-            {tab === "MIDI monitor" && <MidiMonitor />}
-            {tab === "Diagnostics" && <Diagnostics />}
-            {tab === "Settings" && <Settings />}
-          </Boundary>
-        </div>
+        <Boundary name="Library"><LibraryPanel /></Boundary>
       </section>
+      {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}
       <Toasts />
       <MatchDialogHost />
     </div>

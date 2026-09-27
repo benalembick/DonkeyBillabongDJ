@@ -1,36 +1,19 @@
 /**
- * Track analysis worker (off the UI and audio threads).
- * Phase 1: overview waveform peaks. Phase 2 adds BPM / beat grid / key here.
+ * Track analysis worker (off the UI and audio threads): 3-band waveform,
+ * overview and tempo/beat-phase estimation. See analyzeTrack.ts.
  */
-interface OverviewRequest {
+import { analyzeTrack } from "./analyzeTrack";
+
+interface AnalysisRequest {
   id: number;
   channels: Float32Array[];
+  sampleRate: number;
   buckets: number;
+  metaBpm: number | null;
 }
 
-self.onmessage = (e: MessageEvent<OverviewRequest>) => {
-  const { id, channels, buckets } = e.data;
-  const len = channels[0]?.length ?? 0;
-  const peaks = new Float32Array(buckets);
-  const rms = new Float32Array(buckets);
-  if (len > 0) {
-    const per = len / buckets;
-    for (let b = 0; b < buckets; b++) {
-      const start = Math.floor(b * per);
-      const end = Math.min(len, Math.floor((b + 1) * per));
-      let p = 0;
-      let s = 0;
-      for (const ch of channels) {
-        for (let i = start; i < end; i++) {
-          const v = ch[i];
-          const a = v < 0 ? -v : v;
-          if (a > p) p = a;
-          s += v * v;
-        }
-      }
-      peaks[b] = p;
-      rms[b] = Math.sqrt(s / Math.max(1, (end - start) * channels.length));
-    }
-  }
-  (self as unknown as Worker).postMessage({ id, peaks, rms }, [peaks.buffer, rms.buffer]);
+self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
+  const { id, channels, sampleRate, buckets, metaBpm } = e.data;
+  const a = analyzeTrack(channels, sampleRate, buckets, metaBpm);
+  (self as unknown as Worker).postMessage({ id, ...a }, [a.peaks.buffer, a.rms.buffer, a.low.buffer, a.mid.buffer, a.high.buffer]);
 };

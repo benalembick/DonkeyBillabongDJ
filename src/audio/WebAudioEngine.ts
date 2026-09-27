@@ -15,10 +15,12 @@ import type {
   AudioStatus,
   ChannelDsp,
   DecodedAudio,
+  FxDsp,
   MasterDsp,
   OutputDevice,
 } from "../core/engine/types";
 import { DEFAULT_AUDIO_CONFIG } from "../core/engine/types";
+import { FxSlot } from "./fx";
 
 const PARAM_SMOOTH_S = 0.008;
 
@@ -30,6 +32,11 @@ interface DeckGraph {
   eqHigh: BiquadFilterNode;
   hpf: BiquadFilterNode;
   lpf: BiquadFilterNode;
+  /** Dry path around the FX slots. */
+  dry: GainNode;
+  /** Sum of dry + FX returns, feeding the fader and PFL. */
+  post: GainNode;
+  fx: FxSlot[];
   out: GainNode;
   pfl: GainNode;
   meter: AnalyserNode;
@@ -60,6 +67,7 @@ export class WebAudioEngine implements AudioEngine {
   private config: AudioConfig;
   private decks: DeckGraph[] = [];
   private models: DeckModel[];
+  private fxDsp: (FxDsp | null)[] = [null, null];
   private masterDsp: MasterDsp = { masterGain: 0.64, headCueGain: 1, headMasterGain: 0, headphoneGain: 0.64 };
   private masterGain: GainNode | null = null;
   private masterMeter: AnalyserNode | null = null;
@@ -246,16 +254,21 @@ export class WebAudioEngine implements AudioEngine {
       meter.fftSize = 1024;
 
       node.connect(trim).connect(eqLow).connect(eqMid).connect(eqHigh).connect(hpf).connect(lpf);
-      lpf.connect(out).connect(meter);
+      const dry = ctx.createGain();
+      const post = ctx.createGain();
+      lpf.connect(dry).connect(post);
+      const fx = [0, 1].map(() => new FxSlot(ctx, lpf, post));
+      post.connect(out).connect(meter);
       out.connect(masterBus);
-      lpf.connect(pfl).connect(cueBus);
+      post.connect(pfl).connect(cueBus);
 
-      const g: DeckGraph = { node, trim, eqLow, eqMid, eqHigh, hpf, lpf, out, pfl, meter };
+      const g: DeckGraph = { node, trim, eqLow, eqMid, eqHigh, hpf, lpf, dry, post, fx, out, pfl, meter };
       node.port.onmessage = (e: MessageEvent<WorkletReport>) => this.onWorkletMessage(i, e.data);
       this.decks.push(g);
       this.restoreDeck(i);
     }
     this.applyMaster();
+    this.applyFx();
   }
 
   /** Re-send deck state to a freshly built worklet (after start or reconfigure). */
@@ -482,6 +495,27 @@ export class WebAudioEngine implements AudioEngine {
     set(g.lpf.frequency, Math.min(dsp.filter.lowpassHz, ctx.sampleRate / 2 - 100));
     set(g.out.gain, dsp.outputGain);
     set(g.pfl.gain, dsp.pfl ? 1 : 0);
+  }
+
+  setFx(unit: number, fx: FxDsp): void {
+    this.fxDsp[unit] = fx;
+    this.applyFx();
+  }
+
+  private applyFx(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.decks.forEach((g, deck) => {
+      let dryCut = 0;
+      this.fxDsp.forEach((fx, unit) => {
+        const slot = g.fx[unit];
+        if (!fx || !slot) return;
+        const active = fx.enabled && !!fx.decks[deck];
+        slot.update(fx, active);
+        dryCut += slot.dryReduction(fx, active);
+      });
+      g.dry.gain.setTargetAtTime(Math.max(0, 1 - dryCut), ctx.currentTime, 0.02);
+    });
   }
 
   setMaster(dsp: MasterDsp): void {
