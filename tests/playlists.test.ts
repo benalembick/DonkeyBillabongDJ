@@ -45,6 +45,23 @@ describe("PlaylistStore", () => {
     expect(s).toEqual({ count: 3, durationMs: 380_000, missing: 1 });
   });
 
+  it("duplicates independently and serializes saves before deletion", async () => {
+    const db = memoryPersistence();
+    const store = new PlaylistStore(db);
+    await store.load();
+    const original = store.create("Set", ["a", "b"]);
+    const copy = store.duplicate(original.id)!;
+    store.replaceTracks(copy.id, ["b", "c"]);
+    store.rename(original.id, "Opening");
+    await store.remove(original.id);
+    await store.flush();
+    expect(db.rows.has(original.id)).toBe(false);
+    expect(db.rows.get(copy.id)?.refs).toEqual(["b", "c"]);
+    const reloaded = new PlaylistStore(db);
+    await reloaded.load();
+    expect(reloaded.get(copy.id)?.name).toBe("Set copy");
+  });
+
   it("moveItem handles drags in both directions", () => {
     expect(moveItem([1, 2, 3, 4], 0, 3)).toEqual([2, 3, 1, 4]);
     expect(moveItem([1, 2, 3, 4], 0, 4)).toEqual([2, 3, 4, 1]);

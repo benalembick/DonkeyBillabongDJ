@@ -20,6 +20,9 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     super();
     this.engine = engine;
     engine.on("event", (e) => {
+      if (e.type === "trackLoaded" || e.type === "trackUnloaded") {
+        for (const [id, deck] of this.pending) if (deck === e.deck) this.pending.delete(id);
+      }
       if (e.type === "trackUnloaded") {
         this.overviews[e.deck] = null;
         this.emit("overview", { deck: e.deck, overview: null });

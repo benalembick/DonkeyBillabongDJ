@@ -14,6 +14,7 @@ import { Diagnostics, Settings } from "./SystemPanels";
 import { FxBar } from "./FxBar";
 import { getLayout, setLayout, useLayout, zoom, type LayoutMode } from "./layout";
 import { WaveformStack } from "./Waveforms";
+import brandLogo from "../assets/donkey-billabong-dj-logo.png";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -237,7 +238,7 @@ function Shell() {
     <div className={`app layout-${layout.mode}`} style={{ ["--lib-h" as string]: `${layout.libraryHeight[layout.mode]}px` }}>
       <header className="topbar">
         <div className="brand">
-          <span className="logo">◐</span> DONKEY BILLABONG <span className="thin">DJ</span>
+          <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={2153} height={730} draggable={false} />
         </div>
         <LayoutSwitch />
         <div className="statuses">

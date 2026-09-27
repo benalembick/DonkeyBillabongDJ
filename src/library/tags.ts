@@ -35,5 +35,6 @@ export function applyTags(t: TrackInfo, tags: TagResult): TrackInfo {
     year: tags.year ?? t.year,
     artworkUrl: tags.artworkUrl ?? t.artworkUrl,
     tagsRead: true,
+    artworkRead: true,
   };
 }

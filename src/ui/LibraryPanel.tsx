@@ -14,8 +14,9 @@ import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 import { useStemIndex, useStemStatus } from "./stemHooks";
 import { ArtTile } from "./ArtTile";
+import { AutoDJQueue, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
 
-type Source = "local" | "audius" | StreamingProviderId;
+type Source = "local" | "audius" | "playlist" | "queue" | StreamingProviderId;
 
 function fmtDuration(ms?: number): string {
   if (!ms) return "—";
@@ -49,6 +50,9 @@ export function LibraryPanel() {
     }
   });
   const [collection, setCollection] = useState<LocalCollection>("all");
+  const [playlistId, setPlaylistId] = useState<string | null>(null);
+  const openPlaylist = (id: string) => { setPlaylistId(id); setSource("playlist"); };
+  const openQueue = () => setSource("queue");
   const lib = useLibraryState();
   const streams = useStreamingState();
   const audiusState = useAudiusState();
@@ -76,13 +80,14 @@ export function LibraryPanel() {
         {item("local", <>♫ All Tracks <span className="count">{lib.tracks.length}</span></>, "all")}
         {item("local", <>⏱ Recently Added <span className="count">{recent}</span></>, "recent")}
         {item("local", <>★ Top Rated <span className="count">{rated}</span></>, "rated")}
+        <PlaylistNav selected={source === "playlist" ? playlistId : null} onOpen={openPlaylist} onQueue={openQueue} />
         <div className="browser-heading">STREAMING</div>
         {item("spotify", <>{dot(streams.spotify)}Spotify</>)}
         {item("apple-music", <>{dot(streams["apple-music"])}Apple Music</>)}
         {item("audius", <>{audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span></>)}
       </nav>
       <div className="browser-body">
-        {source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
+        {source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
       </div>
     </div>
   );
@@ -129,6 +134,8 @@ function LocalView({ collection }: { collection: LocalCollection }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: collection === "recent" ? "addedAt" : "artist", dir: collection === "recent" ? -1 : 1 });
   const stemIdx = useStemIndex();
   const [menu, setMenu] = useState<{ x: number; y: number; track: TrackInfo } | null>(null);
+  const [selectedRefs, setSelectedRefs] = useState<string[]>([]);
+  const [info, setInfo] = useState<TrackInfo | null>(null);
 
   useEffect(() => {
     if (collection === "recent") setSort({ key: "addedAt", dir: -1 });
@@ -212,6 +219,9 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         <input className="search-input" placeholder="Search title, artist, album, genre, key…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button className="primary" onClick={() => void add(false)}>+ Add files…</button>
         <button onClick={() => void add(true)}>+ Add folder…</button>
+        {platform.kind === "browser" && <button onClick={() => void add(false)}>Reconnect files</button>}
+        <button onClick={() => setSelectedRefs(visible.map((t) => t.ref))}>Select all</button>
+        <PlaylistActions refs={selectedRefs.length ? selectedRefs : selectedTrack ? [selectedTrack.ref] : []} />
         <span className="hint">
           {visible.length} of {state.tracks.length} tracks · double-click loads into a free deck · drag to a deck · browse knob + LOAD on the DDJ-SB
         </span>
@@ -238,13 +248,19 @@ function LocalView({ collection }: { collection: LocalCollection }) {
               </tr>
             )}
             {visible.map((t) => {
-              const sel = t.ref === selectedTrack?.ref;
+              const sel = selectedRefs.includes(t.ref) || t.ref === selectedTrack?.ref;
               return (
                 <tr
                   key={t.ref}
                   ref={sel ? selectedRef : undefined}
                   className={sel ? "selected" : ""}
-                  onClick={() => library.select(state.tracks.indexOf(t))}
+                  onClick={(e) => {
+                    if (e.shiftKey && selectedRefs.length) {
+                      const a = visible.findIndex((x) => x.ref === selectedRefs[0]), b = visible.indexOf(t);
+                      setSelectedRefs(visible.slice(Math.max(0, Math.min(a, b)), Math.max(a, b) + 1).map((x) => x.ref));
+                    } else setSelectedRefs(e.ctrlKey || e.metaKey ? selectedRefs.includes(t.ref) ? selectedRefs.filter((r) => r !== t.ref) : [...selectedRefs, t.ref] : [t.ref]);
+                    library.select(state.tracks.indexOf(t));
+                  }}
                   onDoubleClick={() => {
                     if (freeDeck === null) log.warn("engine", "Both decks are playing — pause one to load.");
                     else void engine.loadTrack(freeDeck, t);
@@ -252,18 +268,20 @@ function LocalView({ collection }: { collection: LocalCollection }) {
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(t));
+                    e.dataTransfer.setData(TRACK_REFS, JSON.stringify(selectedRefs.includes(t.ref) ? selectedRefs : [t.ref]));
                     e.dataTransfer.effectAllowed = "copy";
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     library.select(state.tracks.indexOf(t));
+                    if (!selectedRefs.includes(t.ref)) setSelectedRefs([t.ref]);
                     setMenu({ x: e.clientX, y: e.clientY, track: t });
                   }}
                 >
                   <td className="col-art">
                     <ArtTile track={t} size={22} />
                   </td>
-                  <td className="title-cell">{t.title}</td>
+                  <td className="title-cell">{t.title}{t.unavailableReason && <span className="warn"> · Reconnect file</span>}</td>
                   <td>{t.artist}</td>
                   <td>{t.album}</td>
                   <td>{t.genre ?? ""}</td>
@@ -291,25 +309,27 @@ function LocalView({ collection }: { collection: LocalCollection }) {
           </tbody>
         </table>
       </div>
-      {menu && <TrackMenu {...menu} cached={!!stemIdx[menu.track.ref]} onClose={() => setMenu(null)} />}
+      {info && <TrackDetails track={state.tracks.find((t) => t.ref === info.ref) ?? info} onClose={() => setInfo(null)} />}
+      {menu && <TrackMenu {...menu} refs={selectedRefs.includes(menu.track.ref) ? selectedRefs : [menu.track.ref]} cached={!!stemIdx[menu.track.ref]} onInfo={() => setInfo(menu.track)} onClose={() => setMenu(null)} />}
     </div>
   );
 }
 
 /** Right-click menu for a local track: load, and STEM cache management. */
-function TrackMenu({ x, y, track, cached, onClose }: { x: number; y: number; track: TrackInfo; cached: boolean; onClose: () => void }) {
+function TrackMenu({ x, y, track, refs, cached, onInfo, onClose }: { x: number; y: number; track: TrackInfo; refs: string[]; cached: boolean; onInfo: () => void; onClose: () => void }) {
   const { engine, stems, platform } = useApp();
   const s = useEngineState();
   const stemStatus = useStemStatus();
   useEffect(() => {
     const close = () => onClose();
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     window.addEventListener("pointerdown", close);
     window.addEventListener("blur", close);
-    window.addEventListener("keydown", close);
+    window.addEventListener("keydown", key);
     return () => {
       window.removeEventListener("pointerdown", close);
       window.removeEventListener("blur", close);
-      window.removeEventListener("keydown", close);
+      window.removeEventListener("keydown", key);
     };
   }, [onClose]);
   const act = (fn: () => void) => (e: React.PointerEvent | React.MouseEvent) => {
@@ -326,6 +346,8 @@ function TrackMenu({ x, y, track, cached, onClose }: { x: number; y: number; tra
         </button>
       ))}
       <hr />
+      <PlaylistActions refs={refs} onDone={onClose} />
+      <button onClick={act(onInfo)}>Track information</button>
       <button disabled={!canAnalyse} title={canAnalyse ? "" : stemStatus.reason} onClick={act(() => stems.analyse([track], (r) => platform.readAudio(r)))}>
         Analyse STEMS
       </button>

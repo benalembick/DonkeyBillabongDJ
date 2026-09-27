@@ -54,9 +54,29 @@ select { padding: 2px 4px; }
 
 /* ── top bar ── */
 .topbar { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 4px 10px; background: #07080a; border-bottom: 1px solid var(--line); }
-.brand { font-weight: 800; letter-spacing: 0.12em; white-space: nowrap; }
-.brand .logo { color: var(--deck-a); }
-.brand .thin { font-weight: 300; color: var(--deck-b); }
+.brand { flex: 0 0 auto; display: flex; align-items: center; }
+.brand-logo { display: block; width: clamp(180px, 20vw, 260px); height: auto; }
+
+/* Local playlists and the temporary Auto DJ runtime queue. */
+.playlist-view, .auto-queue { min-height: 0; overflow: auto; }
+.playlist-toolbar, .playlist-view > .toolbar, .auto-queue > .toolbar { flex-wrap: wrap; flex-shrink: 0; }
+.playlist-create { padding: 4px; }
+.playlist-create input { width: 100%; min-width: 0; }
+.auto-settings { padding: 6px 10px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.auto-settings summary { cursor: pointer; color: var(--muted); }
+.auto-settings .toolbar { flex-wrap: wrap; padding-left: 0; }
+.auto-settings label { display: inline-flex; align-items: center; gap: 4px; }
+.auto-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.auto-status { font-size: 10px; color: var(--muted); }
+.auto-status.active, .auto-status.transitioning { color: var(--ok); }
+.auto-status.paused { color: var(--warn); }
+.queue-now, .playlist-track-info { display: flex; align-items: center; gap: 12px; padding: 10px; flex-shrink: 0; }
+.queue-plan { padding: 0 10px 8px; }
+.playlist-track-info { background: var(--panel-2); border-top: 1px solid var(--line); }
+.playlist-track-info p { margin: 4px 0; }
+.playlist-view .table-wrap, .auto-queue .table-wrap { min-height: 100px; }
+.ctx-menu { max-height: min(360px, 80vh); overflow-y: auto; }
+.browser-sources { overflow-y: auto; }
 .layout-switch { display: flex; align-items: center; gap: 2px; }
 .layout-switch > button { font-size: 11px; font-weight: 800; letter-spacing: 0.08em; padding: 3px 10px; border-radius: 0; color: var(--muted); }
 .layout-switch > button:first-child { border-radius: 4px 0 0 4px; }

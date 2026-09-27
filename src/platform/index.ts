@@ -12,6 +12,7 @@ import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackRe
 import type { SourceId } from "../matching/sources";
 import { LocalStorageStore } from "../providers/web";
 import type { StemBridge } from "../stems/StemService";
+import { BrowserLibrary, browserFileRef, coverDataUrl } from "../library/BrowserLibrary";
 
 /**
  * Platform abstraction: desktop (Electron, full filesystem access) vs browser
@@ -80,6 +81,7 @@ export interface TrackRow {
   rating?: number;
   /** Cached cover art URL (dbdj-art://…). */
   artwork?: string | null;
+  artwork_read?: number;
 }
 export interface PlaylistRow {
   id: string;
@@ -109,19 +111,19 @@ export interface PlaylistPersistence {
 
 /** Browser: playlists in localStorage (track files must be re-added after a reload, but names/order survive). */
 class LocalStoragePlaylists implements PlaylistPersistence {
-  private store = new LocalStorageStore("dbdj.playlists.");
+  private read(): Record<string, PlaylistRow> { return JSON.parse(localStorage.getItem("dbdj.playlists.all") ?? "{}"); }
   async load(): Promise<PlaylistRow[]> {
-    return Object.values((await this.store.get<Record<string, PlaylistRow>>("all")) ?? {}).sort((a, b) => a.created_at - b.created_at);
+    return Object.values(this.read()).sort((a, b) => a.created_at - b.created_at);
   }
   async save(p: PlaylistRow): Promise<void> {
-    const all = (await this.store.get<Record<string, PlaylistRow>>("all")) ?? {};
+    const all = this.read();
     all[p.id] = { ...p, updated_at: Date.now() };
-    await this.store.set("all", all);
+    localStorage.setItem("dbdj.playlists.all", JSON.stringify(all));
   }
   async remove(id: string): Promise<void> {
-    const all = (await this.store.get<Record<string, PlaylistRow>>("all")) ?? {};
+    const all = this.read();
     delete all[id];
-    await this.store.set("all", all);
+    localStorage.setItem("dbdj.playlists.all", JSON.stringify(all));
   }
 }
 
@@ -178,6 +180,7 @@ function rowToTrack(r: TrackRow): TrackInfo {
     genre: r.genre ?? undefined,
     year: r.year ?? undefined,
     tagsRead: !!r.tags_read,
+    artworkRead: !!r.artwork_read,
     rating: r.rating ?? 0,
     addedAt: r.added_at,
     artworkUrl: r.artwork ?? undefined,
@@ -197,6 +200,7 @@ function trackToRow(t: TrackInfo): TrackRow {
     bpm: t.bpm,
     key: t.key,
     tags_read: t.tagsRead ? 1 : 0,
+    artwork_read: t.artworkRead ? 1 : 0,
     added_at: t.addedAt ?? Date.now(),
     rating: t.rating ?? 0,
     artwork: t.artworkUrl?.startsWith("dbdj-art://") ? t.artworkUrl : null,
@@ -322,7 +326,6 @@ class BrowserPlatform implements Platform {
   readonly kind = "browser" as const;
   readonly os = typeof navigator !== "undefined" ? navigator.platform : "unknown";
   private files = new Map<string, File>();
-  private nextId = 1;
 
   private pick(opts: { accept?: string; multiple?: boolean; directory?: boolean }): Promise<File[]> {
     return new Promise((resolve) => {
@@ -338,12 +341,12 @@ class BrowserPlatform implements Platform {
   }
 
   readonly streaming: StreamingBridge = createBrowserStreaming();
-  readonly library = null;
+  readonly library = new BrowserLibrary();
   readonly mappingStorage: MappingStorage = new LocalStorageMappings();
   readonly playlists: PlaylistPersistence = new LocalStoragePlaylists();
 
   async readTags(refs: string[]): Promise<TagResult[]> {
-    const { parseBlob } = await import("music-metadata");
+    const { parseBlob, selectCover } = await import("music-metadata");
     const out: TagResult[] = [];
     for (const ref of refs) {
       const f = this.files.get(ref);
@@ -352,9 +355,11 @@ class BrowserPlatform implements Platform {
         continue;
       }
       try {
-        const m = await parseBlob(f, { skipCovers: true, duration: false });
+        const m = await parseBlob(f, { skipCovers: false, duration: false });
         const c = m.common;
+        const cover = selectCover(c.picture);
         out.push({
+          artworkUrl: cover ? await coverDataUrl(cover.data, cover.format) : undefined,
           ref,
           ok: true,
           title: c.title,
@@ -386,7 +391,7 @@ class BrowserPlatform implements Platform {
     return files
       .filter((f) => AUDIO_NAME.test(f.name))
       .map((f) => {
-        const ref = `browser-file:${this.nextId++}`;
+        const ref = browserFileRef(f);
         this.files.set(ref, f);
         return { ref, name: f.name };
       });

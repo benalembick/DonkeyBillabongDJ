@@ -8,7 +8,7 @@ const repo = /github\.com\/([^/]+\/[^/.]+)/.exec(pkg.repository?.url ?? "")?.[1]
 // Production-only CSP. The dev server needs inline scripts for React Fast Refresh.
 const CSP =
   "default-src 'self'; script-src 'self' https://js-cdn.music.apple.com; style-src 'self' 'unsafe-inline'; frame-src https://*.apple.com; " +
-  "img-src 'self' data: blob: https:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' https:";
+  "img-src 'self' data: blob: https: dbdj-art:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' https:";
 
 function productionCsp(): Plugin {
   return {

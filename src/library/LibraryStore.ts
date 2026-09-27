@@ -38,7 +38,11 @@ export class LibraryStore extends Emitter<{ change: LibraryState }> implements B
   addFiles(files: AudioFileRef[]): TrackInfo[] {
     const existing = new Set(this.state.tracks.map((t) => t.ref));
     const now = Date.now();
-    const added = files.filter((f) => !existing.has(f.ref)).map((f) => ({ ...trackInfoFromFileName(f.ref, f.name), addedAt: now }));
+    const added = files.filter((f) => {
+      if (existing.has(f.ref)) return false;
+      existing.add(f.ref);
+      return true;
+    }).map((f) => ({ ...trackInfoFromFileName(f.ref, f.name), addedAt: now }));
     if (added.length === 0) return [];
     const tracks = [...this.state.tracks, ...added];
     this.set({ tracks, selected: this.state.selected < 0 ? 0 : this.state.selected });

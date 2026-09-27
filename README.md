@@ -26,6 +26,8 @@ Streaming: Library → MUSIC → **Spotify** or **Apple Music** walks you throug
 
 ## What works now (Phase 1)
 
+- **Playlists + Auto DJ:** persistent ordered playlists, multi-select additions, drag ordering, duplication, artwork and a temporary editable Auto DJ queue. Start a playlist to load, analyse, prepare, Sync and crossfade through the existing decks. Manual control pauses automation. See [the playlist and Auto DJ guide](docs/auto-dj.md).
+
 - Electron desktop app (Windows verified by an automated smoke test with real audio output; macOS build configured).
 - Two independent decks on a real-time AudioWorklet player: play/pause, CDJ-style CUE (set, return, hold-to-preview), tempo with ±6/10/16%/WIDE ranges, jog nudge while playing, precise jog positioning while paused, vinyl scratching, 8 hot cues, click-to-seek overview waveform (computed in a worker).
 - Mixer: gain, 3-band EQ with kills, filter, channel faders, crossfader (3 curves), master, headphone cue/mix on 4-output devices, level meters.

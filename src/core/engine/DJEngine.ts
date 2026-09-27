@@ -185,6 +185,7 @@ export type TrackBytesLoader = (track: TrackInfo, opts: { onProgress: (p: LoadPr
 export type SourcePolicy = (track: TrackInfo) => { ok: boolean; reason?: string };
 
 export type EngineEvent =
+  | { type: "loadRequested"; deck: number; source: "manual" | "auto-dj" }
   | { type: "trackLoaded"; deck: number; track: TrackInfo; audioHandle: unknown }
   | { type: "trackUnloaded"; deck: number };
 
@@ -310,6 +311,13 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
 
   getState(): EngineState {
     return this.state;
+  }
+
+  refreshTrackMetadata(tracks: TrackInfo[]): void {
+    for (const d of this.state.decks) {
+      const track = d.track && tracks.find((t) => t.ref === d.track!.ref);
+      if (track && track !== d.track) this.patchDeck(d.index, { track: d.track?.resolvedFrom ? { ...track, resolvedFrom: d.track.resolvedFrom } : track });
+    }
   }
 
   getSettings(): EngineSettings {
@@ -764,7 +772,18 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     return 0;
   }
 
-  async loadTrack(deck: number, track: TrackInfo): Promise<void> {
+  cancelPendingLoad(deck: number): void {
+    if (this.state.decks[deck]?.status !== "loading") return;
+    ++this.loadTokens[deck];
+    this.loadAborts[deck]?.abort();
+    this.audio.setPlaying(deck, false);
+    this.audio.unloadDeck(deck);
+    this.patchDeck(deck, { status: "empty", track: null, playing: false, duration: 0, beatGrid: null });
+    this.emit("event", { type: "trackUnloaded", deck });
+  }
+
+  async loadTrack(deck: number, track: TrackInfo, source: "manual" | "auto-dj" = "manual"): Promise<void> {
+    this.emit("event", { type: "loadRequested", deck, source });
     const d = this.state.decks[deck];
     if (!d) return;
     const policy = this.canLoad(track);

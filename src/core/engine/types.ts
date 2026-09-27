@@ -26,6 +26,7 @@ export interface TrackInfo {
   addedAt?: number;
   /** Embedded tags have been read (local files). */
   tagsRead?: boolean;
+  artworkRead?: boolean;
   /** Set when this playable track was resolved from another service's metadata (Smart Match). */
   resolvedFrom?: ResolvedFrom;
 }

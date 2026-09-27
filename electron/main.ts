@@ -17,6 +17,7 @@ import { handleArtProtocol, registerArtScheme } from "./library/artwork";
 registerArtScheme();
 import * as libraryDb from "./library/db";
 import { readTags } from "./library/tags";
+import { autoDJFixtures, runAutoDJSmoke } from "./autodjSmoke";
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".flac", ".ogg", ".opus", ".aif", ".aiff"]);
 const ALLOWED_PERMISSIONS = new Set(["midi", "midiSysex", "media", "speaker-selection", "clipboard-sanitized-write"]);
@@ -165,6 +166,7 @@ function runSmokeTest(win: BrowserWindow): void {
         // Optional playback check: DBDJ_SMOKE_TRACK=/path/to/file.wav loads it into deck A,
         // plays ~1.5 s through the real output device and reports playhead/levels.
         const track = JSON.stringify(process.env.DBDJ_SMOKE_TRACK ?? "");
+        const autoFixtures = process.env.DBDJ_SMOKE_AUTODJ ? await autoDJFixtures() : null;
         report = await win.webContents.executeJavaScript(`(async () => {
           const a = window.dbdj;
           const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -455,7 +457,7 @@ function runSmokeTest(win: BrowserWindow): void {
           await sleep(200);
           for (const btn of document.querySelectorAll(".tools-overlay .tabs button")) { btn.click(); await sleep(250); crash(btn.textContent); }
           document.querySelector(".tools-overlay .modal-close")?.click();
-          for (const btn of document.querySelectorAll(".browser-sources button")) { btn.click(); await sleep(200); crash("library " + btn.textContent); }
+          for (const btn of document.querySelectorAll(".browser-sources button[data-source]")) { btn.click(); await sleep(200); crash("library " + btn.textContent); }
           document.querySelector('.browser-sources [data-source="local-all"]')?.click();
           // Layout switching must not touch the engine: same tracks, positions and play state before/after.
           const snap = () => JSON.stringify(a.engine.getState().decks.map((d) => [d.track?.ref, d.status, d.playing, d.hotcues]));
@@ -483,8 +485,10 @@ function runSmokeTest(win: BrowserWindow): void {
           await sleep(800);
           checks.stillOnAppAfterNavigationAttempt = !!document.querySelector(".topbar");
           const clickSel = ${JSON.stringify(process.env.DBDJ_SMOKE_BROWSER_CLICK ?? "")};
+          const autoDJ = ${process.env.DBDJ_SMOKE_AUTODJ ? `await (${runAutoDJSmoke.toString()})(a, ${JSON.stringify(autoFixtures)})` : "null"};
           if (clickSel) { document.querySelector(clickSel)?.click(); await sleep(1500); }
           return {
+            autoDJ,
             stems,
             demo,
             isolation,

@@ -2,7 +2,7 @@
  * Playlists: named, ordered lists of library tracks (by ref). The single
  * source of truth for the playlist UI and Auto DJ. Persisted through the
  * platform (SQLite on desktop, localStorage in the browser); saves are
- * debounced per playlist so drag-reordering doesn't hammer the database.
+ * serialized so overlapping saves and deletion cannot resurrect stale data.
  */
 import { Emitter } from "../core/events";
 import type { TrackInfo } from "../core/engine/types";
@@ -21,11 +21,9 @@ export interface PlaylistState {
   loaded: boolean;
 }
 
-const SAVE_DELAY_MS = 300;
-
 export class PlaylistStore extends Emitter<{ change: PlaylistState }> {
   private state: PlaylistState = { playlists: [], loaded: false };
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private writing: Promise<void> = Promise.resolve();
   private readonly persist: PlaylistPersistence | null;
   private readonly onError: (err: unknown) => void;
 
@@ -57,6 +55,15 @@ export class PlaylistStore extends Emitter<{ change: PlaylistState }> {
     return this.state.playlists.find((p) => p.id === id);
   }
 
+  duplicate(id: string): Playlist | undefined {
+    const p = this.get(id);
+    return p ? this.create(`${p.name} copy`, p.refs) : undefined;
+  }
+
+  replaceTracks(id: string, refs: string[]): void {
+    this.update(id, (p) => ({ ...p, refs: dedupe(refs) }));
+  }
+
   create(name: string, refs: string[] = []): Playlist {
     const now = Date.now();
     const p: Playlist = { id: newId(), name: uniqueName(name.trim() || "New Playlist", this.state.playlists), refs: dedupe(refs), createdAt: now, updatedAt: now };
@@ -72,15 +79,9 @@ export class PlaylistStore extends Emitter<{ change: PlaylistState }> {
   }
 
   async remove(id: string): Promise<void> {
-    const t = this.timers.get(id);
-    if (t) clearTimeout(t);
-    this.timers.delete(id);
     this.set({ playlists: this.state.playlists.filter((p) => p.id !== id) });
-    try {
-      await this.persist?.remove(id);
-    } catch (err) {
-      this.onError(err);
-    }
+    this.writing = this.writing.then(() => this.persist?.remove(id)).catch(this.onError);
+    await this.writing;
   }
 
   /** Add tracks (duplicates within a playlist are skipped). Inserts at \`index\`, default the end. */
@@ -124,12 +125,7 @@ export class PlaylistStore extends Emitter<{ change: PlaylistState }> {
 
   /** Write pending changes now (e.g. before the window closes). */
   async flush(): Promise<void> {
-    const ids = [...this.timers.keys()];
-    for (const id of ids) {
-      clearTimeout(this.timers.get(id)!);
-      this.timers.delete(id);
-      await this.write(id);
-    }
+    await this.writing;
   }
 
   private update(id: string, fn: (p: Playlist) => Playlist): void {
@@ -141,31 +137,11 @@ export class PlaylistStore extends Emitter<{ change: PlaylistState }> {
     this.save(id);
   }
 
-  private save(id: string, now = false): void {
-    const t = this.timers.get(id);
-    if (t) clearTimeout(t);
-    if (now) {
-      this.timers.delete(id);
-      void this.write(id);
-      return;
-    }
-    this.timers.set(
-      id,
-      setTimeout(() => {
-        this.timers.delete(id);
-        void this.write(id);
-      }, SAVE_DELAY_MS),
-    );
-  }
-
-  private async write(id: string): Promise<void> {
+  private save(id: string, _now = false): void {
     const p = this.get(id);
     if (!p || !this.persist) return;
-    try {
-      await this.persist.save(toRow(p));
-    } catch (err) {
-      this.onError(err);
-    }
+    const row = toRow(p);
+    this.writing = this.writing.then(() => this.persist!.save(row)).catch(this.onError);
   }
 
   private set(patch: Partial<PlaylistState>): void {

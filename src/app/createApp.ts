@@ -27,6 +27,9 @@ import { AudiusSource } from "../providers/audius/AudiusSource";
 import { AudiusStore, BrowserRouter } from "../providers/audius/AudiusStore";
 import { audiusIdFromRef } from "../providers/audius/audiusTracks";
 import { StemService } from "../stems/StemService";
+import { PlaylistStore } from "../library/PlaylistStore";
+import { AutoDJ } from "../autodj/AutoDJ";
+import { DEFAULT_AUTO_DJ } from "../autodj/transition";
 
 export interface App {
   bus: CommandBus;
@@ -35,6 +38,8 @@ export interface App {
   engine: DJEngine;
   controllers: ControllerManager;
   library: LibraryStore;
+  playlists: PlaylistStore;
+  autoDJ: AutoDJ;
   analysis: AnalysisService;
   /** STEM separation (desktop only; local ONNX model). */
   stems: StemService;
@@ -101,6 +106,10 @@ export function createApp(): App {
     settings: { ...storedSettings, jog: { ...DEFAULT_ENGINE_SETTINGS.jog, ...storedSettings.jog } },
   });
   const analysis = new AnalysisService(engine);
+  const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
+  void playlists.load();
+  const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis,
+    settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s) });
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   const keyboard = new KeyboardShortcuts(bus);
@@ -147,18 +156,17 @@ export function createApp(): App {
   };
 
   // Restore the persisted library (desktop), then fill in any tags not read yet.
-  if (platform.library) {
-    void platform.library
+  const libraryReady = platform.library ? platform.library
       .load()
       .then((tracks) => {
         if (tracks.length === 0) return;
-        library.hydrate(tracks);
+        library.hydrate([...tracks, ...library.getState().tracks.filter((t) => !tracks.some((x) => x.ref === t.ref))]);
         log.info("library", `Loaded ${tracks.length} track(s) from your library database`);
-        const pending = tracks.filter((t) => !t.tagsRead).map((t) => t.ref);
+        const pending = tracks.filter((t) => !t.unavailableReason && (!t.tagsRead || !t.artworkRead)).map((t) => t.ref);
         if (pending.length) void enrichTags(pending);
       })
-      .catch((err) => log.warn("library", `Library database unavailable: ${String(err)}`));
-  }
+      .catch((err) => log.warn("library", `Library database unavailable: ${String(err)}`)) : Promise.resolve();
+  library.on("change", ({ tracks }) => engine.refreshTrackMetadata(tracks));
 
   bus.on("failed", ({ cmd, error }) => log.error("engine", `Action ${cmd.action} failed: ${String(error)}`));
   audio.on((e) => {
@@ -169,6 +177,8 @@ export function createApp(): App {
   window.addEventListener("error", (e) => log.error("ui", e.message));
   window.addEventListener("unhandledrejection", (e) => log.error("ui", `Unhandled: ${String(e.reason)}`));
   window.addEventListener("beforeunload", () => controllers.shutdown());
+  window.addEventListener("beforeunload", () => { autoDJ.dispose(); void playlists.flush(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) void playlists.flush(); });
 
   log.info("app", `Donkey Billabong DJ starting (${platform.kind} mode, ${platform.os})`);
   void audio.start().then(
@@ -181,7 +191,7 @@ export function createApp(): App {
   void controllers.init();
   keyboard.attach(window);
   // Sync phase lock (and other time-based engine work) runs off the UI frame loop.
-  setInterval(() => engine.tick(), 40);
+  setInterval(() => { engine.tick(); autoDJ.tick(); }, 40);
 
   return {
     bus,
@@ -190,6 +200,8 @@ export function createApp(): App {
     engine,
     controllers,
     library,
+    playlists,
+    autoDJ,
     analysis,
     stems,
     keyboard,
@@ -203,6 +215,13 @@ export function createApp(): App {
       if (t) await platform.library?.save([t]).catch((err) => log.warn("library", `Library database: ${String(err)}`));
     },
     addFiles: async (refs, loadIntoDeck) => {
+      await libraryReady;
+      const restored = refs.map((r) => library.getByRef(r.ref)).filter((t): t is TrackInfo => !!t).map((t) => ({ ...t, unavailableReason: undefined }));
+      library.patchTracks(restored);
+      if (restored.length) {
+        await platform.library?.save(restored).catch((err) => log.warn("library", String(err)));
+        void enrichTags(restored.filter((t) => !t.tagsRead || !t.artworkRead).map((t) => t.ref));
+      }
       const added = library.addFiles(refs);
       if (refs.length === 0) {
         log.warn("library", "No supported audio files found (MP3, WAV, M4A/AAC, FLAC, OGG, AIFF).");

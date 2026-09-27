@@ -22,6 +22,7 @@ export interface TrackRow {
   added_at: number;
   rating: number;
   artwork: string | null;
+  artwork_read?: number;
 }
 
 export interface PlaylistRow {
@@ -90,6 +91,7 @@ function open(): DatabaseSync {
 function migrate(d: DatabaseSync): void {
   const cols = (d.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("rating")) d.exec("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes("artwork_read")) d.exec("ALTER TABLE tracks ADD COLUMN artwork_read INTEGER NOT NULL DEFAULT 0");
   d.exec(`
     CREATE TABLE IF NOT EXISTS playlists (
       id TEXT PRIMARY KEY,
@@ -118,15 +120,15 @@ export function loadTracks(): TrackRow[] {
 export function upsertTracks(rows: TrackRow[]): void {
   const d = open();
   const stmt = d.prepare(`
-    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at, rating, artwork)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at, rating, artwork, artwork_read)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(ref) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
       genre=excluded.genre, year=excluded.year, duration_ms=excluded.duration_ms, isrc=excluded.isrc,
-      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read, rating=excluded.rating, artwork=excluded.artwork`);
+      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read, rating=excluded.rating, artwork=excluded.artwork, artwork_read=excluded.artwork_read`);
   d.exec("BEGIN");
   try {
     for (const r of rows) {
-      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at, r.rating ?? 0, r.artwork ?? null);
+      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at, r.rating ?? 0, r.artwork ?? null, r.artwork_read ?? 0);
     }
     d.exec("COMMIT");
   } catch (err) {
