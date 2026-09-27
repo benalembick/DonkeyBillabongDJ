@@ -3,7 +3,7 @@
  * tempo, hot cues, mixer curves). It receives Commands from the CommandBus and
  * drives an AudioEngine. It knows nothing about React, MIDI or files.
  */
-import { actionCatalog, HOTCUE_COUNT, deckLetter, STEM_NAMES, STEM_LABELS, type StemName } from "../actions";
+import { actionCatalog, BEATLOOP_SIZES, HOTCUE_COUNT, deckLetter, STEM_NAMES, STEM_LABELS, type StemName } from "../actions";
 import type { CommandBus } from "../commands";
 import { Emitter } from "../events";
 import type { EventLog } from "../log";
@@ -61,6 +61,21 @@ export interface FxUnitState {
 }
 const AT_CUE_TOLERANCE_S = 0.02;
 
+export interface LoopState {
+  start: number;
+  end: number;
+  /** Length in beats when created from the beat grid (null = free-length manual loop). */
+  beats: number | null;
+  active: boolean;
+}
+
+/** Auto-loop sizes offered in the UI (beats). */
+export const LOOP_SIZES = [0.25, 0.5, 1, 2, 4, 8, 16, 32] as const;
+/** Sync corrects phase with at most this much extra speed (inaudible), and ignores tiny errors. */
+const PHASE_MAX_CORRECTION = 0.03;
+const PHASE_DEADBAND_BEATS = 0.004;
+const NUDGE_HOLDOFF_MS = 1500;
+
 export interface DeckState {
   index: number;
   track: TrackInfo | null;
@@ -88,6 +103,9 @@ export interface DeckState {
   /** Estimated beat grid from analysis (null until analysed). */
   beatGrid: BeatGrid | null;
   stems: DeckStems;
+  loop: LoopState | null;
+  /** Pending LOOP IN point (manual loop), until LOOP OUT. */
+  loopIn: number | null;
 }
 
 export interface ChannelState {
@@ -116,6 +134,8 @@ export interface EngineState {
   decks: DeckState[];
   mixer: MixerState;
   fx: FxUnitState[];
+  /** Deck whose tempo/phase synced decks follow (null = none yet). */
+  masterDeck: number | null;
 }
 
 export interface EngineSettings {
@@ -176,6 +196,8 @@ function initialDeck(index: number): DeckState {
     hotcues: new Array(HOTCUE_COUNT).fill(null),
     beatGrid: null,
     stems: { enabled: false, volume: [1, 1, 1, 1], muted: [false, false, false, false], status: "off", progress: 0 },
+    loop: null,
+    loopIn: null,
   };
 }
 
@@ -250,6 +272,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         { target: "deck", type: "echo", on: false, mix: 0.5, param: 0.5, beats: 0.75, decks: Array.from({ length: this.deckCount }, (_, i) => i === 0) },
         { target: "deck", type: "reverb", on: false, mix: 0.5, param: 0.5, beats: 1, decks: Array.from({ length: this.deckCount }, (_, i) => i === 1) },
       ],
+      masterDeck: null,
     };
     this.loadTokens = new Array(this.deckCount).fill(0);
     this.preview = Array.from({ length: this.deckCount }, () => ({ origin: 0, latchPlay: false }));
@@ -355,6 +378,284 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     if (!this.state.decks[deck] || this.state.decks[deck].status !== "ready") return;
     this.patchDeck(deck, { beatGrid: grid });
     this.applyAllFx();
+    if (this.state.decks[deck].sync || this.state.masterDeck === deck) this.syncFollowers();
+  }
+
+  // ───────────────────────────── SYNC ─────────────────────────────
+
+  private lastNudge: number[] = [];
+
+  /** Track BPM before pitch (analysed grid, else tag/service BPM). */
+  baseBpm(deck: number): number | null {
+    const d = this.state.decks[deck];
+    return d ? (d.beatGrid?.bpm ?? d.track?.bpm ?? null) : null;
+  }
+
+  /** Beat length in track seconds, or null without a BPM. */
+  beatLength(deck: number): number | null {
+    const b = this.baseBpm(deck);
+    return b ? 60 / b : null;
+  }
+
+  /**
+   * Called ~25×/s by the app: keeps synced decks phase-locked to the master
+   * with tiny, inaudible speed corrections (never jumps).
+   */
+  tick(): void {
+    const m = this.state.masterDeck;
+    if (m === null) return;
+    for (let f = 0; f < this.deckCount; f++) {
+      const fd = this.state.decks[f];
+      if (f === m || !fd.sync || fd.status !== "ready") continue;
+      const base = this.followRate(f, m);
+      if (!base) continue;
+      const err = this.phaseError(f, m);
+      let rate = base.rate;
+      const recentlyNudged = Date.now() - (this.lastNudge[f] ?? 0) < NUDGE_HOLDOFF_MS;
+      if (err !== null && !recentlyNudged && Math.abs(err) > PHASE_DEADBAND_BEATS) {
+        // Remove the error over about one second: Δrate = error (track seconds) per second.
+        const bl = this.beatLength(f)!;
+        rate += clamp(-err * bl, -PHASE_MAX_CORRECTION * base.rate, PHASE_MAX_CORRECTION * base.rate);
+      }
+      this.audio.setRate(f, rate);
+    }
+  }
+
+  /** Follower rate that matches the master's BPM (half/double tempo allowed), or null. */
+  private followRate(f: number, m: number): { rate: number; multiple: number } | null {
+    const bf = this.baseBpm(f);
+    const bm = this.baseBpm(m);
+    if (!bf || !bm) return null;
+    const target = bm * this.state.decks[m].rate;
+    let best = { rate: target / bf, multiple: 1 };
+    for (const k of [0.5, 2]) {
+      const r = (target * k) / bf;
+      if (Math.abs(r - 1) < Math.abs(best.rate - 1)) best = { rate: r, multiple: k };
+    }
+    return best;
+  }
+
+  /** Beat-phase difference follower − master in beats, in [-0.5, 0.5); null when phase can't be compared. */
+  phaseError(f: number, m: number): number | null {
+    const fd = this.state.decks[f];
+    const md = this.state.decks[m];
+    const fr = this.followRate(f, m);
+    if (!fd.beatGrid || !md.beatGrid || !fr || fr.multiple !== 1) return null;
+    if (!fd.playing || !md.playing || fd.scratching || md.scratching || fd.jogTouched || md.jogTouched) return null;
+    const bf = (this.audio.getPosition(f) - fd.beatGrid.firstBeat) / (60 / fd.beatGrid.bpm);
+    const bm = (this.audio.getPosition(m) - md.beatGrid.firstBeat) / (60 / md.beatGrid.bpm);
+    const e = bf - bm;
+    return e - Math.round(e);
+  }
+
+  private toggleSync(deck: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready") return;
+    if (d.sync) {
+      this.patchDeck(deck, { sync: false });
+      return;
+    }
+    if (!this.baseBpm(deck)) {
+      this.log.warn("engine", `Deck ${deckLetter(deck)}: can't SYNC yet — no BPM (analysis still running?)`);
+      return;
+    }
+    let m = this.state.masterDeck;
+    if (m === null || m === deck || !this.baseBpm(m) || this.state.decks[m].status !== "ready") {
+      m = this.pickMaster(deck);
+      if (m === null) {
+        // Nothing to follow: this deck leads.
+        this.patchState({ masterDeck: deck });
+        this.patchDeck(deck, { sync: true });
+        return;
+      }
+      this.patchState({ masterDeck: m });
+    }
+    this.patchDeck(deck, { sync: true });
+    this.matchTempo(deck, m);
+    // Both playing: snap onto the beat once (short de-clicked jump), then the phase lock keeps it there.
+    const err = this.phaseError(deck, m);
+    const bl = this.beatLength(deck);
+    if (err !== null && bl && Math.abs(err) > 0.02) this.seekTo(deck, this.audio.getPosition(deck) - err * bl);
+  }
+
+  /** Another loaded deck with a BPM, preferring one that is playing. */
+  private pickMaster(except: number): number | null {
+    let best: number | null = null;
+    for (let i = 0; i < this.deckCount; i++) {
+      const d = this.state.decks[i];
+      if (i === except || d.status !== "ready" || !this.baseBpm(i)) continue;
+      if (best === null || (d.playing && !this.state.decks[best].playing)) best = i;
+    }
+    return best;
+  }
+
+  /** Make a deck the tempo master (synced decks follow it). */
+  setMaster(deck: number): void {
+    const d = this.state.decks[deck];
+    if (!d || d.status !== "ready") return;
+    this.patchState({ masterDeck: deck });
+    this.syncFollowers();
+  }
+
+  private reassignMaster(leaving: number): void {
+    const next = this.pickMaster(leaving);
+    this.patchState({ masterDeck: next });
+  }
+
+  /** Re-match every synced follower's tempo (after the master's tempo or grid changed). */
+  private syncFollowers(): void {
+    const m = this.state.masterDeck;
+    if (m === null) return;
+    for (let f = 0; f < this.deckCount; f++) if (f !== m && this.state.decks[f].sync) this.matchTempo(f, m);
+  }
+
+  private matchTempo(f: number, m: number): void {
+    const r = this.followRate(f, m);
+    if (r) this.setRateDirect(f, r.rate);
+  }
+
+  /** Set an exact playback rate, widening the tempo range if needed so the slider stays truthful. */
+  setRateDirect(deck: number, rate: number): void {
+    const d = this.state.decks[deck];
+    let range = d.tempoRange;
+    if (Math.abs(rate - 1) > range + 1e-9) range = TEMPO_RANGES.find((r) => r >= Math.abs(rate - 1)) ?? 1;
+    const tempo = clamp((rate - 1) / range, -1, 1);
+    this.audio.setRate(deck, rate);
+    this.patchDeck(deck, { tempo, rate, tempoRange: range });
+    this.applyAllFx();
+  }
+
+  // ───────────────────────────── LOOPS ─────────────────────────────
+
+  private rolls: ({ origin: number; startedAt: number; rate: number; prev: LoopState | null } | null)[] = [];
+  private warnedNoBpm = new Set<number>();
+
+  /** Seek; leaving an active loop's range exits the loop (it stays available for RELOOP). */
+  seekTo(deck: number, seconds: number): void {
+    const d = this.state.decks[deck];
+    const t = clamp(seconds, 0, Math.max(0, d.duration));
+    const lp = d.loop;
+    if (lp?.active && (t < lp.start - 0.001 || t >= lp.end)) this.setLoop(deck, { ...lp, active: false });
+    this.audio.seek(deck, t);
+  }
+
+  private setLoop(deck: number, loop: LoopState | null): void {
+    this.patchDeck(deck, { loop });
+    this.audio.setLoop(deck, loop?.active ? { start: loop.start, end: loop.end } : null);
+  }
+
+  private beatLenOrDefault(deck: number): number {
+    const bl = this.beatLength(deck);
+    if (bl) return bl;
+    if (!this.warnedNoBpm.has(deck)) {
+      this.warnedNoBpm.add(deck);
+      this.log.warn("engine", `Deck ${deckLetter(deck)}: no BPM yet — loops assume 120 BPM until the track is analysed.`);
+    }
+    return 0.5;
+  }
+
+  /** Nearest beat-grid position (quantize), or t itself without a grid. */
+  private quantize(deck: number, t: number): number {
+    const g = this.state.decks[deck].beatGrid;
+    if (!g) return t;
+    const bl = 60 / g.bpm;
+    const q = g.firstBeat + Math.round((t - g.firstBeat) / bl) * bl;
+    return Math.abs(q - t) < bl * 0.5 ? Math.max(0, q) : t;
+  }
+
+  /** Auto loop of `beats` starting on the beat (or sub-beat) the playhead is in; pressing the same size again exits. */
+  beatLoop(deck: number, beats: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready") return;
+    if (d.loop?.active && d.loop.beats === beats) {
+      this.setLoop(deck, { ...d.loop, active: false });
+      return;
+    }
+    this.setLoop(deck, this.makeBeatLoop(deck, beats));
+  }
+
+  private makeBeatLoop(deck: number, beats: number): LoopState {
+    const d = this.state.decks[deck];
+    const bl = this.beatLenOrDefault(deck);
+    const len = beats * bl;
+    const pos = this.audio.getPosition(deck);
+    let start = pos;
+    if (d.beatGrid) {
+      const unit = beats >= 1 ? bl : len;
+      start = d.beatGrid.firstBeat + Math.floor((pos - d.beatGrid.firstBeat) / unit + 1e-6) * unit;
+      if (start < 0 || start + len <= pos) start = pos;
+    }
+    return { start, end: Math.min(start + len, d.duration), beats, active: true };
+  }
+
+  /** Loop roll: loops while held; on release playback continues where it would have been (slip). */
+  private loopRoll(deck: number, beats: number, down: boolean): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready") return;
+    if (down) {
+      if (!this.rolls[deck]) this.rolls[deck] = { origin: this.audio.getPosition(deck), startedAt: performance.now(), rate: d.playing ? d.rate : 0, prev: d.loop };
+      this.setLoop(deck, this.makeBeatLoop(deck, beats));
+      return;
+    }
+    const r = this.rolls[deck];
+    if (!r) return;
+    this.rolls[deck] = null;
+    this.setLoop(deck, r.prev ? { ...r.prev, active: false } : null);
+    this.audio.seek(deck, clamp(r.origin + ((performance.now() - r.startedAt) / 1000) * r.rate, 0, d.duration));
+  }
+
+  private loopIn(deck: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready") return;
+    this.patchDeck(deck, { loopIn: this.quantize(deck, this.audio.getPosition(deck)) });
+  }
+
+  private loopOut(deck: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready") return;
+    const start = d.loopIn ?? d.loop?.start ?? null;
+    if (start === null) return;
+    const end = this.quantize(deck, this.audio.getPosition(deck));
+    if (end - start < 0.01) return;
+    const bl = this.beatLength(deck);
+    const beats = bl ? Math.round(((end - start) / bl) * 100) / 100 : null;
+    this.patchDeck(deck, { loopIn: null });
+    this.setLoop(deck, { start, end, beats, active: true });
+  }
+
+  /** EXIT while looping; RELOOP (jump back into the last loop) otherwise. */
+  private loopExit(deck: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready" || !d.loop) return;
+    if (d.loop.active) {
+      this.setLoop(deck, { ...d.loop, active: false });
+      return;
+    }
+    const pos = this.audio.getPosition(deck);
+    this.setLoop(deck, { ...d.loop, active: true });
+    if (pos < d.loop.start || pos >= d.loop.end) this.audio.seek(deck, d.loop.start);
+  }
+
+  private resizeLoop(deck: number, factor: number): void {
+    const d = this.state.decks[deck];
+    const lp = d.loop;
+    if (!lp) return;
+    const len = (lp.end - lp.start) * factor;
+    if (len < 0.01 || lp.start + len > d.duration) return;
+    const next: LoopState = { ...lp, end: lp.start + len, beats: lp.beats ? lp.beats * factor : null };
+    this.setLoop(deck, next);
+    const pos = this.audio.getPosition(deck);
+    if (lp.active && pos >= next.end) this.audio.seek(deck, next.start + ((pos - next.start) % len));
+  }
+
+  private moveLoop(deck: number, dir: 1 | -1): void {
+    const d = this.state.decks[deck];
+    const lp = d.loop;
+    if (!lp) return;
+    const shift = (lp.end - lp.start) * dir;
+    if (lp.start + shift < 0 || lp.end + shift > d.duration) return;
+    this.setLoop(deck, { ...lp, start: lp.start + shift, end: lp.end + shift });
+    if (lp.active) this.audio.seek(deck, clamp(this.audio.getPosition(deck) + shift, 0, d.duration));
   }
 
   /** Current tempo of a deck in BPM (analysed or metadata BPM x pitch), or null. */
@@ -395,6 +696,10 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
           return d.playing || d.previewing || (d.status === "ready" && this.isAtCue(d.index)) ? 1 : 0;
         case "sync":
           return d.sync ? 1 : 0;
+        case "master":
+          return this.state.masterDeck === d.index ? 1 : 0;
+        case "loop":
+          return d.loop?.active ? 1 : 0;
         case "keylock":
           return d.keylock ? 1 : 0;
         case "vinyl":
@@ -486,7 +791,10 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         hotcues: new Array(HOTCUE_COUNT).fill(null),
         beatGrid: null,
         stems: { ...this.state.decks[deck].stems, muted: [false, false, false, false], status: this.stemsSupport.ok ? "waiting" : "unavailable", progress: 0, message: undefined },
+        loop: null,
+        loopIn: null,
       });
+      this.rolls[deck] = null;
       this.applyStems(deck);
       this.applyTempo(deck, this.state.decks[deck].tempo);
       this.log.info("engine", `Loaded "${track.title}" into deck ${deckLetter(deck)} (${decoded.duration.toFixed(1)} s)`);
@@ -526,8 +834,21 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       });
       on(`${p}.seek`, (v) => {
         const d = this.state.decks[i];
-        if (d.status === "ready") this.audio.seek(i, clamp(v, 0, 1) * d.duration);
+        if (d.status === "ready") this.seekTo(i, clamp(v, 0, 1) * d.duration);
       });
+      on(`${p}.sync`, pressed(() => this.toggleSync(i)));
+      on(`${p}.master`, pressed(() => this.setMaster(i)));
+      on(`${p}.loop.in`, pressed(() => this.loopIn(i)));
+      on(`${p}.loop.out`, pressed(() => this.loopOut(i)));
+      on(`${p}.loop.exit`, pressed(() => this.loopExit(i)));
+      on(`${p}.loop.halve`, pressed(() => this.resizeLoop(i, 0.5)));
+      on(`${p}.loop.double`, pressed(() => this.resizeLoop(i, 2)));
+      on(`${p}.loop.move.back`, pressed(() => this.moveLoop(i, -1)));
+      on(`${p}.loop.move.forward`, pressed(() => this.moveLoop(i, 1)));
+      for (const s of BEATLOOP_SIZES) {
+        on(`${p}.beatloop.${s}`, pressed(() => this.beatLoop(i, Number(s))));
+        on(`${p}.beatloop.roll.${s}`, (v) => this.loopRoll(i, Number(s), v > 0));
+      }
       on(`${p}.tempo`, (v) => this.onTempoSlider(i, v));
       on(`${p}.tempo.range`, pressed(() => this.cycleTempoRange(i)));
       on(`${p}.tempo.reset`, pressed(() => this.applyTempo(i, 0)));
@@ -660,7 +981,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     if (down) {
       if (d.playing && !d.previewing) {
         this.audio.setPlaying(deck, false);
-        this.audio.seek(deck, d.cuePoint);
+        this.seekTo(deck, d.cuePoint);
         this.patchDeck(deck, { playing: false });
       } else if (!this.isAtCue(deck)) {
         const pos = this.audio.getPosition(deck);
@@ -701,7 +1022,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         hotcues[idx] = this.audio.getPosition(deck);
         this.patchDeck(deck, { hotcues });
       } else if (d.playing && !d.previewing) {
-        this.audio.seek(deck, point);
+        this.seekTo(deck, point);
       } else {
         this.startPreview(deck, point);
       }
@@ -726,6 +1047,8 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.loadAborts[deck]?.abort();
     this.audio.unloadDeck(deck);
     this.patchDeck(deck, { ...initialDeck(deck), tempo: d.tempo, tempoRange: d.tempoRange, rate: d.rate, vinyl: d.vinyl });
+    this.rolls[deck] = null;
+    if (this.state.masterDeck === deck) this.reassignMaster(deck);
     this.emit("event", { type: "trackUnloaded", deck });
   }
 
@@ -744,6 +1067,12 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     let bipolar = (clamp(v, 0, 1) - 0.5) * 2;
     if (Math.abs(bipolar) < 0.005) bipolar = 0; // centre detent
     if (!this.settings.tempoDownIsFaster) bipolar = -bipolar;
+    const d = this.state.decks[deck];
+    if (d.sync && this.state.masterDeck !== deck) {
+      // Moving a synced deck's own tempo means the DJ wants manual control of it.
+      this.patchDeck(deck, { sync: false });
+      this.log.info("engine", `Deck ${deckLetter(deck)}: SYNC off (tempo moved by hand)`);
+    }
     this.applyTempo(deck, bipolar);
   }
 
@@ -753,6 +1082,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.audio.setRate(deck, rate);
     this.patchDeck(deck, { tempo, rate });
     this.applyAllFx();
+    if (this.state.masterDeck === deck) this.syncFollowers();
   }
 
   private cycleTempoRange(deck: number): void {
@@ -788,10 +1118,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         break;
       case "nudge":
         this.audio.nudge(deck, intent.rateOffset);
+        this.lastNudge[deck] = Date.now();
         break;
       case "seek": {
         const pos = clamp(this.audio.getPosition(deck) + intent.seconds, 0, d.duration);
-        this.audio.seek(deck, pos);
+        this.seekTo(deck, pos);
         break;
       }
     }
@@ -869,6 +1200,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     channels[ch] = { ...channels[ch], ...patch };
     this.state = { ...this.state, mixer: { ...this.state.mixer, channels } };
     this.applyMixer();
+    this.emit("state", this.state);
+  }
+
+  private patchState(patch: Partial<Pick<EngineState, "masterDeck">>): void {
+    this.state = { ...this.state, ...patch };
     this.emit("state", this.state);
   }
 

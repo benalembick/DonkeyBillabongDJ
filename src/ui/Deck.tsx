@@ -5,6 +5,7 @@
  */
 import { useRef, useState } from "react";
 import { deckLetter, STEM_LABELS, STEM_NAMES } from "../core/actions";
+import { LOOP_SIZES } from "../core/engine/DJEngine";
 import { useApp, useEngineState, useSend } from "./context";
 import { formatTime, useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS } from "./layout";
@@ -12,7 +13,6 @@ import { OverviewWaveform } from "./Waveforms";
 
 const RANGE_LABEL: Record<string, string> = { "0.06": "±6", "0.1": "±10", "0.16": "±16", "1": "WIDE" };
 const SOURCE_LABEL: Record<string, string> = { "apple-music": "APPLE MUSIC" };
-const COMING = "Coming soon — loops and sync need the beat-grid engine work (Phase 2).";
 
 /** Press/release button for momentary actions (CUE, hot cues). */
 function HoldButton(props: { action: string; className?: string; children: React.ReactNode; title?: string; style?: React.CSSProperties }) {
@@ -143,23 +143,41 @@ function Pads({ deck, columns }: { deck: number; columns: number }) {
   );
 }
 
+const sizeLabel = (b: number) => (b < 1 ? `1/${Math.round(1 / b)}` : String(Math.round(b * 100) / 100));
+
+/**
+ * Loop controls: ‹ › pick the auto-loop size (or halve/double an active loop), AUTO sets a
+ * beat-aligned loop of that size, IN/OUT make a manual loop, EXIT leaves it (RELOOP re-enters).
+ */
 function LoopSection({ deck }: { deck: number }) {
   const send = useSend();
+  const d = useEngineState().decks[deck];
   const p = `deck${deck + 1}`;
   const [size, setSize] = useState(4);
-  const sizes = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+  const lp = d.loop;
+  const active = !!lp?.active;
+  const shown = active && lp?.beats ? lp.beats : size;
+  const step = (dir: 1 | -1) => {
+    if (active) send(`${p}.loop.${dir > 0 ? "double" : "halve"}`);
+    const i = LOOP_SIZES.indexOf(size as (typeof LOOP_SIZES)[number]);
+    setSize(LOOP_SIZES[Math.max(0, Math.min(LOOP_SIZES.length - 1, i + dir))]);
+  };
+  const noGrid = d.status === "ready" && !d.beatGrid && !d.track?.bpm;
   return (
-    <div className="loops soon" title={COMING}>
+    <div className={`loops ${active ? "looping" : ""}`} title={noGrid ? "No BPM yet — loops assume 120 BPM until analysis finishes" : "Beat-aligned loops"}>
       <div className="loop-size">
-        <button className="tiny" onClick={() => setSize(sizes[Math.max(0, sizes.indexOf(size) - 1)])}>‹</button>
-        <span>{size < 1 ? `1/${1 / size}` : size}</span>
-        <button className="tiny" onClick={() => setSize(sizes[Math.min(sizes.length - 1, sizes.indexOf(size) + 1)])}>›</button>
+        <button className="tiny" onClick={() => step(-1)} title={active ? "Halve loop" : "Shorter"}>‹</button>
+        <span>{active && !lp?.beats ? "MAN" : sizeLabel(shown)}</span>
+        <button className="tiny" onClick={() => step(1)} title={active ? "Double loop" : "Longer"}>›</button>
       </div>
-      <button className="tiny" onClick={() => send(`${p}.beatloop.${size}`)}>AUTO</button>
-      <button className="tiny" onClick={() => send(`${p}.loop.in`)}>IN</button>
-      <button className="tiny" onClick={() => send(`${p}.loop.out`)}>OUT</button>
-      <button className="tiny" onClick={() => send(`${p}.loop.exit`)}>EXIT</button>
-      <span className="soon-tag">loops soon</span>
+      <button className={`tiny ${active && lp?.beats === size ? "lit" : ""}`} onClick={() => send(`${p}.beatloop.${size}`)} disabled={d.status !== "ready"}>
+        AUTO
+      </button>
+      <button className={`tiny ${d.loopIn != null ? "lit" : ""}`} onClick={() => send(`${p}.loop.in`)} disabled={d.status !== "ready"}>IN</button>
+      <button className="tiny" onClick={() => send(`${p}.loop.out`)} disabled={d.status !== "ready" || (d.loopIn == null && !lp)}>OUT</button>
+      <button className={`tiny ${active ? "lit" : ""}`} onClick={() => send(`${p}.loop.exit`)} disabled={!lp}>
+        {lp && !active ? "RELOOP" : "EXIT"}
+      </button>
     </div>
   );
 }
@@ -254,14 +272,30 @@ function StemStrip({ deck }: { deck: number }) {
 
 function StateButtons({ deck }: { deck: number }) {
   const send = useSend();
-  const d = useEngineState().decks[deck];
+  const s = useEngineState();
+  const d = s.decks[deck];
+  const isMaster = s.masterDeck === deck;
   const p = `deck${deck + 1}`;
   return (
     <div className="state-buttons">
       <button className={`tiny ${d.vinyl ? "lit" : ""}`} onClick={() => send(`${p}.vinyl`)} title="Vinyl (scratch) mode">VINYL</button>
       <button className={`tiny ${d.keylock ? "lit" : ""}`} onClick={() => send(`${p}.keylock`)} title="Key lock (time-stretch) — Phase 2">KEY LOCK</button>
-      <button className="tiny soon" onClick={() => send(`${p}.sync`)} title={COMING}>SYNC</button>
-      <button className="tiny soon" onClick={() => send(`${p}.master`)} title={COMING}>MASTER</button>
+      <button
+        className={`tiny ${d.sync ? "lit" : ""}`}
+        onClick={() => send(`${p}.sync`)}
+        disabled={d.status !== "ready"}
+        title="Beat sync: match BPM and keep beats aligned with the master deck"
+      >
+        SYNC
+      </button>
+      <button
+        className={`tiny ${isMaster ? "lit master-lit" : ""}`}
+        onClick={() => send(`${p}.master`)}
+        disabled={d.status !== "ready"}
+        title="Tempo master: synced decks follow this deck"
+      >
+        MASTER
+      </button>
     </div>
   );
 }

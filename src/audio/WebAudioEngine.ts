@@ -57,6 +57,7 @@ interface DeckModel {
   dsp: ChannelDsp | null;
   stemsLoaded: boolean;
   stemsReady: boolean;
+  loop: { start: number; end: number } | null;
   stemsMix: { enabled: boolean; gains: number[] };
 }
 
@@ -98,6 +99,7 @@ export class WebAudioEngine implements AudioEngine {
       stemsLoaded: false,
       stemsReady: false,
       stemsMix: { enabled: false, gains: [1, 1, 1, 1] },
+      loop: null,
     }));
   }
 
@@ -286,6 +288,7 @@ export class WebAudioEngine implements AudioEngine {
     if (m.buffer) {
       this.sendBuffer(i, m.buffer);
       this.post(i, { type: "seek", seconds: m.pos, seq: ++m.seq });
+      if (m.loop) this.post(i, { type: "loop", start: m.loop.start, end: m.loop.end });
       if (m.playing) this.post(i, { type: "play", playing: true, seq: ++m.seq });
     }
   }
@@ -377,6 +380,7 @@ export class WebAudioEngine implements AudioEngine {
     m.buffer = buffer;
     m.playing = false;
     m.scratching = false;
+    m.loop = null;
     m.stemsLoaded = false;
     m.stemsReady = false;
     m.pos = 0;
@@ -400,6 +404,7 @@ export class WebAudioEngine implements AudioEngine {
   unloadDeck(deck: number): void {
     const m = this.models[deck];
     m.buffer = null;
+    m.loop = null;
     m.playing = false;
     m.pos = 0;
     m.speed = 0;
@@ -426,6 +431,13 @@ export class WebAudioEngine implements AudioEngine {
     this.post(deck, { type: "rate", rate });
   }
 
+  setLoop(deck: number, loop: { start: number; end: number } | null): void {
+    const m = this.models[deck];
+    this.freeze(deck);
+    m.loop = loop;
+    this.post(deck, { type: "loop", start: loop ? loop.start : null, end: loop ? loop.end : 0 });
+  }
+
   nudge(deck: number, rateOffset: number): void {
     this.post(deck, { type: "nudge", offset: rateOffset });
   }
@@ -445,7 +457,10 @@ export class WebAudioEngine implements AudioEngine {
   getPosition(deck: number): number {
     const m = this.models[deck];
     if (!m.buffer) return 0;
-    const p = m.pos + m.speed * (this.now() - m.time);
+    let p = m.pos + m.speed * (this.now() - m.time);
+    // Between worklet reports, extrapolate around an active loop instead of running past its end.
+    const lp = m.loop;
+    if (lp && m.speed > 0 && m.pos < lp.end && p >= lp.end && lp.end > lp.start) p = lp.start + ((p - lp.start) % (lp.end - lp.start));
     return Math.max(0, Math.min(m.buffer.duration, p));
   }
 

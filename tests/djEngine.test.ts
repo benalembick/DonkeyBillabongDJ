@@ -303,3 +303,125 @@ describe("STEMS", () => {
     expect(audio.fx[0].stemMask).toEqual([1, 0, 0, 0]);
   });
 });
+
+describe("loops", () => {
+  const grid = (bpm: number, firstBeat: number) => ({ bpm, firstBeat, confidence: 1, source: "analysis" as const });
+
+  it("auto loop starts on the current beat, is beat-long and toggles off", async () => {
+    await loaded();
+    engine.setBeatGrid(0, grid(120, 0.1));
+    audio.positions[0] = 10.3;
+    bus.send("deck1.beatloop.4", 1);
+    expect(audio.loops[0]!.start).toBeCloseTo(10.1);
+    expect(audio.loops[0]!.end).toBeCloseTo(12.1);
+    expect(engine.getFeedback("deck1.loop")).toBe(1);
+    bus.send("deck1.loop.halve", 1);
+    expect(audio.loops[0]!.end).toBeCloseTo(11.1);
+    expect(engine.getState().decks[0].loop?.beats).toBe(2);
+    bus.send("deck1.beatloop.2", 1); // same size again = exit
+    expect(audio.loops[0]).toBeNull();
+    expect(engine.getState().decks[0].loop).toMatchObject({ active: false });
+  });
+
+  it("sub-beat loops snap to their own grid", async () => {
+    await loaded();
+    engine.setBeatGrid(0, grid(120, 0.1));
+    audio.positions[0] = 10.3;
+    bus.send("deck1.beatloop.0.25", 1);
+    expect(audio.loops[0]!.start).toBeCloseTo(10.225);
+    expect(audio.loops[0]!.end).toBeCloseTo(10.35);
+  });
+
+  it("manual loop in/out quantizes to the grid; exit and reloop", async () => {
+    await loaded();
+    engine.setBeatGrid(0, grid(120, 0.1));
+    audio.positions[0] = 20.02;
+    bus.send("deck1.loop.in", 1);
+    audio.positions[0] = 22.08;
+    bus.send("deck1.loop.out", 1);
+    expect(audio.loops[0]).toEqual({ start: expect.closeTo(20.1), end: expect.closeTo(22.1) });
+    expect(engine.getState().decks[0].loop?.beats).toBe(4);
+    bus.send("deck1.loop.exit", 1);
+    expect(audio.loops[0]).toBeNull();
+    audio.positions[0] = 40;
+    bus.send("deck1.loop.exit", 1); // reloop jumps back in
+    expect(audio.loops[0]).not.toBeNull();
+    expect(audio.positions[0]).toBeCloseTo(20.1);
+  });
+
+  it("seeking out of an active loop exits it; moving shifts it", async () => {
+    await loaded();
+    engine.setBeatGrid(0, grid(120, 0));
+    audio.positions[0] = 10;
+    bus.send("deck1.beatloop.4", 1);
+    bus.send("deck1.loop.move.forward", 1);
+    expect(audio.loops[0]).toEqual({ start: expect.closeTo(12), end: expect.closeTo(14) });
+    bus.send("deck1.seek", 0.5);
+    expect(audio.loops[0]).toBeNull();
+  });
+
+  it("loop roll returns to where playback would have been (slip)", async () => {
+    await loaded();
+    engine.setBeatGrid(0, grid(120, 0));
+    audio.positions[0] = 10.3;
+    bus.send("deck1.beatloop.roll.0.5", 1);
+    expect(audio.loops[0]!.end - audio.loops[0]!.start).toBeCloseTo(0.25);
+    bus.send("deck1.beatloop.roll.0.5", 0);
+    expect(audio.loops[0]).toBeNull();
+    expect(audio.positions[0]).toBeCloseTo(10.3); // paused deck: no time passed
+  });
+});
+
+describe("sync", () => {
+  const grid = (bpm: number, firstBeat = 0) => ({ bpm, firstBeat, confidence: 1, source: "analysis" as const });
+
+  it("follows the master's BPM and its tempo changes; master is indicated", async () => {
+    await loaded(0);
+    await loaded(1);
+    engine.setBeatGrid(0, grid(120));
+    engine.setBeatGrid(1, grid(125));
+    bus.send("deck2.sync", 1);
+    expect(engine.getState().masterDeck).toBe(0);
+    expect(engine.getFeedback("deck1.master")).toBe(1);
+    expect(audio.rates[1]).toBeCloseTo(0.96);
+    expect(engine.getBpm(1)).toBeCloseTo(120);
+    bus.send("deck1.tempo", 0.25); // master +5% (pull down = faster)
+    expect(engine.getBpm(1)).toBeCloseTo(engine.getBpm(0)!);
+  });
+
+  it("half/double tempo tracks sync without extreme pitch", async () => {
+    await loaded(0);
+    await loaded(1);
+    engine.setBeatGrid(0, grid(140));
+    engine.setBeatGrid(1, grid(70));
+    bus.send("deck2.sync", 1);
+    expect(audio.rates[1]).toBeCloseTo(1);
+  });
+
+  it("moving a follower's tempo slider hands control back to the DJ", async () => {
+    await loaded(0);
+    await loaded(1);
+    engine.setBeatGrid(0, grid(120));
+    engine.setBeatGrid(1, grid(122));
+    bus.send("deck2.sync", 1);
+    bus.send("deck2.tempo", 0.6);
+    expect(engine.getState().decks[1].sync).toBe(false);
+  });
+
+  it("snaps onto the beat when engaged and phase-locks with small corrections", async () => {
+    await loaded(0);
+    await loaded(1);
+    engine.setBeatGrid(0, grid(120));
+    engine.setBeatGrid(1, grid(120));
+    bus.send("deck1.play");
+    bus.send("deck2.play");
+    audio.positions[0] = 10; // on a beat
+    audio.positions[1] = 20.125; // a quarter beat late
+    bus.send("deck2.sync", 1);
+    expect(audio.positions[1]).toBeCloseTo(20); // one de-clicked jump onto the beat
+    audio.positions[1] = 20.01; // small drift afterwards
+    engine.tick();
+    expect(audio.rates[1]).toBeLessThan(1);
+    expect(audio.rates[1]).toBeGreaterThan(0.97); // correction is gentle
+  });
+});

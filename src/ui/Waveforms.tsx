@@ -281,6 +281,20 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     marker(d.cuePoint, "#ffd166", "");
     d.hotcues.forEach((hc, i) => hc != null && marker(hc, HOTCUE_COLORS[i], String(i + 1)));
 
+    // Loop region (green when active, grey when stored for RELOOP).
+    if (d.loop) {
+      const a = (d.loop.start - t0) / secPerPx;
+      const b = (d.loop.end - t0) / secPerPx;
+      g.fillStyle = d.loop.active ? "rgba(46,229,157,0.22)" : "rgba(160,170,180,0.14)";
+      if (vertical) g.fillRect(0, a, cross, b - a);
+      else g.fillRect(a, 0, b - a, cross);
+      g.fillStyle = d.loop.active ? "#2ee59d" : "#8a93a4";
+      for (const p of [a, b]) {
+        if (vertical) g.fillRect(0, p - dpr, cross, 2 * dpr);
+        else g.fillRect(p - dpr, 0, 2 * dpr, cross);
+      }
+    }
+
     // Playhead.
     g.fillStyle = "#ff2d2d";
     if (vertical) g.fillRect(0, playheadPx - dpr, cross, 2 * dpr);
@@ -319,6 +333,18 @@ export function OverviewWaveform({ deck }: { deck: number }) {
   const ov = useOverview(deck);
   const send = useSend();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const scrubbing = useRef(false);
+  const lastSeek = useRef({ at: 0, frac: -1 });
+  /** Seek to the pointer position; play state is untouched (playing keeps playing). */
+  const seekAt = (e: React.PointerEvent) => {
+    const r = canvasRef.current!.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const now = performance.now();
+    // Scrubbing: at most ~30 seeks/s, and only when the position really moved.
+    if (e.type === "pointermove" && (now - lastSeek.current.at < 33 || Math.abs(frac - lastSeek.current.frac) < 0.0005)) return;
+    lastSeek.current = { at: now, frac };
+    send(`deck${deck + 1}.seek`, frac);
+  };
   const baseRef = useRef<HTMLCanvasElement | null>(null);
   const baseKey = useRef("");
 
@@ -369,6 +395,10 @@ export function OverviewWaveform({ deck }: { deck: number }) {
     const pos = engine.getPosition(deck);
     g.fillStyle = "rgba(0,0,0,0.5)";
     g.fillRect(0, 0, x(pos), h);
+    if (d.loop) {
+      g.fillStyle = d.loop.active ? "rgba(46,229,157,0.35)" : "rgba(160,170,180,0.25)";
+      g.fillRect(x(d.loop.start), 0, Math.max(2 * dpr, x(d.loop.end) - x(d.loop.start)), h);
+    }
     g.fillStyle = "#ffd166";
     g.fillRect(x(d.cuePoint), 0, 2 * dpr, h);
     d.hotcues.forEach((hc, i) => {
@@ -384,13 +414,19 @@ export function OverviewWaveform({ deck }: { deck: number }) {
     <canvas
       ref={canvasRef}
       className="overview"
-      title="Click to jump (when paused)"
+      title="Click to jump · drag to scrub (keeps playing if playing)"
       onPointerDown={(e) => {
         const d = engine.getState().decks[deck];
-        if (!d || d.duration <= 0 || d.playing) return; // safety: no accidental jumps while playing
-        const r = (e.target as HTMLElement).getBoundingClientRect();
-        send(`deck${deck + 1}.seek`, (e.clientX - r.left) / r.width);
+        if (!d || d.status !== "ready" || d.duration <= 0) return;
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        scrubbing.current = true;
+        seekAt(e);
       }}
+      onPointerMove={(e) => {
+        if (scrubbing.current) seekAt(e);
+      }}
+      onPointerUp={() => (scrubbing.current = false)}
+      onPointerCancel={() => (scrubbing.current = false)}
     />
   );
 }

@@ -81,6 +81,11 @@ export class FakeAudioEngine implements AudioEngine {
   stemsReadyAtPlayhead() {
     return false;
   }
+  loops: ({ start: number; end: number } | null)[] = [null, null];
+  setLoop(deck: number, loop: { start: number; end: number } | null) {
+    this.loops[deck] = loop;
+    this.rec("setLoop", deck, loop);
+  }
   getPosition(deck: number) {
     return this.positions[deck];
   }

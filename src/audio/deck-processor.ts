@@ -31,7 +31,9 @@ type Msg =
   | { type: "stemsRegion"; region: number; data: Int16Array }
   | { type: "stemsMix"; enabled: boolean; gains: number[] }
   | { type: "stemsFx"; unit: number; mask: number[] }
-  | { type: "stemsClear" };
+  | { type: "stemsClear" }
+  // Loop between two track positions (seconds); null start = no loop.
+  | { type: "loop"; start: number | null; end: number };
 
 const BEND_TAU_S = 0.06; // nudge decay time constant
 const BEND_MAX = 0.9;
@@ -44,6 +46,8 @@ const REPORT_EVERY_BLOCKS = 3;
 const STEM_GAIN_S = 0.006; // per-stem gain smoothing
 const STEM_BLEND_S = 0.012; // original ⇄ stem-mix crossfade (entering/leaving analysed regions)
 const I16 = 1 / 32768;
+const LOOP_XF_S = 0.004; // crossfade into the loop start before wrapping (click-free loops)
+const LOOP_CATCH_S = 0.25; // a loop set just behind the playhead (e.g. LOOP OUT) still engages
 
 class DeckProcessor extends scope.AudioWorkletProcessor {
   private left: Float32Array | null = null;
@@ -78,6 +82,14 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
     [0, 0, 0, 0],
   ];
   private stemTap = new Float32Array(6);
+  // Output frame: [L, R, fx0L, fx0R, fx1L, fx1R] (+ a second one for loop crossfades).
+  private fr = new Float64Array(6);
+  private fr2 = new Float64Array(6);
+
+  // LOOP (source frames)
+  private loopOn = false;
+  private loopStart = 0;
+  private loopEnd = 0;
 
   constructor() {
     super();
@@ -100,9 +112,11 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
         this.endedSent = false;
         this.stemRegions = [];
         this.stemAmt = 0;
+        this.loopOn = false;
         this.seq = m.seq;
         break;
       case "unload":
+        this.loopOn = false;
         this.left = this.right = null;
         this.len = 0;
         this.playing = false;
@@ -154,6 +168,22 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
         this.stemRegions = [];
         this.stemAmt = 0;
         break;
+      case "loop": {
+        const sr = this.ratio * scope.sampleRate;
+        if (m.start === null || m.end <= m.start) {
+          this.loopOn = false;
+          break;
+        }
+        this.loopStart = m.start * sr;
+        this.loopEnd = m.end * sr;
+        this.loopOn = true;
+        // The playhead may already be slightly past the new end (message latency): wrap now.
+        if (this.pos >= this.loopEnd && this.pos < this.loopEnd + LOOP_CATCH_S * sr) {
+          this.pos -= this.loopEnd - this.loopStart;
+          this.seekFade = 0;
+        }
+        break;
+      }
     }
   }
 
@@ -202,6 +232,45 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
     if (!reg) return 0;
     const idx = (frame - r * this.stemStride) * 6 + ch;
     return idx < reg.length ? reg[idx] : 0;
+  }
+
+  /** Render one output frame at source position p into `o` (stem gains/blend already advanced). */
+  private renderFrame(p: number, o: Float64Array, hasStems: boolean, fxActive: boolean, m0: number[], m1: number[]): void {
+    const L = this.left!;
+    const R = this.right!;
+    let oL = this.sample(L, p);
+    let oR = R === L ? oL : this.sample(R, p);
+    let s0L = 0;
+    let s0R = 0;
+    let s1L = 0;
+    let s1R = 0;
+    if (hasStems && this.stemsReadyAt(p) && (this.stemAmt > 0 || fxActive)) {
+      const sg = this.stemGain;
+      this.stemSample(p);
+      const t = this.stemTap;
+      // instruments = original − (vocals + drums + bass): all gains at 1 reproduces the original exactly.
+      const iL = oL - t[0] - t[2] - t[4];
+      const iR = oR - t[1] - t[3] - t[5];
+      if (this.stemAmt > 0) {
+        const mixL = t[0] * sg[0] + t[2] * sg[1] + t[4] * sg[2] + iL * sg[3];
+        const mixR = t[1] * sg[0] + t[3] * sg[1] + t[5] * sg[2] + iR * sg[3];
+        oL += this.stemAmt * (mixL - oL);
+        oR += this.stemAmt * (mixR - oR);
+      }
+      if (fxActive) {
+        // Per-stem FX sends (e.g. echo on vocals only), after the stem mutes/volumes.
+        s0L = t[0] * sg[0] * m0[0] + t[2] * sg[1] * m0[1] + t[4] * sg[2] * m0[2] + iL * sg[3] * m0[3];
+        s0R = t[1] * sg[0] * m0[0] + t[3] * sg[1] * m0[1] + t[5] * sg[2] * m0[2] + iR * sg[3] * m0[3];
+        s1L = t[0] * sg[0] * m1[0] + t[2] * sg[1] * m1[1] + t[4] * sg[2] * m1[2] + iL * sg[3] * m1[3];
+        s1R = t[1] * sg[0] * m1[0] + t[3] * sg[1] * m1[1] + t[5] * sg[2] * m1[2] + iR * sg[3] * m1[3];
+      }
+    }
+    o[0] = oL;
+    o[1] = oR;
+    o[2] = s0L;
+    o[3] = s0R;
+    o[4] = s1L;
+    o[5] = s1R;
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
@@ -256,6 +325,10 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
     const dv = (target - v0) / N;
     const gStep = 1 / (FADE_S * scope.sampleRate);
     let pos = this.pos;
+    const inLoop = this.loopOn && !this.scratching;
+    const loopLen = this.loopEnd - this.loopStart;
+    const xf = Math.max(1, Math.min(LOOP_XF_S * scope.sampleRate * this.ratio, loopLen * 0.25));
+    const xfFrom = this.loopEnd - xf;
     let g = this.gain;
     let sf = this.seekFade;
 
@@ -265,51 +338,33 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
       if (sf < 1) sf = Math.min(1, sf + 1 / SEEK_FADE_SAMPLES);
       const amp = g * sf;
       if (amp > 0 && pos >= 0 && pos < this.len) {
-        let oL = this.sample(L, pos);
-        let oR = R === L ? oL : this.sample(R, pos);
-        let s0L = 0;
-        let s0R = 0;
-        let s1L = 0;
-        let s1R = 0;
         if (hasStems) {
           for (let k = 0; k < 4; k++) {
             if (sg[k] < st[k]) sg[k] = Math.min(st[k], sg[k] + gStepStem);
             else if (sg[k] > st[k]) sg[k] = Math.max(st[k], sg[k] - gStepStem);
           }
-          const ready = this.stemsReadyAt(pos);
-          const blendTarget = this.stemsEnabled && ready ? 1 : 0;
+          const blendTarget = this.stemsEnabled && this.stemsReadyAt(pos) ? 1 : 0;
           if (this.stemAmt < blendTarget) this.stemAmt = Math.min(1, this.stemAmt + blendStep);
           else if (this.stemAmt > blendTarget) this.stemAmt = Math.max(0, this.stemAmt - blendStep);
-          if (ready && (this.stemAmt > 0 || fxActive)) {
-            this.stemSample(pos);
-            const t = this.stemTap;
-            // instruments = original − (vocals + drums + bass): all gains at 1 reproduces the original exactly.
-            const iL = oL - t[0] - t[2] - t[4];
-            const iR = oR - t[1] - t[3] - t[5];
-            if (this.stemAmt > 0) {
-              const mixL = t[0] * sg[0] + t[2] * sg[1] + t[4] * sg[2] + iL * sg[3];
-              const mixR = t[1] * sg[0] + t[3] * sg[1] + t[5] * sg[2] + iR * sg[3];
-              oL += this.stemAmt * (mixL - oL);
-              oR += this.stemAmt * (mixR - oR);
-            }
-            if (fxActive) {
-              // Per-stem FX sends (e.g. echo on vocals only), after the stem mutes/volumes.
-              s0L = t[0] * sg[0] * m0[0] + t[2] * sg[1] * m0[1] + t[4] * sg[2] * m0[2] + iL * sg[3] * m0[3];
-              s0R = t[1] * sg[0] * m0[0] + t[3] * sg[1] * m0[1] + t[5] * sg[2] * m0[2] + iR * sg[3] * m0[3];
-              s1L = t[0] * sg[0] * m1[0] + t[2] * sg[1] * m1[1] + t[4] * sg[2] * m1[2] + iL * sg[3] * m1[3];
-              s1R = t[1] * sg[0] * m1[0] + t[3] * sg[1] * m1[1] + t[5] * sg[2] * m1[2] + iR * sg[3] * m1[3];
-            }
-          }
         }
-        outL[i] = oL * amp;
-        outR[i] = oR * amp;
+        const o = this.fr;
+        this.renderFrame(pos, o, hasStems, fxActive, m0, m1);
+        // Approaching the loop end: crossfade towards the loop start so the wrap is seamless.
+        if (inLoop && pos >= xfFrom && pos < this.loopEnd) {
+          const w = (pos - xfFrom) / xf;
+          const o2 = this.fr2;
+          this.renderFrame(pos - loopLen, o2, hasStems, fxActive, m0, m1);
+          for (let k = 0; k < 6; k++) o[k] += w * (o2[k] - o[k]);
+        }
+        outL[i] = o[0] * amp;
+        outR[i] = o[1] * amp;
         if (fx0) {
-          fx0[0][i] = s0L * amp;
-          if (fx0[1]) fx0[1][i] = s0R * amp;
+          fx0[0][i] = o[2] * amp;
+          if (fx0[1]) fx0[1][i] = o[3] * amp;
         }
         if (fx1) {
-          fx1[0][i] = s1L * amp;
-          if (fx1[1]) fx1[1][i] = s1R * amp;
+          fx1[0][i] = o[4] * amp;
+          if (fx1[1]) fx1[1][i] = o[5] * amp;
         }
       } else {
         outL[i] = 0;
@@ -323,7 +378,12 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
           if (fx1[1]) fx1[1][i] = 0;
         }
       }
-      if (g > 0 || this.scratching) pos += v0 + dv * (i + 1);
+      if (g > 0 || this.scratching) {
+        const prev = pos;
+        pos += v0 + dv * (i + 1);
+        // Forward playback crossing the loop end jumps back by exactly one loop length.
+        if (inLoop && pos >= this.loopEnd && prev < this.loopEnd && prev >= this.loopStart - 2) pos -= loopLen;
+      }
     }
 
     this.vel = gainTarget === 0 && g === 0 ? 0 : target;

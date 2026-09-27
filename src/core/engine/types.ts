@@ -154,6 +154,8 @@ export interface AudioEngine {
   setChannel(deck: number, dsp: ChannelDsp): void;
   setMaster(dsp: MasterDsp): void;
   setFx(unit: number, fx: FxDsp): void;
+  /** Loop the deck between two track positions (seconds); null = no loop. Sample-accurate and click-free. */
+  setLoop(deck: number, loop: { start: number; end: number } | null): void;
   /** STEMS: prepare a deck for separated audio (regions of `stride` frames at `rate` Hz). */
   stemsInit(deck: number, info: { stride: number; regions: number; rate: number }): void;
   /** STEMS: one finished region, interleaved Int16 [vL vR dL dR bL bR]. Ownership moves to the engine. */

@@ -484,3 +484,7 @@ tr.stream-only td { color: var(--muted); }
 .ctx-menu button { display: block; width: 100%; text-align: left; border: none; background: none; padding: 5px 10px; font-size: 12px; }
 .ctx-menu button:hover:not(:disabled) { background: var(--accent); color: #fff; }
 .ctx-menu hr { border: none; border-top: 1px solid #333; margin: 3px 0; }
+
+/* ── loops / sync ── */
+.loops.looping .loop-size span { color: #2ee59d; }
+button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000; }

@@ -180,6 +180,8 @@ export function createApp(): App {
   );
   void controllers.init();
   keyboard.attach(window);
+  // Sync phase lock (and other time-based engine work) runs off the UI frame loop.
+  setInterval(() => engine.tick(), 40);
 
   return {
     bus,

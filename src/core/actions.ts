@@ -42,8 +42,8 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
     const p = `deck${d}`;
     add(`${p}.play`, `Play/Pause ${L}`, "button", g);
     add(`${p}.cue`, `Cue ${L}`, "button", g);
-    add(`${p}.sync`, `Sync ${L}`, "button", g, false);
-    add(`${p}.master`, `Master ${L}`, "button", g, false);
+    add(`${p}.sync`, `Sync ${L}`, "button", g);
+    add(`${p}.master`, `Master ${L}`, "button", g);
     add(`${p}.keylock`, `Key Lock ${L}`, "button", g, false);
     add(`${p}.vinyl`, `Vinyl/Scratch mode ${L}`, "button", g);
     add(`${p}.slip`, `Slip ${L}`, "button", g, false);
@@ -71,16 +71,16 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
       add(`${p}.hotcue.${h}`, `Hot cue ${h} ${L}`, "button", g);
       add(`${p}.hotcue.${h}.clear`, `Clear hot cue ${h} ${L}`, "button", g);
     }
-    add(`${p}.loop.in`, `Loop in ${L}`, "button", g, false);
-    add(`${p}.loop.out`, `Loop out ${L}`, "button", g, false);
-    add(`${p}.loop.exit`, `Loop exit/reloop ${L}`, "button", g, false);
-    add(`${p}.loop.halve`, `Loop halve ${L}`, "button", g, false);
-    add(`${p}.loop.double`, `Loop double ${L}`, "button", g, false);
-    add(`${p}.loop.move.back`, `Loop move back ${L}`, "button", g, false);
-    add(`${p}.loop.move.forward`, `Loop move forward ${L}`, "button", g, false);
+    add(`${p}.loop.in`, `Loop in ${L}`, "button", g);
+    add(`${p}.loop.out`, `Loop out ${L}`, "button", g);
+    add(`${p}.loop.exit`, `Loop exit/reloop ${L}`, "button", g);
+    add(`${p}.loop.halve`, `Loop halve ${L}`, "button", g);
+    add(`${p}.loop.double`, `Loop double ${L}`, "button", g);
+    add(`${p}.loop.move.back`, `Loop move back ${L}`, "button", g);
+    add(`${p}.loop.move.forward`, `Loop move forward ${L}`, "button", g);
     for (const s of BEATLOOP_SIZES) {
-      add(`${p}.beatloop.${s}`, `Auto loop ${s} beats ${L}`, "button", g, false);
-      add(`${p}.beatloop.roll.${s}`, `Loop roll ${s} beats ${L}`, "button", g, false);
+      add(`${p}.beatloop.${s}`, `Auto loop ${s} beats ${L}`, "button", g);
+      add(`${p}.beatloop.roll.${s}`, `Loop roll ${s} beats ${L}`, "button", g);
     }
 
     const m = `mixer.channel${d}`;
