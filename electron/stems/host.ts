@@ -31,6 +31,7 @@ export interface StemConfig {
 let worker: UtilityProcess | null = null;
 let config: StemConfig;
 let downloading: Promise<void> | null = null;
+let configPatched = false;
 
 /** ONNX Runtime ships native builds for Windows x64/arm64 and Apple Silicon only. */
 export function platformSupport(): { ok: boolean; reason?: string } {
@@ -111,7 +112,9 @@ async function download(onProgress: (p: { received: number; total: number }) => 
 }
 
 export async function registerStemIpc(): Promise<void> {
-  config = await loadConfig();
+  // Defaults first so every handler exists immediately; the saved config replaces them a moment later.
+  config = { cacheDir: path.join(app.getPath("userData"), "stems"), maxCacheGB: 20, device: "auto" };
+  void loadConfig().then((c) => (config = { ...c, ...(configPatched ? config : {}) }));
 
   ipcMain.handle("dbdj:stems:status", async () => ({ model: { ...MODEL, installed: await modelInstalled(), path: modelPath() }, config, platform: platformSupport() }));
 
@@ -171,6 +174,7 @@ export async function registerStemIpc(): Promise<void> {
 
   ipcMain.handle("dbdj:stems:setConfig", async (_e, patch: Partial<StemConfig>) => {
     config = { ...config, ...patch };
+    configPatched = true;
     await fs.writeFile(configFile(), JSON.stringify(config));
     worker?.postMessage({ type: "config", maxCacheBytes: config.maxCacheGB * 1024 ** 3, cacheDir: config.cacheDir, device: config.device });
     return config;

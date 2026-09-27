@@ -287,7 +287,14 @@ dd { margin: 0; }
 fieldset { border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: 8px; }
 legend { font-weight: 800; letter-spacing: 0.1em; color: var(--muted); padding: 0 6px; }
 fieldset label { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-fieldset .row { display: flex; gap: 8px; flex-wrap: wrap; }
+fieldset .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Fieldsets default to min-width: min-content, which lets wide content spill into the next grid column. */
+.settings > fieldset { min-width: 0; margin: 0; }
+.settings select, .settings input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { max-width: 100%; min-width: 0; }
+.settings label > select { flex: 0 1 auto; }
+.settings p, .settings .hint { overflow-wrap: anywhere; margin: 0; }
+.settings table { table-layout: fixed; width: 100%; }
+.settings td { overflow-wrap: anywhere; }
 .import-report { grid-column: 1 / -1; }
 .warn { color: var(--warn); }
 

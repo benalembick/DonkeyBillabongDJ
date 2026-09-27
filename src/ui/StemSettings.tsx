@@ -69,7 +69,12 @@ export function StemSettings() {
             Separation model: HT-Demucs 4-stem (Meta AI research, MIT licence), ONNX, ~166 MB. Downloaded once from Hugging Face, checksum-verified, runs
             entirely on this computer — no audio leaves your machine.
           </span>
-          <button className="primary" disabled={!!dl} onClick={() => void stems.downloadModel().catch((e) => setError(String(e)))}>
+          <button className="primary" disabled={!!dl} onClick={() => {
+              setError(null);
+              void stems.downloadModel().catch((e) =>
+                setError(/No handler registered/.test(String(e)) ? "The app was updated while it was running — fully quit and restart it, then try again." : String(e)),
+              );
+            }}>
             {dl ? `Downloading… ${Math.round((dl.received / dl.total) * 100)}%` : "Install model"}
           </button>
         </div>
@@ -83,8 +88,8 @@ export function StemSettings() {
           Mode{" "}
           <select value={st.settings.mode} onChange={(e) => stems.updateSettings({ mode: e.target.value as StemMode })}>
             <option value="off">Off</option>
-            <option value="automatic">Automatic — separate each loaded track from the playhead</option>
-            <option value="preanalyse">Pre-analyse — only when STEMS is switched on, or from the library</option>
+            <option value="automatic">Automatic</option>
+            <option value="preanalyse">Pre-analyse</option>
             <option value="realtime" disabled={!realtimeOk}>
               Real-time {realtimeOk ? "" : "(not fast enough on this computer)"}
             </option>
@@ -93,16 +98,16 @@ export function StemSettings() {
         <label>
           Quality{" "}
           <select value={st.settings.quality} onChange={(e) => stems.updateSettings({ quality: e.target.value as Quality })}>
-            <option value="performance">Performance (fastest, 10% overlap)</option>
-            <option value="balanced">Balanced (25% overlap)</option>
-            <option value="high">High (50% overlap, ~1.5× slower)</option>
+            <option value="performance">Performance</option>
+            <option value="balanced">Balanced</option>
+            <option value="high">High (~1.5× slower)</option>
           </select>
         </label>
         {cfg && (
           <label>
             Device{" "}
             <select value={cfg.device} onChange={(e) => void setConfig({ device: e.target.value as StemDevice })}>
-              <option value="auto">Auto (GPU if it works, else CPU)</option>
+              <option value="auto">Auto</option>
               <option value="gpu">GPU ({platform.os === "darwin" ? "CoreML / Apple Silicon" : "DirectML"})</option>
               <option value="cpu">CPU</option>
             </select>
@@ -110,6 +115,12 @@ export function StemSettings() {
         )}
       </div>
 
+      <p className="hint">
+        {st.settings.mode === "automatic" && "Automatic: each loaded track is separated from the playhead. "}
+        {st.settings.mode === "preanalyse" && "Pre-analyse: separation starts when you switch STEMS on, or from the library (right-click → Analyse STEMS). "}
+        {st.settings.mode === "realtime" && "Real-time: each loaded track is separated just ahead of the playhead. "}
+        Quality sets segment overlap (10 / 25 / 50%). Device Auto uses the GPU only if it passes a test run.
+      </p>
       <p className="hint">
         Worker: {st.worker.state}
         {st.worker.device ? ` · device in use: ${st.worker.device}` : ""}
