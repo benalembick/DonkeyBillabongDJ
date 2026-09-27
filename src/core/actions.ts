@@ -1,0 +1,126 @@
+/**
+ * The application action catalogue: the stable, serialisable vocabulary that
+ * controller mappings, keyboard shortcuts and the UI all use to drive the DJ
+ * engine (e.g. "deck1.play", "mixer.channel2.eq.high", "browser.load.deck1").
+ *
+ * Value conventions (what an input delivers for each value type):
+ *  - button:   1 = pressed, 0 = released
+ *  - absolute: 0..1 (0.5 = centre for bipolar controls such as EQ/filter/tempo)
+ *  - relative: signed tick delta (e.g. jog wheel +4 / -2)
+ */
+export type ActionValueType = "button" | "absolute" | "relative";
+
+export interface ActionMeta {
+  id: string;
+  label: string;
+  valueType: ActionValueType;
+  group: string;
+  /** False when the action is part of the vocabulary but the engine does not implement it yet. */
+  implemented: boolean;
+}
+
+export const MAX_DECKS = 4;
+export const HOTCUE_COUNT = 8;
+export const BEATLOOP_SIZES = ["0.03125", "0.0625", "0.125", "0.25", "0.5", "1", "2", "4", "8", "16", "32", "64"] as const;
+
+export function deckLetter(deckIndex: number): string {
+  return String.fromCharCode(65 + deckIndex);
+}
+
+/** Builds the catalogue for `deckCount` decks. Pure: usable without an engine (validation, editors, docs). */
+export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
+  const out: ActionMeta[] = [];
+  const add = (id: string, label: string, valueType: ActionValueType, group: string, implemented = true) =>
+    out.push({ id, label, valueType, group, implemented });
+
+  for (let d = 1; d <= deckCount; d++) {
+    const L = deckLetter(d - 1);
+    const g = `Deck ${L}`;
+    const p = `deck${d}`;
+    add(`${p}.play`, `Play/Pause ${L}`, "button", g);
+    add(`${p}.cue`, `Cue ${L}`, "button", g);
+    add(`${p}.sync`, `Sync ${L}`, "button", g, false);
+    add(`${p}.master`, `Master ${L}`, "button", g, false);
+    add(`${p}.keylock`, `Key Lock ${L}`, "button", g, false);
+    add(`${p}.vinyl`, `Vinyl/Scratch mode ${L}`, "button", g);
+    add(`${p}.slip`, `Slip ${L}`, "button", g, false);
+    add(`${p}.quantize`, `Quantize ${L}`, "button", g, false);
+    add(`${p}.reverse`, `Reverse ${L}`, "button", g, false);
+    add(`${p}.brake`, `Brake ${L}`, "button", g, false);
+    add(`${p}.eject`, `Eject ${L}`, "button", g);
+    add(`${p}.deckToggle`, `Deck toggle ${L}`, "button", g, false);
+    add(`${p}.seek`, `Seek (track position) ${L}`, "absolute", g);
+    add(`${p}.tempo`, `Tempo ${L}`, "absolute", g);
+    add(`${p}.tempo.range`, `Tempo range cycle ${L}`, "button", g);
+    add(`${p}.tempo.reset`, `Tempo reset ${L}`, "button", g);
+    add(`${p}.jog.touch`, `Jog touch ${L}`, "button", g);
+    add(`${p}.jog.platter`, `Jog platter (top) ${L}`, "relative", g);
+    add(`${p}.jog.ring`, `Jog ring (side) ${L}`, "relative", g);
+    add(`${p}.jog.search`, `Jog fast search ${L}`, "relative", g);
+    for (let h = 1; h <= HOTCUE_COUNT; h++) {
+      add(`${p}.hotcue.${h}`, `Hot cue ${h} ${L}`, "button", g);
+      add(`${p}.hotcue.${h}.clear`, `Clear hot cue ${h} ${L}`, "button", g);
+    }
+    add(`${p}.loop.in`, `Loop in ${L}`, "button", g, false);
+    add(`${p}.loop.out`, `Loop out ${L}`, "button", g, false);
+    add(`${p}.loop.exit`, `Loop exit/reloop ${L}`, "button", g, false);
+    add(`${p}.loop.halve`, `Loop halve ${L}`, "button", g, false);
+    add(`${p}.loop.double`, `Loop double ${L}`, "button", g, false);
+    add(`${p}.loop.move.back`, `Loop move back ${L}`, "button", g, false);
+    add(`${p}.loop.move.forward`, `Loop move forward ${L}`, "button", g, false);
+    for (const s of BEATLOOP_SIZES) {
+      add(`${p}.beatloop.${s}`, `Auto loop ${s} beats ${L}`, "button", g, false);
+      add(`${p}.beatloop.roll.${s}`, `Loop roll ${s} beats ${L}`, "button", g, false);
+    }
+
+    const m = `mixer.channel${d}`;
+    const mg = `Mixer ch ${d}`;
+    add(`${m}.gain`, `Gain/Trim ch${d}`, "absolute", mg);
+    add(`${m}.eq.high`, `EQ High ch${d}`, "absolute", mg);
+    add(`${m}.eq.mid`, `EQ Mid ch${d}`, "absolute", mg);
+    add(`${m}.eq.low`, `EQ Low ch${d}`, "absolute", mg);
+    add(`${m}.eq.high.kill`, `EQ High kill ch${d}`, "button", mg);
+    add(`${m}.eq.mid.kill`, `EQ Mid kill ch${d}`, "button", mg);
+    add(`${m}.eq.low.kill`, `EQ Low kill ch${d}`, "button", mg);
+    add(`${m}.filter`, `Filter ch${d}`, "absolute", mg);
+    add(`${m}.volume`, `Channel fader ch${d}`, "absolute", mg);
+    add(`${m}.cue`, `Headphone cue ch${d}`, "button", mg);
+    add(`${m}.mute`, `Mute ch${d}`, "button", mg);
+
+    add(`browser.load.deck${d}`, `Load selected into deck ${L}`, "button", "Browser");
+  }
+
+  add("mixer.crossfader", "Crossfader", "absolute", "Mixer");
+  add("mixer.master.level", "Master level", "absolute", "Mixer");
+  add("mixer.headphone.mix", "Headphone cue/master mix", "absolute", "Mixer");
+  add("mixer.headphone.level", "Headphone level", "absolute", "Mixer");
+
+  add("browser.scroll", "Browse scroll", "relative", "Browser");
+  add("browser.select", "Browse select/enter", "button", "Browser", false);
+  add("browser.back", "Browse back", "button", "Browser", false);
+  add("browser.playlist.scroll", "Browse playlists", "relative", "Browser", false);
+  add("browser.preview", "Preview selected", "button", "Browser", false);
+
+  for (let u = 1; u <= 2; u++) {
+    for (let b = 1; b <= 3; b++) add(`fx.unit${u}.button${b}`, `FX${u} button ${b}`, "button", `FX ${u}`, false);
+    add(`fx.unit${u}.knob`, `FX${u} level/parameter`, "absolute", `FX ${u}`, false);
+    add(`fx.unit${u}.knob.shift`, `FX${u} shifted knob`, "absolute", `FX ${u}`, false);
+    add(`fx.unit${u}.chain.next`, `FX${u} next`, "button", `FX ${u}`, false);
+    add(`fx.unit${u}.chain.prev`, `FX${u} previous`, "button", `FX ${u}`, false);
+  }
+  for (let s = 1; s <= 4; s++) {
+    add(`sampler${s}.play`, `Sampler ${s} play`, "button", "Sampler", false);
+    add(`sampler${s}.stop`, `Sampler ${s} stop`, "button", "Sampler", false);
+    add(`sampler${s}.load`, `Sampler ${s} load`, "button", "Sampler", false);
+    add(`sampler${s}.eject`, `Sampler ${s} eject`, "button", "Sampler", false);
+  }
+  add("recording.toggle", "Record", "button", "Recording", false);
+  add("modifier.shift", "Shift (mapping modifier)", "button", "Controller");
+  return out;
+}
+
+let cachedCatalog: Map<string, ActionMeta> | null = null;
+export function actionCatalog(): Map<string, ActionMeta> {
+  if (!cachedCatalog) cachedCatalog = new Map(buildActionCatalog().map((a) => [a.id, a]));
+  return cachedCatalog;
+}

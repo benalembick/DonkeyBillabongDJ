@@ -1,0 +1,73 @@
+# Audio Engine
+
+## Current backend: Web Audio + AudioWorklet (`src/audio/`)
+
+### Deck player (`deck-processor.ts`, real-time thread)
+
+- Holds each deck's decoded PCM (`Float32Array` per channel, transferred, not copied, into the worklet).
+- **Velocity model**: every render quantum it computes a target velocity in source frames per output frame:
+  - playing: `(rate + bend) × srcRate/ctxRate`;
+  - scratching: the platter's target position minus the playhead, divided by a 2.5-block lag, then smoothed and clamped to ±12×;
+  - paused: 0 after a 4 ms fade.
+  
+  Velocity is ramped per sample across the block, so tempo moves, nudges and scratches are click-free. Negative velocity plays in reverse.
+- **Nudge** (jog while playing) adds to `bend`, which decays with τ = 60 ms. The jog therefore gives a temporary pitch bend that returns to the set tempo, which is how CDJs feel.
+- **Interpolation**: 4-point Hermite. Hot cue and cue jumps use a 96-sample fade-in.
+- **Position reporting**: about every 3 blocks it posts `{seconds, speed, contextTime, seq}`. The main thread extrapolates the playhead using `AudioContext.getOutputTimestamp()`, so displayed and cue-set positions match what is **audible**, not what was just rendered. Reports carry the sequence number of the last command, so stale reports never undo a fresh seek or pause.
+- Rules: no allocation in `process()`, no logging, no imports.
+
+### Mixer graph
+
+```
+Deck worklet → trim → low shelf 220 Hz → peaking 1 kHz → high shelf 3.5 kHz → HPF → LPF ─┬→ fader×xfader → meter → master bus → master gain
+                                                                                        └→ PFL send → cue bus
+```
+
+- EQ runs from −40 dB (kill) to +6 dB. The curves live in `src/core/engine/mixerMath.ts` and are shared by every backend.
+- Filter knob: left sweeps a low-pass from 20 kHz down to 60 Hz; right sweeps a high-pass from 20 Hz up to 8 kHz; the centre is bypassed.
+- Crossfader curves: additive (default), smooth (constant power) and sharp (scratch).
+- All parameter changes use `setTargetAtTime` with an 8 ms time constant, so there is no zipper noise.
+
+### Output routing
+
+| Routing | Outputs | Use |
+|---|---|---|
+| `stereo` | master → 1/2 | Laptop / single stereo interface; no headphone cue |
+| `quad` | master → 1/2, headphone mix (cue ↔ master, level) → 3/4 | DDJ-SB built-in sound card, 4-output interfaces |
+
+Quad routing builds a 4-channel destination (`channelInterpretation: "discrete"`) with a ChannelMerger. It falls back to stereo with a logged warning if the device exposes fewer than 4 channels.
+
+Device selection uses `AudioContext.setSinkId()`. A device change is applied live. Changing the sample rate, latency or routing rebuilds the context: loaded tracks, positions and play state are restored automatically.
+
+### Latency
+
+- `latencyHint` accepts "interactive" (lowest), a number of seconds (≈ buffer size), or "balanced".
+- Diagnostics show `baseLatency` (the processing buffer), `outputLatency` (device plus OS), and their sum as the estimated total.
+- **Dropped buffers** are not exposed by Web Audio today. If Chromium's `AudioContext.playoutStats` becomes available in our Electron version, we will surface it; until then, listen for glitches during the hardware spike.
+- Measured on the development PC (default output, WASAPI shared): base 10 ms plus output ≈ 48 ms.
+
+### Known limitations (planned)
+
+| Item | Phase |
+|---|---|
+| Key lock (time-stretch; SoundTouch or Rubber Band in WASM inside the worklet) | 2 |
+| Isolator-style EQ (Linkwitz-Riley crossover) | 2 |
+| Separate headphone device (second context with clock-drift compensation) | 2 |
+| Recording (tap the master bus into a worklet, write WAV in a worker; local sources only) | 6 |
+| Int16 or shared PCM storage (halves memory) | 2 |
+
+## Native backend option
+
+If Windows shared-mode latency is not good enough, implement `AudioEngine` (`src/core/engine/types.ts`) natively:
+
+- a Node addon (N-API) using PortAudio or RtAudio, or a Rust cpal addon via napi-rs, giving ASIO or WASAPI-exclusive on Windows and CoreAudio on macOS;
+- the worklet's deck algorithm ported (it is about 150 lines, with no Web APIs in its core);
+- commands sent from the renderer over a `SharedArrayBuffer` ring buffer (requires cross-origin isolation headers in Electron), or the engine run in a utility process.
+
+The DJ engine, mappings and UI stay unchanged. That independence is the reason the interface exists.
+
+## Adding an audio effect (Phase 6 structure)
+
+1. Create `src/audio/effects/<Name>.ts` that exposes `{ input: AudioNode, output: AudioNode, setParam(name, value) }`, or an AudioWorklet processor for custom DSP.
+2. Register it in the effect registry, then add actions (`fx.unitN.*` already exist in the catalogue) and map them in the DJ engine.
+3. Insert it after the LPF in the channel chain (a per-channel FX send) or on the master bus.

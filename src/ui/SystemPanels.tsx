@@ -1,0 +1,295 @@
+/** Diagnostics + Settings (audio, controller/jog, Mixxx import). */
+import { useEffect, useState } from "react";
+import type { AudioConfig, OutputDevice } from "../core/engine/types";
+import type { CrossfaderCurve } from "../core/engine/mixerMath";
+import { importMixxxMapping, type ImportResult } from "../controllers/mixxx/MixxxImporter";
+import { useApp, useEngineState } from "./context";
+import { useTick } from "./hooks";
+
+export function Diagnostics() {
+  const { audio, controllers, engine, log } = useApp();
+  useTick(500);
+  const s = audio.getStatus();
+  const state = engine.getState();
+  const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+  const entries = log.all().slice(-150).reverse();
+  return (
+    <div className="diag">
+      <div className="diag-grid">
+        <dl>
+          <dt>Audio backend</dt>
+          <dd>{s.backend}</dd>
+          <dt>State</dt>
+          <dd>{s.state}{s.error ? ` — ${s.error}` : ""}</dd>
+          <dt>Sample rate</dt>
+          <dd>{s.sampleRate} Hz</dd>
+          <dt>Buffer / base latency</dt>
+          <dd>{(s.baseLatency * 1000).toFixed(1)} ms (≈ {Math.round(s.baseLatency * s.sampleRate)} frames)</dd>
+          <dt>Output latency</dt>
+          <dd>{(s.outputLatency * 1000).toFixed(1)} ms</dd>
+          <dt>Estimated total</dt>
+          <dd>{((s.baseLatency + s.outputLatency) * 1000).toFixed(1)} ms</dd>
+          <dt>Output channels</dt>
+          <dd>{s.maxOutputChannels} (routing: {s.routing})</dd>
+          <dt>Dropped buffers</dt>
+          <dd>not exposed by Web Audio (see AUDIO-ENGINE.md)</dd>
+        </dl>
+        <dl>
+          <dt>MIDI</dt>
+          <dd>{controllers.getAvailability()}</dd>
+          <dt>MIDI messages/sec</dt>
+          <dd>{controllers.messagesPerSecond()}</dd>
+          <dt>Devices</dt>
+          <dd>
+            {controllers.getControllers().map((c) => (
+              <div key={c.portName}>
+                {c.portName} — {c.connected ? "connected" : "disconnected"} — {c.mappingName ?? "no mapping"}
+                {c.connected && !c.hasOutput ? " (no LED output)" : ""}
+              </div>
+            ))}
+            {controllers.getControllers().length === 0 && "none"}
+          </dd>
+          <dt>Loaded tracks</dt>
+          <dd>
+            {state.decks.map((d, i) => (
+              <div key={i}>
+                {String.fromCharCode(65 + i)}: {d.track?.title ?? "—"} ({d.status})
+              </div>
+            ))}
+          </dd>
+          <dt>Database</dt>
+          <dd>Phase 3 (in-memory library for now)</dd>
+          <dt>JS heap</dt>
+          <dd>{mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(0)} MB` : "n/a"}</dd>
+        </dl>
+      </div>
+      <h4>Event log</h4>
+      <div className="log">
+        {entries.map((e) => (
+          <div key={e.id} className={`log-${e.level}`}>
+            <span className="mono">{new Date(e.time).toLocaleTimeString()}</span> [{e.source}] {e.message}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StreamingSettings() {
+  const { streaming } = useApp();
+  const [, force] = useState(0);
+  useEffect(() => {
+    void streaming.refresh("spotify");
+    void streaming.refresh("apple-music");
+    return streaming.on("change", () => force((n) => n + 1));
+  }, [streaming]);
+  const s = streaming.getState();
+  const row = (id: "spotify" | "apple-music", name: string) => {
+    const st = s[id].status;
+    return (
+      <div className="row" key={id}>
+        <strong style={{ minWidth: 100 }}>{name}</strong>
+        <span className={st?.connected ? "ok-text" : "hint"}>
+          {!streaming.available ? "desktop app only" : st?.connected ? `Connected — ${st.account ?? ""}` : st?.configured ? "Set up, not signed in" : "Not connected"}
+        </span>
+        {st?.connected && <button onClick={() => void streaming.disconnect(id)}>Disconnect</button>}
+        {st?.configured && <button onClick={() => void streaming.disconnect(id, true)}>Forget credentials</button>}
+      </div>
+    );
+  };
+  return (
+    <fieldset>
+      <legend>STREAMING</legend>
+      {row("spotify", "Spotify")}
+      {row("apple-music", "Apple Music")}
+      <p className="hint">Connect or browse from the Library tab → MUSIC. Streaming tracks are browse-and-match only; they can't be mixed or recorded.</p>
+    </fieldset>
+  );
+}
+
+export function Settings() {
+  const app = useApp();
+  const { audio, engine, controllers, platform, log } = app;
+  useEngineState();
+  const [devices, setDevices] = useState<OutputDevice[]>([]);
+  const [cfg, setCfg] = useState<AudioConfig>(audio.getConfig());
+  const [busy, setBusy] = useState(false);
+  const [imported, setImported] = useState<ImportResult | null>(null);
+  const settings = engine.getSettings();
+
+  useEffect(() => {
+    void audio.listOutputDevices().then(setDevices).catch(() => setDevices([]));
+  }, [audio]);
+
+  const applyAudio = async () => {
+    setBusy(true);
+    try {
+      await audio.reconfigure(cfg);
+      app.saveAudioConfig(cfg);
+      log.info("audio", "Audio configuration applied");
+    } catch (err) {
+      log.error("audio", String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importMixxx = async () => {
+    const file = await platform.pickTextFile(".xml");
+    if (!file) return;
+    try {
+      const result = importMixxxMapping(file.text, { fileName: file.name });
+      setImported(result);
+      log.info("controllers", `Imported Mixxx mapping "${result.mapping.name}": ${result.report.exact} exact, ${result.report.heuristic} inferred, ${result.report.unresolved.length} unresolved`);
+    } catch (err) {
+      log.error("controllers", `Import failed: ${String(err)}`);
+    }
+  };
+
+  const download = (name: string, data: unknown) => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const jog = settings.jog;
+  const setJog = (k: keyof typeof jog, v: number) => app.saveEngineSettings({ jog: { ...jog, [k]: v } });
+
+  return (
+    <div className="settings">
+      <fieldset>
+        <legend>AUDIO</legend>
+        <label>
+          Master output device
+          <select value={cfg.outputDeviceId} onChange={(e) => setCfg({ ...cfg, outputDeviceId: e.target.value })}>
+            {devices.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Routing
+          <select value={cfg.routing} onChange={(e) => setCfg({ ...cfg, routing: e.target.value as AudioConfig["routing"] })}>
+            <option value="stereo">Stereo — master only (no headphone cue)</option>
+            <option value="quad">4 channels — master 1/2, headphones 3/4 (DDJ-SB sound card)</option>
+          </select>
+        </label>
+        <label>
+          Latency / buffer
+          <select
+            value={String(cfg.latencyHint)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setCfg({ ...cfg, latencyHint: v === "interactive" || v === "balanced" ? v : Number(v) });
+            }}
+          >
+            <option value="interactive">Lowest (interactive)</option>
+            <option value="0.005">~5 ms</option>
+            <option value="0.01">~10 ms</option>
+            <option value="0.02">~20 ms (safe)</option>
+            <option value="balanced">Balanced</option>
+          </select>
+        </label>
+        <label>
+          Sample rate
+          <select value={String(cfg.sampleRate ?? "")} onChange={(e) => setCfg({ ...cfg, sampleRate: e.target.value ? Number(e.target.value) : undefined })}>
+            <option value="">Device default</option>
+            <option value="44100">44100 Hz</option>
+            <option value="48000">48000 Hz</option>
+          </select>
+        </label>
+        <button disabled={busy} onClick={() => void applyAudio()}>
+          {busy ? "Applying…" : "Apply audio settings"}
+        </button>
+        <p className="hint">Changing sample rate, latency or routing restarts the audio engine (loaded tracks are kept).</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>CONTROLLERS / JOG</legend>
+        <label>
+          Jog ticks per revolution
+          <input type="number" value={jog.ticksPerRevolution} min={16} max={8192} onChange={(e) => setJog("ticksPerRevolution", Number(e.target.value))} />
+        </label>
+        <label>
+          Jog sensitivity (paused positioning)
+          <input type="range" min={0.1} max={4} step={0.1} value={jog.jogSensitivity} onChange={(e) => setJog("jogSensitivity", Number(e.target.value))} />
+          <span>{jog.jogSensitivity.toFixed(1)}×</span>
+        </label>
+        <label>
+          Scratch sensitivity
+          <input type="range" min={0.25} max={4} step={0.05} value={jog.scratchSensitivity} onChange={(e) => setJog("scratchSensitivity", Number(e.target.value))} />
+          <span>{jog.scratchSensitivity.toFixed(2)}×</span>
+        </label>
+        <label>
+          Pitch bend strength
+          <input type="range" min={0.0005} max={0.02} step={0.0005} value={jog.pitchBendStrength} onChange={(e) => setJog("pitchBendStrength", Number(e.target.value))} />
+          <span>{jog.pitchBendStrength.toFixed(4)}</span>
+        </label>
+        <label>
+          <input type="checkbox" checked={settings.tempoDownIsFaster} onChange={(e) => app.saveEngineSettings({ tempoDownIsFaster: e.target.checked })} />
+          Tempo slider: pulling towards you (down) = faster
+        </label>
+        <label>
+          Crossfader curve
+          <select value={settings.crossfaderCurve} onChange={(e) => app.saveEngineSettings({ crossfaderCurve: e.target.value as CrossfaderCurve })}>
+            <option value="additive">Additive (mix)</option>
+            <option value="smooth">Smooth (constant power)</option>
+            <option value="sharp">Sharp (scratch cut)</option>
+          </select>
+        </label>
+        <label>
+          <input type="checkbox" checked={settings.lockPlayingDecks} onChange={(e) => app.saveEngineSettings({ lockPlayingDecks: e.target.checked })} />
+          Prevent loading into a playing deck
+        </label>
+        <div className="row">
+          <button onClick={() => { const m = controllers.getActiveMapping() ?? controllers.getMappings()[0]; if (m) download(`${m.id}.json`, m); }}>
+            Export mapping (JSON)
+          </button>
+          <button onClick={() => void importMixxx()}>Import Mixxx mapping (.xml)…</button>
+        </div>
+      </fieldset>
+
+      <StreamingSettings />
+
+      {imported && (
+        <fieldset className="import-report">
+          <legend>MIXXX IMPORT — {imported.report.controllerName}</legend>
+          <p>
+            {imported.report.totalControls} controls: <strong>{imported.report.exact}</strong> exact,{" "}
+            <strong>{imported.report.heuristic}</strong> inferred from script names (review),{" "}
+            <strong>{imported.report.unresolved.length}</strong> unresolved. LEDs: {imported.report.outputsMapped}/{imported.report.totalOutputs}.
+          </p>
+          {imported.report.warnings.map((w, i) => (
+            <p key={i} className="warn">⚠ {w}</p>
+          ))}
+          <details>
+            <summary>Unresolved ({imported.report.unresolved.length})</summary>
+            <ul className="mono">
+              {imported.report.unresolved.map((u, i) => (
+                <li key={i}>
+                  {u.status}/{u.midino} {u.group} {u.key} — {u.reason}
+                </li>
+              ))}
+            </ul>
+          </details>
+          <div className="row">
+            <button onClick={() => download(`${imported.mapping.id}.json`, imported.mapping)}>Download as dbdj JSON</button>
+            <button
+              onClick={() => {
+                controllers.addMapping(imported.mapping);
+                log.info("controllers", `Mapping "${imported.mapping.name}" installed (matches ports: ${imported.mapping.match.portNamePatterns.join(", ")})`);
+              }}
+            >
+              Use this mapping for matching devices
+            </button>
+          </div>
+        </fieldset>
+      )}
+    </div>
+  );
+}
