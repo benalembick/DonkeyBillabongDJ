@@ -110,7 +110,7 @@ function registerIpc(): void {
 
   ipcMain.handle("dbdj:openExternal", async (_e, url: string) => {
     const u = new URL(String(url));
-    const allowed = ["open.spotify.com", "developer.spotify.com", "music.apple.com", "developer.apple.com"];
+    const allowed = ["open.spotify.com", "developer.spotify.com", "music.apple.com", "developer.apple.com", "audius.co", "docs.audius.co", "api.audius.co"];
     if (u.protocol !== "https:" || !allowed.includes(u.hostname)) throw new Error("URL not allowed");
     await shell.openExternal(u.toString());
   });
@@ -177,6 +177,71 @@ function runSmokeTest(win: BrowserWindow): void {
               positionAfter1500ms: pos1, peakLevel: peak, rateAtTempoMax: rate,
               pausedPositionStable: Math.abs(a.engine.getPosition(0) - posPaused) < 0.001 };
           }
+          // Audius end-to-end (DBDJ_SMOKE_AUDIUS="search words"): search → controller LOAD A → play and
+          // control via simulated DDJ-SB MIDI (same mapping path as the hardware) → measured output.
+          const audiusQuery = ${JSON.stringify(process.env.DBDJ_SMOKE_AUDIUS ?? "")};
+          let audius = null;
+          if (audiusQuery) {
+            const midi = (...b) => a.controllers.simulate("pioneer-ddj-sb", b);
+            const level = async (ms) => { let p = 0; for (let i = 0; i < ms / 50; i++) { await sleep(50); p = Math.max(p, a.audio.getLevels().channels[0]); } return p; };
+            const speed = async (ms) => { const p0 = a.engine.getPosition(0); await sleep(ms); return (a.engine.getPosition(0) - p0) / (ms / 1000); };
+            audius = { steps: {} };
+            const t0 = performance.now();
+            await a.audius.search(audiusQuery);
+            const st = a.audius.getState();
+            audius.searchMs = Math.round(performance.now() - t0);
+            audius.results = st.tracks.length;
+            const idx = st.tracks.findIndex((t) => t.streamable && t.durationMs > 60000 && t.durationMs < 420000);
+            audius.track = st.tracks[idx] && { id: st.tracks[idx].id, title: st.tracks[idx].title, artist: st.tracks[idx].artist, durationMs: st.tracks[idx].durationMs, bpm: st.tracks[idx].bpm, key: st.tracks[idx].key, isrc: st.tracks[idx].isrc };
+            if (idx >= 0) {
+              a.browser.setActive(a.audius);
+              a.audius.select(idx);
+              const progress = new Set();
+              const off = a.engine.on("state", (s) => { const d = s.decks[0]; if (d.status === "loading") progress.add(d.loadProgress == null ? "?" : Math.round(d.loadProgress * 10) * 10); });
+              const tl = performance.now();
+              midi(0x96, 0x46, 0x7f); midi(0x96, 0x46, 0x00);                       // LOAD A
+              for (let i = 0; i < 1200 && a.engine.getState().decks[0].status !== "ready" && a.engine.getState().decks[0].status !== "error"; i++) await sleep(50);
+              off();
+              const d = a.engine.getState().decks[0];
+              audius.steps.load = { status: d.status, error: d.error, source: d.track?.source, loadMs: Math.round(performance.now() - tl), progressSeen: [...progress].join(","), duration: d.duration, stream: a.audius.client.stats.lastStream };
+              if (d.status === "ready") {
+                midi(0xb6, 0x1f, 0x00); midi(0xb6, 0x3f, 0x00);                     // crossfader full A
+                midi(0xb0, 0x13, 0x5a); midi(0xb0, 0x33, 0x00);                     // channel fader A ~0.7
+                midi(0x90, 0x0b, 0x7f); midi(0x90, 0x0b, 0x00);                     // PLAY A
+                audius.steps.play = { playing: a.engine.getState().decks[0].playing, speed: +(await speed(1500)).toFixed(3), peak: +(await level(800)).toFixed(3) };
+                midi(0xb0, 0x00, 0x7f); midi(0xb0, 0x20, 0x7f);                     // tempo slider fully down (+10%)
+                audius.steps.tempo = { rate: a.engine.getState().decks[0].rate, measuredSpeed: +(await speed(1500)).toFixed(3) };
+                midi(0xb0, 0x00, 0x40); midi(0xb0, 0x20, 0x00);                     // tempo centre
+                const p0 = a.engine.getPosition(0);
+                for (let i = 0; i < 25; i++) { midi(0xb0, 0x21, 0x48); await sleep(8); } // jog ring forward (nudge)
+                const nudged = a.engine.getPosition(0) - p0;
+                audius.steps.jog = { advancedDuring200ms: +nudged.toFixed(3), note: ">0.2 means the nudge sped playback up" };
+                const before = await level(600);
+                midi(0xb6, 0x17, 0x00); midi(0xb6, 0x37, 0x00);                     // FILTER A full left (low-pass)
+                const filtered = await level(800);
+                midi(0xb6, 0x17, 0x40); midi(0xb6, 0x37, 0x00);                     // FILTER centre
+                midi(0xb0, 0x0f, 0x00); midi(0xb0, 0x2f, 0x00); midi(0xb0, 0x0b, 0x00); midi(0xb0, 0x2b, 0x00); midi(0xb0, 0x07, 0x00); midi(0xb0, 0x27, 0x00); // all EQs full cut
+                const eqCut = await level(800);
+                for (const cc of [0x07, 0x0b, 0x0f]) { midi(0xb0, cc, 0x40); midi(0xb0, cc + 0x20, 0x00); } // EQs centre
+                audius.steps.eqFilter = { peakBefore: +before.toFixed(3), peakFilterLowpass: +filtered.toFixed(3), peakAllEqCut: +eqCut.toFixed(3) };
+                midi(0xb6, 0x1f, 0x7f); midi(0xb6, 0x3f, 0x7f);                     // crossfader full B
+                audius.steps.crossfader = { peakWithCrossfaderOnB: +(await level(600)).toFixed(4) };
+                midi(0xb6, 0x1f, 0x00); midi(0xb6, 0x3f, 0x00);
+                midi(0x97, 0x00, 0x7f); midi(0x97, 0x00, 0x00);                     // PAD A1 (hot cue 1)
+                audius.steps.hotcue = { hotcue1: a.engine.getState().decks[0].hotcues[0] };
+                a.bus.send("deck1.seek", 0.5);
+                await sleep(300);
+                audius.steps.seek = { requested: d.duration / 2, position: +a.engine.getPosition(0).toFixed(2) };
+                midi(0x90, 0x0b, 0x7f); midi(0x90, 0x0b, 0x00);                     // PLAY A again → pause
+                await sleep(300); const pp = a.engine.getPosition(0); await sleep(400); // let already-queued output drain first
+                audius.steps.pause = { playing: a.engine.getState().decks[0].playing, stable: Math.abs(a.engine.getPosition(0) - pp) < 0.01 };
+                audius.steps.waveform = { overviewReady: !!a.analysis.get(0) };
+                audius.deckTrack = { title: a.engine.getState().decks[0].track?.title, bpm: a.engine.getState().decks[0].track?.bpm, key: a.engine.getState().decks[0].track?.key };
+              }
+            }
+            audius.apiStats = { ...a.audius.client.stats, lastStream: undefined };
+          }
+
           // File loading path used by drag & drop: expand a folder, add to library, load into deck B.
           const checks = {};
           if (ref && window.dbdjDesktop) {
@@ -236,6 +301,7 @@ function runSmokeTest(win: BrowserWindow): void {
           const clickSel = ${JSON.stringify(process.env.DBDJ_SMOKE_BROWSER_CLICK ?? "")};
           if (clickSel) { document.querySelector(clickSel)?.click(); await sleep(1500); }
           return {
+            audius,
             checks,
             tabErrors,
             audio: a.audio.getStatus(),

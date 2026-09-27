@@ -30,6 +30,10 @@ export interface DeckState {
   track: TrackInfo | null;
   status: "empty" | "loading" | "ready" | "error";
   error?: string;
+  /** While loading/buffering a streamed track: 0..1 (null = unknown size). */
+  loadProgress?: number | null;
+  /** Network status for the deck (e.g. retrying after a dropped connection). */
+  loadMessage?: string;
   duration: number;
   playing: boolean;
   cuePoint: number;
@@ -99,7 +103,13 @@ export interface BrowserPort {
   getSelected(): TrackInfo | null;
 }
 
-export type TrackBytesLoader = (track: TrackInfo) => Promise<ArrayBuffer>;
+export interface LoadProgress {
+  /** 0..1 when the total size is known. */
+  fraction: number | null;
+  /** Network status, e.g. "Audius connection interrupted — retrying (2/5)…". */
+  message?: string;
+}
+export type TrackBytesLoader = (track: TrackInfo, opts: { onProgress: (p: LoadProgress) => void; signal: AbortSignal }) => Promise<ArrayBuffer>;
 export type SourcePolicy = (track: TrackInfo) => { ok: boolean; reason?: string };
 
 export type EngineEvent =
@@ -151,6 +161,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
   /** Per-deck: preview started from this point; play pressed during preview keeps playing. */
   private preview: { origin: number; latchPlay: boolean }[];
   private jogTicks: number[];
+  private loadAborts: (AbortController | null)[] = [];
   private warnedUnimplemented = new Set<string>();
 
   private readonly bus: CommandBus;
@@ -159,6 +170,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
   private readonly browser: BrowserPort;
   private readonly log: EventLog;
   private readonly canLoad: SourcePolicy;
+  private readonly onBrowserLoad: ((deck: number, track: TrackInfo) => void) | null;
 
   constructor(opts: {
     bus: CommandBus;
@@ -170,8 +182,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     settings?: Partial<EngineSettings>;
     /** Decides whether a track's source permits loading it into the mixer (default: local files only). */
     canLoad?: SourcePolicy;
+    /** Handles controller/keyboard "load selected" (e.g. routes streaming tracks through Smart Match). */
+    onBrowserLoad?: (deck: number, track: TrackInfo) => void;
   }) {
     super();
+    this.onBrowserLoad = opts.onBrowserLoad ?? null;
     this.canLoad = opts.canLoad ?? ((t) => (t.source === "local" ? { ok: true } : { ok: false, reason: `${t.source} audio cannot be mixed` }));
     this.bus = opts.bus;
     this.audio = opts.audio;
@@ -291,10 +306,25 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       this.log.warn("engine", `Deck ${deckLetter(deck)} is playing — pause it before loading a new track.`);
       return;
     }
+    if (track.unavailableReason) {
+      this.log.warn("engine", `Can't load "${track.title}": ${track.unavailableReason}`);
+      return;
+    }
     const token = ++this.loadTokens[deck];
-    this.patchDeck(deck, { status: "loading", track, error: undefined });
+    this.loadAborts[deck]?.abort();
+    const abort = new AbortController();
+    this.loadAborts[deck] = abort;
+    this.patchDeck(deck, { status: "loading", track, error: undefined, loadProgress: null, loadMessage: undefined });
+    let lastPatch = 0;
+    const onProgress = (p: LoadProgress) => {
+      if (token !== this.loadTokens[deck]) return;
+      const now = performance.now();
+      if (!p.message && now - lastPatch < 100) return; // throttle UI updates
+      lastPatch = now;
+      this.patchDeck(deck, { loadProgress: p.fraction, loadMessage: p.message });
+    };
     try {
-      const bytes = await this.loadBytes(track);
+      const bytes = await this.loadBytes(track, { onProgress, signal: abort.signal });
       if (token !== this.loadTokens[deck]) return;
       const decoded = await this.audio.decode(bytes);
       if (token !== this.loadTokens[deck]) return;
@@ -302,6 +332,8 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       this.audio.loadDeck(deck, decoded);
       this.patchDeck(deck, {
         status: "ready",
+        loadProgress: undefined,
+        loadMessage: undefined,
         duration: decoded.duration,
         playing: false,
         previewing: false,
@@ -314,7 +346,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     } catch (err) {
       if (token !== this.loadTokens[deck]) return;
       const message = err instanceof Error ? err.message : String(err);
-      this.patchDeck(deck, { status: "error", error: message });
+      this.patchDeck(deck, { status: "error", error: message, loadProgress: undefined, loadMessage: undefined });
       this.log.error("engine", `Failed to load "${track.title}" into deck ${deckLetter(deck)}: ${message}`);
     }
   }
@@ -368,7 +400,8 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
 
       on(`browser.load.deck${i + 1}`, pressed(() => {
         const t = this.browser.getSelected();
-        if (t) void this.loadTrack(i, t);
+        if (t && this.onBrowserLoad) this.onBrowserLoad(i, t);
+        else if (t) void this.loadTrack(i, t);
         else this.log.warn("engine", "Nothing selected in the browser to load.");
       }));
     }
@@ -493,6 +526,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       return;
     }
     this.loadTokens[deck]++;
+    this.loadAborts[deck]?.abort();
     this.audio.unloadDeck(deck);
     this.patchDeck(deck, { ...initialDeck(deck), tempo: d.tempo, tempoRange: d.tempoRange, rate: d.rate, vinyl: d.vinyl });
     this.emit("event", { type: "trackUnloaded", deck });

@@ -7,12 +7,13 @@ import type { TrackInfo } from "../core/engine/types";
 import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
 import { PROVIDER_NAMES, toTrackInfo, type ProviderView } from "../providers/StreamingStore";
 import { summarize } from "../app/matching";
+import { AudiusPane, useAudiusState } from "./AudiusPane";
 import type { ResolutionResult } from "../matching/SmartTrackResolver";
 import type { StreamingProviderId } from "../providers/streamingTypes";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 
-type Source = "local" | StreamingProviderId;
+type Source = "local" | "audius" | StreamingProviderId;
 
 function fmtDuration(ms?: number): string {
   if (!ms) return "—";
@@ -39,6 +40,7 @@ export function LibraryPanel() {
   const [source, setSource] = useState<Source>("local");
   const lib = useLibraryState();
   const streams = useStreamingState();
+  const audiusState = useAudiusState();
   const dot = (v: ProviderView) => (v.status?.connected ? "● " : v.status?.configured ? "◐ " : "○ ");
   return (
     <div className="browser">
@@ -53,8 +55,13 @@ export function LibraryPanel() {
         <button className={source === "apple-music" ? "active" : ""} onClick={() => setSource("apple-music")}>
           {dot(streams["apple-music"])}Apple Music
         </button>
+        <button className={source === "audius" ? "active" : ""} onClick={() => setSource("audius")}>
+          {audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span>
+        </button>
       </nav>
-      <div className="browser-body">{source === "local" ? <LocalView /> : <ProviderPane id={source} />}</div>
+      <div className="browser-body">
+        {source === "local" ? <LocalView /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
+      </div>
     </div>
   );
 }
@@ -68,6 +75,8 @@ function LocalView() {
   const freeDeck = useFreeDeck();
   const selectedRef = useRef<HTMLTableRowElement>(null);
   const [dropping, setDropping] = useState(false);
+  const { browser } = app;
+  useEffect(() => browser.setActive(library), [browser, library]);
 
   useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: "nearest" });

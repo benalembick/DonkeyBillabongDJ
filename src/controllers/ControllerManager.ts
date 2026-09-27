@@ -58,6 +58,7 @@ export class ControllerManager extends Emitter<{
   private msgTimes: number[] = [];
   private rescanTimer: ReturnType<typeof setTimeout> | null = null;
   private ledPending = false;
+  private simRuntimes = new Map<string, MappingRuntime>();
 
   private readonly bus: CommandBus;
   private readonly feedback: FeedbackSource;
@@ -134,6 +135,25 @@ export class ControllerManager extends Emitter<{
     const now = performance.now();
     while (this.msgTimes.length && now - this.msgTimes[0] > 1000) this.msgTimes.shift();
     return this.msgTimes.length;
+  }
+
+  /**
+   * Feed raw MIDI bytes through a mapping exactly as if they came from the
+   * device (same parser, runtime and command bus). Used by the controller
+   * simulator and automated tests; physical hardware is still the real test.
+   */
+  simulate(mappingId: string, bytes: number[]): Translation[] {
+    const mapping = this.mappings.find((m) => m.id === mappingId);
+    if (!mapping) throw new Error(`No mapping ${mappingId}`);
+    let rt = this.simRuntimes.get(mappingId);
+    if (!rt) {
+      rt = new MappingRuntime(mapping, (action, value) => this.bus.dispatch({ action, value, source: "midi" }), () => undefined, (k) => this.feedback.getFeedback(k));
+      this.simRuntimes.set(mappingId, rt);
+    }
+    const msg = parseMidi(bytes, "simulator", `${mapping.name} (simulated)`, performance.now());
+    const translations = rt.handle(msg);
+    this.emit("monitor", { id: this.monitorId++, message: msg, translations, mapping: mapping.name });
+    return translations;
   }
 
   /** Turn LEDs off (call on shutdown). */

@@ -10,7 +10,7 @@
 import type { TrackInfo } from "../core/engine/types";
 import { buildIdentity, type TrackIdentity } from "./identity";
 
-export type SourceId = "local" | "beatport" | "beatsource" | "soundcloud";
+export type SourceId = "local" | "audius" | "beatport" | "beatsource" | "soundcloud";
 
 export interface SourceCapabilities {
   canPlay: boolean;

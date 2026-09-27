@@ -1,7 +1,7 @@
 import type { FilterParams } from "./mixerMath";
 
 /** Source a track came from. Shown in the library and on the deck. */
-export type TrackSource = "local" | "spotify" | "apple-music";
+export type TrackSource = "local" | "spotify" | "apple-music" | "audius";
 
 export interface TrackInfo {
   /** Stable reference understood by the track loader (file path in desktop mode). */
@@ -18,6 +18,8 @@ export interface TrackInfo {
   isrc?: string | null;
   genre?: string;
   year?: number;
+  /** Set when this specific track can't be played (e.g. gated on its service); shown as the reason. */
+  unavailableReason?: string;
   /** Embedded tags have been read (local files). */
   tagsRead?: boolean;
   /** Set when this playable track was resolved from another service's metadata (Smart Match). */

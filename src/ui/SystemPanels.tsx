@@ -5,8 +5,51 @@ import type { CrossfaderCurve } from "../core/engine/mixerMath";
 import { importMixxxMapping, type ImportResult } from "../controllers/mixxx/MixxxImporter";
 import { useApp, useEngineState } from "./context";
 import { MatchDiagnostics } from "./MatchDialog";
+import { useAudiusState } from "./AudiusPane";
+import { AUDIUS_APP_NAME } from "../providers/audius/AudiusClient";
+
+const audiusAppName = () => AUDIUS_APP_NAME;
 import type { SourceId } from "../matching/sources";
 import { useTick } from "./hooks";
+
+function AudiusDiagnostics() {
+  const { audius, engine } = useApp();
+  useTick(500);
+  const st = audius.client.stats;
+  const decks = engine.getState().decks;
+  return (
+    <>
+      <h4>Audius</h4>
+      <dl>
+        <dt>API</dt>
+        <dd>{st.host} · status {st.apiStatus}{st.lastError ? ` · last error: ${st.lastError}` : ""}</dd>
+        <dt>Latency</dt>
+        <dd>last {st.lastLatencyMs ?? "—"} ms · average {st.avgLatencyMs ?? "—"} ms</dd>
+        <dt>Requests</dt>
+        <dd>{st.requests} · cache hits {st.cacheHits} · retries {st.retries} · errors {st.errors}</dd>
+        <dt>Last stream</dt>
+        <dd>
+          {st.lastStream
+            ? `track ${st.lastStream.trackId} · first byte ${st.lastStream.ttfbMs} ms · full buffer ${st.lastStream.totalMs} ms · ${(st.lastStream.bytes / 1048576).toFixed(1)} MB · ${st.lastStream.retries} retries`
+            : "—"}
+        </dd>
+        {decks.map((d, i) =>
+          d.track?.source === "audius" ? (
+            <div key={i} style={{ display: "contents" }}>
+              <dt>Deck {String.fromCharCode(65 + i)}</dt>
+              <dd>
+                {d.track.ref} · {d.status}
+                {d.loadProgress != null ? ` ${Math.round(d.loadProgress * 100)}%` : ""} · {d.duration ? `${d.duration.toFixed(1)} s` : ""}
+                {d.track.resolvedFrom ? ` · Smart Match ${d.track.resolvedFrom.confidence}% from ${d.track.resolvedFrom.metadataSource}` : ""}
+                {d.loadMessage ? ` · ${d.loadMessage}` : ""}
+              </dd>
+            </div>
+          ) : null,
+        )}
+      </dl>
+    </>
+  );
+}
 
 function SmartMatchDiagnostics() {
   const { matching } = useApp();
@@ -92,6 +135,7 @@ export function Diagnostics() {
           <dd>{mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(0)} MB` : "n/a"}</dd>
         </dl>
       </div>
+      <AudiusDiagnostics />
       <SmartMatchDiagnostics />
       <h4>Event log</h4>
       <div className="log">
@@ -102,6 +146,75 @@ export function Diagnostics() {
         ))}
       </div>
     </div>
+  );
+}
+
+function AudiusSettings() {
+  const { audius, matching } = useApp();
+  const st = useAudiusState();
+  useTick(1000);
+  const stats = audius.client.stats;
+  const enabled = matching.resolver.isEnabled("audius");
+  return (
+    <fieldset>
+      <legend>STREAMING → AUDIUS</legend>
+      <div className="row">
+        <span className={st.connection === "ok" ? "ok-text" : st.connection === "error" ? "warn" : "hint"}>
+          {st.connection === "ok" ? "● Connected — API reachable" : st.connection === "error" ? `▲ Unreachable: ${st.connectionError ?? ""}` : st.connection === "testing" ? "Testing…" : "Not tested yet"}
+        </span>
+        <button disabled={st.connection === "testing"} onClick={() => void audius.testConnection().then(() => matching.notifySourcesChanged())}>
+          Test connection
+        </button>
+      </div>
+      <p className="hint">
+        Authentication: none needed (public API, identified as app "{audiusAppName()}"). No account, key or secret is stored. Free tier: 10 requests/s,
+        500k/month — the app throttles itself to 5/s, retries with back-off and caches metadata for 10 minutes.
+      </p>
+      <p className="hint">
+        API {stats.host} · requests this session {stats.requests} · cache hits {stats.cacheHits} · retries {stats.retries} · errors {stats.errors}
+        {stats.avgLatencyMs != null ? ` · avg latency ${stats.avgLatencyMs} ms` : ""}
+      </p>
+      <label>
+        <input type="checkbox" checked={enabled} onChange={(e) => matching.setSourceEnabled("audius", e.target.checked)} />
+        Use Audius for Smart Matching (Spotify / Apple Music tracks without a local file)
+      </label>
+    </fieldset>
+  );
+}
+
+function ProviderStatusTable() {
+  const { matching, streaming } = useApp();
+  useTick(1000);
+  const s = streaming.getState();
+  const rows: [string, string, string][] = [
+    ["Local Library", "AVAILABLE", "Your files — every DJ feature"],
+    ["Spotify", s.spotify.status?.connected ? "METADATA / PLAYLISTS" : "NOT CONNECTED", "Discovery & playlists only; audio never used"],
+    ["Apple Music", s["apple-music"].status?.connected ? "METADATA / PLAYLISTS" : "NOT CONNECTED", "Discovery & library only; audio never used"],
+  ];
+  for (const src of matching.resolver.getSources()) {
+    if (src.id === "local") continue;
+    const a = src.availability();
+    rows.push([
+      src.name,
+      a.available ? (matching.resolver.isEnabled(src.id) ? "AVAILABLE" : "AVAILABLE (matching off)") : src.remote && src.id !== "audius" ? "PARTNER ACCESS REQUIRED" : "UNAVAILABLE",
+      a.available ? "Playable in the decks (recording disabled)" : (a.reason ?? ""),
+    ]);
+  }
+  return (
+    <fieldset>
+      <legend>STREAMING / MUSIC PROVIDERS</legend>
+      <table className="provider-table">
+        <tbody>
+          {rows.map(([name, status, note]) => (
+            <tr key={name}>
+              <td><b>{name}</b></td>
+              <td className={status.startsWith("AVAILABLE") || status.startsWith("METADATA") ? "ok-text" : "hint"}>{status}</td>
+              <td className="hint">{note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </fieldset>
   );
 }
 
@@ -139,6 +252,11 @@ function SmartMatchSettings() {
                 </span>
               )}
               <span className="row-actions">
+                {s.id !== "local" && a.available && (
+                  <label className="hint">
+                    <input type="checkbox" checked={matching.resolver.isEnabled(s.id)} onChange={(e) => { matching.setSourceEnabled(s.id, e.target.checked); force((n) => n + 1); }} /> use
+                  </label>
+                )}
                 <button className="tiny" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
                 <button className="tiny" disabled={i === sources.length - 1} onClick={() => move(i, 1)}>↓</button>
               </span>
@@ -348,6 +466,8 @@ export function Settings() {
       </fieldset>
 
       <StreamingSettings />
+      <AudiusSettings />
+      <ProviderStatusTable />
       <SmartMatchSettings />
 
       {imported && (

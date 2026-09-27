@@ -91,6 +91,9 @@ interface VersionRule {
 
 // Order matters: first match wins.
 const VERSION_RULES: VersionRule[] = [
+  { re: /\bcover\b|\bcovered by\b/i, kind: "other" },
+  { re: /\bmash-?up\b|\bblend\b/i, kind: "other" },
+  { re: /\bsped[ -]?up\b|\bslowed\b|\bnightcore\b|\b8d\b/i, kind: "other" },
   { re: /\bradio\s*(edit|version|mix|cut)\b|\bsingle\s*(version|edit)\b/i, kind: "radio" },
   { re: /\bextended\b/i, kind: "extended" },
   { re: /\bclub\s*(mix|version|edit)?\b/i, kind: "club" },
@@ -206,6 +209,8 @@ export function compareVersions(a: VersionInfo, b: VersionInfo): VersionCompatib
     }
     return "match";
   }
+  // Covers, mashups, sped-up/slowed edits etc. are never the same recording as anything else.
+  if (a.kind === "other" || b.kind === "other") return "conflict";
   const aOrig = ORIGINAL_LIKE.has(a.kind);
   const bOrig = ORIGINAL_LIKE.has(b.kind);
   if (aOrig && bOrig) return "compatible"; // e.g. original vs remaster, clean vs explicit

@@ -22,6 +22,10 @@ import { StreamingStore } from "../providers/StreamingStore";
 import type { TrackInfo } from "../core/engine/types";
 import { applyTags } from "../library/tags";
 import { MatchingService } from "./matching";
+import { AudiusClient } from "../providers/audius/AudiusClient";
+import { AudiusSource } from "../providers/audius/AudiusSource";
+import { AudiusStore, BrowserRouter } from "../providers/audius/AudiusStore";
+import { audiusIdFromRef } from "../providers/audius/audiusTracks";
 
 export interface App {
   bus: CommandBus;
@@ -35,6 +39,9 @@ export interface App {
   platform: Platform;
   streaming: StreamingStore;
   matching: MatchingService;
+  audius: AudiusStore;
+  /** Which list the controller's browse encoder / LOAD buttons act on. */
+  browser: BrowserRouter;
   /** Add files to the library and optionally load the first one into a deck. */
   addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number>;
   saveAudioConfig(c: AudioConfig): void;
@@ -66,6 +73,9 @@ export function createApp(): App {
   const bus = new CommandBus();
   const platform = createPlatform();
   const library = new LibraryStore();
+  const audiusClient = new AudiusClient();
+  const audiusStore = new AudiusStore(audiusClient, log);
+  const browser = new BrowserRouter(library);
   const audioConfig = load<AudioConfig>(AUDIO_KEY, DEFAULT_AUDIO_CONFIG);
   const audio = new WebAudioEngine(2, audioConfig);
   const storedSettings = load<Partial<EngineSettings>>(ENGINE_KEY, {});
@@ -73,8 +83,11 @@ export function createApp(): App {
     bus,
     audio,
     log,
-    browser: library,
-    loadBytes: (t) => platform.readAudio(t.ref),
+    browser,
+    // Audius: stream the full track into memory (Range-resume on network drops); local: read the file.
+    loadBytes: (t, { onProgress, signal }) =>
+      t.source === "audius" ? audiusClient.downloadAudio(audiusIdFromRef(t.ref), onProgress, signal) : platform.readAudio(t.ref),
+    onBrowserLoad: (deck, t) => void matching.loadToDeck(deck, t),
     deckCount: 2,
     canLoad: (t) => {
       const cap = PROVIDER_CAPABILITIES[t.source];
@@ -86,7 +99,9 @@ export function createApp(): App {
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
-  const matching = new MatchingService({ engine, log, library, storage: platform.mappingStorage });
+  const matching = new MatchingService({ engine, log, library, storage: platform.mappingStorage, remoteSources: [new AudiusSource(audiusClient)] });
+  // "Available" only after a real API request succeeds.
+  void audiusStore.testConnection().then(() => matching.notifySourcesChanged());
 
   /** Read embedded tags (ISRC, duration, BPM, key) in the background and persist them. */
   let tagQueue: string[] = [];
@@ -172,6 +187,8 @@ export function createApp(): App {
     platform,
     streaming,
     matching,
+    audius: audiusStore,
+    browser,
     addFiles: async (refs, loadIntoDeck) => {
       const added = library.addFiles(refs);
       if (refs.length === 0) {

@@ -64,6 +64,7 @@ const REMOTE_TIMEOUT_MS = 8000;
 export class SmartTrackResolver extends Emitter<{ resolved: ResolutionResult; mappings: void }> {
   private sources: PlayableSource[];
   private order: SourceId[];
+  private disabled = new Set<SourceId>();
   private config: MatchConfig;
   private mappings = new Map<string, ResolutionMapping>();
   private readonly storage: MappingStorage | null;
@@ -100,6 +101,13 @@ export class SmartTrackResolver extends Emitter<{ resolved: ResolutionResult; ma
   setOrder(order: SourceId[]): void {
     this.order = order;
   }
+  setEnabled(id: SourceId, enabled: boolean): void {
+    if (enabled) this.disabled.delete(id);
+    else this.disabled.add(id);
+  }
+  isEnabled(id: SourceId): boolean {
+    return !this.disabled.has(id);
+  }
   getSources(): PlayableSource[] {
     return this.orderedSources();
   }
@@ -124,7 +132,7 @@ export class SmartTrackResolver extends Emitter<{ resolved: ResolutionResult; ma
     if (fromMapping) return this.record(fromMapping);
     const candidates: ScoredCandidate[] = [];
     for (const s of this.orderedSources()) {
-      if (s.remote || !s.availability().available) continue;
+      if (s.remote || this.disabled.has(s.id) || !s.availability().available) continue;
       const local = s as PlayableSource & { searchSync?: (i: TrackIdentity) => SourceCandidate[] };
       if (!local.searchSync) continue;
       candidates.push(...local.searchSync(req).map((c) => this.score(req, c)));
@@ -140,6 +148,10 @@ export class SmartTrackResolver extends Emitter<{ resolved: ResolutionResult; ma
     const candidates: ScoredCandidate[] = [];
     const notes: ResolutionResult["sourceNotes"] = [];
     for (const s of this.orderedSources()) {
+      if (this.disabled.has(s.id)) {
+        notes.push({ source: s.id, name: s.name, message: "turned off in Settings → Smart Matching" });
+        continue;
+      }
       const avail = s.availability();
       if (!avail.available) {
         notes.push({ source: s.id, name: s.name, message: avail.reason ?? "unavailable" });

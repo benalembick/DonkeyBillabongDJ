@@ -46,6 +46,14 @@ export interface MusicProvider {
  */
 export const PROVIDER_CAPABILITIES: Record<TrackSource, PlaybackCapabilities> = {
   local: { canLoadIntoDeck: true, canPreviewExternally: false, canRecord: true },
+  audius: {
+    canLoadIntoDeck: true,
+    canPreviewExternally: false,
+    // The Open Music License grants streaming/performance "in connection with a Music Player's services";
+    // making a fixed recording (a derivative mix) is not expressly granted, so recording is disabled.
+    canRecord: false,
+    restriction: "Audius tracks stream under the Audius Open Music License. Recording mixes that contain Audius audio is disabled.",
+  },
   spotify: {
     canLoadIntoDeck: false,
     canPreviewExternally: false,

@@ -210,11 +210,11 @@ export function Deck({ deck }: { deck: number }) {
             onClick={d.status === "empty" ? () => void pickAndLoad() : undefined}
             title={d.status === "empty" ? "Click to choose a file" : undefined}
           >
-            {d.status === "loading" ? "Loading…" : d.track?.title ?? "Empty — click or drop an audio file here"}
+            {d.track?.title ?? "Empty — click or drop an audio file here"}
           </div>
           <div className="deck-artist">
             {d.track?.artist || (d.status === "error" ? `⚠ ${d.error}` : "")}
-            {d.track && <span className="source-badge">{d.track.source.toUpperCase()}</span>}
+            {d.track && <span className={`source-badge ${d.track.source}`}>{d.track.source === "apple-music" ? "APPLE MUSIC" : d.track.source.toUpperCase()}</span>}
             {d.track?.resolvedFrom && (
               <span
                 className="via-badge"
@@ -223,7 +223,8 @@ Audio: ${d.track.resolvedFrom.audioSource}
 Match: ${d.track.resolvedFrom.confidence}% (${d.track.resolvedFrom.method})${d.track.resolvedFrom.isrc ? `
 ISRC ${d.track.resolvedFrom.isrc}` : ""}`}
               >
-                via {d.track.resolvedFrom.metadataSource === "apple-music" ? "APPLE MUSIC" : d.track.resolvedFrom.metadataSource.toUpperCase()} · {d.track.resolvedFrom.confidence}%
+                {d.track.resolvedFrom.metadataSource === "apple-music" ? "APPLE MUSIC" : d.track.resolvedFrom.metadataSource.toUpperCase()} →{" "}
+                {d.track.resolvedFrom.audioSource.toUpperCase()} · Smart Match {d.track.resolvedFrom.confidence}%
               </span>
             )}
           </div>
@@ -237,6 +238,24 @@ ISRC ${d.track.resolvedFrom.isrc}` : ""}`}
         </div>
       </header>
 
+      {(d.status === "loading" || d.status === "error") && (
+        <div className={`deck-load ${d.loadMessage || d.status === "error" ? "warn" : ""}`}>
+          {d.status === "error" ? (
+            <>⛔ ERROR — {d.error}</>
+          ) : (
+            <>
+              <span>
+                {d.track?.source === "audius" ? "BUFFERING" : "LOADING"}
+                {d.loadProgress != null ? ` ${Math.round(d.loadProgress * 100)}%` : "…"}
+              </span>
+              {d.loadMessage && <span> · {d.loadMessage}</span>}
+              <div className="load-bar">
+                <div style={{ width: `${Math.round((d.loadProgress ?? 0) * 100)}%` }} />
+              </div>
+            </>
+          )}
+        </div>
+      )}
       <OverviewWaveform deck={deck} />
       <DeckClock deck={deck} />
 

@@ -12,7 +12,8 @@ import type { LibraryStore } from "../library/LibraryStore";
 import { buildIdentity, splitArtists, type TrackIdentity } from "../matching/identity";
 import type { MatchConfig } from "../matching/scoring";
 import { SmartTrackResolver, toResolvedTrack, type MappingStorage, type ResolutionResult, type ScoredCandidate } from "../matching/SmartTrackResolver";
-import { createPartnerOnlySources, LocalLibrarySource, type SourceCandidate, type SourceId } from "../matching/sources";
+import { createPartnerOnlySources, LocalLibrarySource, type PlayableSource, type SourceCandidate, type SourceId } from "../matching/sources";
+import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
 import type { StreamingTrack } from "../providers/streamingTypes";
 
 export interface MatchPrompt {
@@ -24,10 +25,21 @@ export interface MatchPrompt {
 interface StoredSettings {
   order?: SourceId[];
   config?: Partial<MatchConfig>;
+  disabled?: SourceId[];
 }
 
+const DEFAULT_ORDER: SourceId[] = ["local", "audius", "beatport", "beatsource", "soundcloud"];
+
 const SETTINGS_KEY = "dbdj.smartMatching.v1";
-const SOURCE_NAMES: Record<string, string> = { local: "Local Library", beatport: "Beatport", beatsource: "Beatsource", soundcloud: "SoundCloud" };
+const SOURCE_NAMES: Record<string, string> = {
+  local: "Local Library",
+  audius: "Audius",
+  beatport: "Beatport",
+  beatsource: "Beatsource",
+  soundcloud: "SoundCloud",
+  spotify: "Spotify",
+  "apple-music": "Apple Music",
+};
 
 export function identityFromStreaming(t: StreamingTrack): TrackIdentity {
   return buildIdentity({
@@ -73,19 +85,23 @@ export class MatchingService extends Emitter<{ change: void; prompt: MatchPrompt
   private readonly log: EventLog;
   private readonly library: LibraryStore;
 
-  constructor(opts: { engine: DJEngine; log: EventLog; library: LibraryStore; storage: MappingStorage }) {
+  constructor(opts: { engine: DJEngine; log: EventLog; library: LibraryStore; storage: MappingStorage; remoteSources?: PlayableSource[] }) {
     super();
     this.engine = opts.engine;
     this.log = opts.log;
     this.library = opts.library;
     this.local = new LocalLibrarySource(this.library.getState().tracks);
     const stored = loadSettings();
+    // Keep saved orders valid when new sources are added (e.g. Audius goes right after Local).
+    let order = stored.order?.filter((id) => DEFAULT_ORDER.includes(id)) ?? DEFAULT_ORDER;
+    for (const id of DEFAULT_ORDER) if (!order.includes(id)) order = id === "audius" ? [order[0], id, ...order.slice(1)] : [...order, id];
     this.resolver = new SmartTrackResolver({
-      sources: [this.local, ...createPartnerOnlySources()],
-      order: stored.order,
+      sources: [this.local, ...(opts.remoteSources ?? []), ...createPartnerOnlySources()],
+      order,
       config: stored.config,
       storage: opts.storage,
     });
+    for (const id of stored.disabled ?? []) this.resolver.setEnabled(id, false);
     void this.resolver.loadMappings().then(() => this.reresolveCurrent());
     this.resolver.on("mappings", () => this.emit("change", undefined));
 
@@ -104,16 +120,35 @@ export class MatchingService extends Emitter<{ change: void; prompt: MatchPrompt
 
   // ─────────────── settings ───────────────
 
+  private persist(): void {
+    saveSettings({
+      order: this.resolver.getOrder(),
+      config: this.resolver.getConfig(),
+      disabled: this.resolver.getSources().filter((s) => !this.resolver.isEnabled(s.id)).map((s) => s.id),
+    });
+  }
+
   setOrder(order: SourceId[]): void {
     this.resolver.setOrder(order);
-    saveSettings({ order, config: this.resolver.getConfig() });
+    this.persist();
     this.reresolveCurrent();
   }
 
   setConfig(c: Partial<MatchConfig>): void {
     this.resolver.setConfig(c);
-    saveSettings({ order: this.resolver.getOrder(), config: this.resolver.getConfig() });
+    this.persist();
     this.reresolveCurrent();
+  }
+
+  setSourceEnabled(id: SourceId, enabled: boolean): void {
+    this.resolver.setEnabled(id, enabled);
+    this.persist();
+    this.emit("change", undefined);
+  }
+
+  /** A source's availability changed (e.g. Audius connection test finished). */
+  notifySourcesChanged(): void {
+    this.emit("change", undefined);
   }
 
   sourceName(id: string): string {
@@ -171,7 +206,8 @@ export class MatchingService extends Emitter<{ change: void; prompt: MatchPrompt
 
   /** Load any track into a deck. Streaming tracks are resolved to a playable source first. */
   async loadToDeck(deck: number, track: TrackInfo, streaming?: StreamingTrack): Promise<void> {
-    if (track.source === "local") {
+    // Sources whose audio may enter the engine load directly (local files, Audius).
+    if (PROVIDER_CAPABILITIES[track.source]?.canLoadIntoDeck) {
       await this.engine.loadTrack(deck, track);
       return;
     }
