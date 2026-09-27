@@ -1,7 +1,11 @@
 # Builds the desktop installers and publishes them as a GitHub Release.
-# Trigger: push a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
+# Trigger: bump "version" in package.json, then push a matching tag:
+#   git tag v0.1.1 && git push origin v0.1.1
 # The web app's "Get the desktop app" button links to the latest release assets:
 #   DonkeyBillabongDJ-Setup.exe (Windows) and DonkeyBillabongDJ-macOS.dmg (macOS, universal)
+#
+# Each OS builds without publishing; a final job creates the release and attaches
+# whatever was built, so one platform failing never blocks the other's download.
 name: Release desktop app
 
 on:
@@ -20,22 +24,23 @@ jobs:
         include:
           - os: windows-latest
             target: --win
+            artifact: windows
           - os: macos-latest
             target: --mac
+            artifact: macos
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - name: Build and publish installer
-        run: npx electron-builder ${{ matrix.target }} --publish always
+      - name: Build installer
+        run: npx electron-builder ${{ matrix.target }} --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Optional code signing — add these repository secrets to remove OS warnings:
           #   Windows: CSC_LINK (base64 .pfx) + CSC_KEY_PASSWORD
           #   macOS:   CSC_LINK (Developer ID .p12) + CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
@@ -44,4 +49,40 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+      - name: List output
+        shell: bash
+        run: ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.blockmap
+            release/latest*.yml
+
+  release:
+    needs: build
+    # Publish whatever built successfully, even if one platform failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -la artifacts || true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Donkey Billabong DJ ${{ github.ref_name }}
+          make_latest: true
+          fail_on_unmatched_files: false
+          files: artifacts/*
+          body: |
+            **Windows:** download `DonkeyBillabongDJ-Setup.exe`, run it — if SmartScreen appears choose *More info → Run anyway* (the app isn't code-signed yet).
+            **macOS:** download `DonkeyBillabongDJ-macOS.dmg`, drag the app to Applications, then right-click → *Open* the first time (not notarised yet).
+            Close Serato / rekordbox / Mixxx before connecting a DDJ-SB.
