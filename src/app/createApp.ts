@@ -30,6 +30,7 @@ import { StemService } from "../stems/StemService";
 import { PlaylistStore } from "../library/PlaylistStore";
 import { AutoDJ } from "../autodj/AutoDJ";
 import { DEFAULT_AUTO_DJ } from "../autodj/transition";
+import { PreparationStore } from "../preparation/PreparationStore";
 
 export interface App {
   bus: CommandBus;
@@ -41,6 +42,7 @@ export interface App {
   playlists: PlaylistStore;
   autoDJ: AutoDJ;
   analysis: AnalysisService;
+  preparation: PreparationStore;
   /** STEM separation (desktop only; local ONNX model). */
   stems: StemService;
   keyboard: KeyboardShortcuts;
@@ -105,7 +107,14 @@ export function createApp(): App {
     },
     settings: { ...storedSettings, jog: { ...DEFAULT_ENGINE_SETTINGS.jog, ...storedSettings.jog } },
   });
-  const analysis = new AnalysisService(engine);
+  const preparation = new PreparationStore(platform.preparation, (err) => log.warn("analysis", `Preparation storage: ${String(err)}`));
+  engine.setPreparationPort(preparation);
+  const analysis = new AnalysisService(engine, {
+    preparation,
+    audio,
+    readAudio: (ref) => platform.readAudio(ref),
+    onError: (err) => log.warn("analysis", String(err)),
+  });
   const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
   void playlists.load();
   const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis,
@@ -147,6 +156,7 @@ export function createApp(): App {
         }
         library.patchTracks(updated);
         await platform.library?.save(updated).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+        analysis.queueTracks(updated);
         done += updated.length;
       }
     } finally {
@@ -160,13 +170,25 @@ export function createApp(): App {
       .load()
       .then((tracks) => {
         if (tracks.length === 0) return;
-        library.hydrate([...tracks, ...library.getState().tracks.filter((t) => !tracks.some((x) => x.ref === t.ref))]);
+        const merged = [...tracks, ...library.getState().tracks.filter((t) => !tracks.some((x) => x.ref === t.ref))];
+        void preparation.ready.then(() => {
+          const decorated = merged.map((t) => preparation.decorate(t));
+          library.hydrate(decorated);
+          analysis.queueTracks(decorated.filter((t) => !t.prepared && !t.unavailableReason));
+        });
+        library.hydrate(merged);
         log.info("library", `Loaded ${tracks.length} track(s) from your library database`);
         const pending = tracks.filter((t) => !t.unavailableReason && (!t.tagsRead || !t.artworkRead)).map((t) => t.ref);
         if (pending.length) void enrichTags(pending);
       })
       .catch((err) => log.warn("library", `Library database unavailable: ${String(err)}`)) : Promise.resolve();
   library.on("change", ({ tracks }) => engine.refreshTrackMetadata(tracks));
+  preparation.on("record", (record) => {
+    const changed = library.getState().tracks.filter((t) => record.refs.includes(t.ref)).map((t) => preparation.decorate(t));
+    if (!changed.length) return;
+    library.patchTracks(changed);
+    void platform.library?.save(changed).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+  });
 
   bus.on("failed", ({ cmd, error }) => log.error("engine", `Action ${cmd.action} failed: ${String(error)}`));
   audio.on((e) => {
@@ -177,8 +199,8 @@ export function createApp(): App {
   window.addEventListener("error", (e) => log.error("ui", e.message));
   window.addEventListener("unhandledrejection", (e) => log.error("ui", `Unhandled: ${String(e.reason)}`));
   window.addEventListener("beforeunload", () => controllers.shutdown());
-  window.addEventListener("beforeunload", () => { autoDJ.dispose(); void playlists.flush(); });
-  document.addEventListener("visibilitychange", () => { if (document.hidden) void playlists.flush(); });
+  window.addEventListener("beforeunload", () => { autoDJ.dispose(); void playlists.flush(); void preparation.flush(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { void playlists.flush(); void preparation.flush(); } });
 
   log.info("app", `Donkey Billabong DJ starting (${platform.kind} mode, ${platform.os})`);
   void audio.start().then(
@@ -203,6 +225,7 @@ export function createApp(): App {
     playlists,
     autoDJ,
     analysis,
+    preparation,
     stems,
     keyboard,
     platform,
@@ -221,6 +244,7 @@ export function createApp(): App {
       if (restored.length) {
         await platform.library?.save(restored).catch((err) => log.warn("library", String(err)));
         void enrichTags(restored.filter((t) => !t.tagsRead || !t.artworkRead).map((t) => t.ref));
+        analysis.queueTracks(restored);
       }
       const added = library.addFiles(refs);
       if (refs.length === 0) {
@@ -232,6 +256,7 @@ export function createApp(): App {
         log.info("library", `Added ${n} track(s) to the library`);
         await platform.library?.save(added).catch((err) => log.warn("library", `Library database: ${String(err)}`));
         void enrichTags(added.map((t) => t.ref));
+        analysis.queueTracks(added);
       }
       if (loadIntoDeck !== undefined) {
         const t = library.getByRef(refs[0].ref);

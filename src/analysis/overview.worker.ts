@@ -14,6 +14,8 @@ interface AnalysisRequest {
 
 self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
   const { id, channels, sampleRate, buckets, metaBpm } = e.data;
-  const a = analyzeTrack(channels, sampleRate, buckets, metaBpm);
-  (self as unknown as Worker).postMessage({ id, ...a }, [a.peaks.buffer, a.rms.buffer, a.low.buffer, a.mid.buffer, a.high.buffer]);
+  try {
+    const a = analyzeTrack(channels, sampleRate, buckets, metaBpm);
+    (self as unknown as Worker).postMessage({ id, ...a }, [a.peaks.buffer, a.rms.buffer, a.low.buffer, a.mid.buffer, a.high.buffer]);
+  } catch (error) { (self as unknown as Worker).postMessage({ id, error: String(error) }); }
 };

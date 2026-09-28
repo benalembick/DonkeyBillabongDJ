@@ -67,6 +67,10 @@ async function scanFolder(root: string, maxDepth = 6): Promise<{ path: string; n
 }
 
 function registerIpc(): void {
+  ipcMain.handle("dbdj:preparation:load", () => libraryDb.loadPreparation());
+  ipcMain.handle("dbdj:preparation:save", (_e, r) => libraryDb.savePreparation(r));
+  ipcMain.handle("dbdj:preparation:waveform", (_e, id: string) => libraryDb.loadWaveform(String(id)));
+  ipcMain.handle("dbdj:preparation:waveform-save", (_e, r) => libraryDb.saveWaveform(r));
   // Dialogs are parented to the app window; unparented dialogs can open behind it on Windows.
   const open = (e: IpcMainInvokeEvent, opts: OpenDialogOptions) => {
     const w = BrowserWindow.fromWebContents(e.sender);

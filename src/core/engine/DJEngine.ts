@@ -21,6 +21,7 @@ import {
   type CrossfaderCurve,
 } from "./mixerMath";
 import type { AudioEngine, FxType, TrackInfo } from "./types";
+import type { PreparedCue, SavedLoop } from "../../preparation/types";
 
 export const TEMPO_RANGES = [0.06, 0.1, 0.16, 1.0] as const;
 export const FX_TYPES: FxType[] = ["echo", "delay", "reverb", "flanger", "phaser", "filter", "bitcrusher", "distortion", "gate", "roll"];
@@ -30,6 +31,9 @@ export const FX_SLOTS = 3;
 export const DEFAULT_FX_ASSIGN: FxType[] = ["echo", "reverb", "flanger"];
 
 export interface BeatGrid {
+  offset?: number;
+  manuallyAdjusted?: boolean;
+  beatPositions?: number[];
   bpm: number;
   firstBeat: number;
   confidence: number;
@@ -109,6 +113,8 @@ export interface DeckState {
   jogTouched: boolean;
   scratching: boolean;
   hotcues: (number | null)[];
+  cueDetails: (PreparedCue | null)[];
+  savedLoops: SavedLoop[];
   /** Estimated beat grid from analysis (null until analysed). */
   beatGrid: BeatGrid | null;
   stems: DeckStems;
@@ -183,6 +189,10 @@ export interface LoadProgress {
 }
 export type TrackBytesLoader = (track: TrackInfo, opts: { onProgress: (p: LoadProgress) => void; signal: AbortSignal }) => Promise<ArrayBuffer>;
 export type SourcePolicy = (track: TrackInfo) => { ok: boolean; reason?: string };
+export interface PreparationPort {
+  restore(track: TrackInfo, bytes: ArrayBuffer, duration: number): Promise<Partial<DeckState>>;
+  changed(previous: DeckState, next: DeckState, patch: Partial<DeckState>): void;
+}
 
 export type EngineEvent =
   | { type: "loadRequested"; deck: number; source: "manual" | "auto-dj" }
@@ -207,6 +217,8 @@ function initialDeck(index: number): DeckState {
     jogTouched: false,
     scratching: false,
     hotcues: new Array(HOTCUE_COUNT).fill(null),
+    cueDetails: new Array(HOTCUE_COUNT).fill(null),
+    savedLoops: [],
     beatGrid: null,
     stems: { enabled: false, volume: [1, 1, 1, 1], muted: [false, false, false, false], status: "off", progress: 0 },
     loop: null,
@@ -248,6 +260,69 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
   private readonly log: EventLog;
   private readonly canLoad: SourcePolicy;
   private readonly onBrowserLoad: ((deck: number, track: TrackInfo) => void) | null;
+  private preparation: PreparationPort | null = null;
+  private restoringPreparation = false;
+  setPreparationPort(port: PreparationPort): void { this.preparation = port; }
+
+  /** Update both copies of a prepared track, without changing live playback or activating loops. */
+  refreshPreparation(trackId: string, fields: Partial<DeckState>): void {
+    this.restoringPreparation = true;
+    try {
+      for (const d of this.state.decks) {
+        if (d.status !== "ready" || d.track?.trackId !== trackId) continue;
+        const { loop: _loop, ...metadata } = fields;
+        this.patchDeck(d.index, metadata);
+        if (fields.beatGrid) this.setBeatGrid(d.index, fields.beatGrid);
+      }
+    } finally { this.restoringPreparation = false; }
+  }
+
+  editBeatGrid(deck: number, bpm: number, firstBeat: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready" || !Number.isFinite(bpm) || bpm < 20 || bpm > 400 || !Number.isFinite(firstBeat) || firstBeat < 0 || firstBeat >= d.duration) return;
+    this.setBeatGrid(deck, { bpm, firstBeat, confidence: d.beatGrid?.confidence ?? 1, source: d.beatGrid?.source ?? "metadata",
+      manuallyAdjusted: true, offset: (d.beatGrid?.offset ?? 0) + firstBeat - (d.beatGrid?.firstBeat ?? firstBeat) });
+  }
+
+  editHotcue(deck: number, slot: number, patch: Partial<Pick<PreparedCue, "timestamp" | "name" | "colour">>): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready" || slot < 0 || slot >= HOTCUE_COUNT || d.hotcues[slot] === null) return;
+    const timestamp = patch.timestamp ?? d.hotcues[slot]!;
+    if (!Number.isFinite(timestamp) || timestamp < 0 || timestamp > d.duration) return;
+    const hotcues = d.hotcues.slice(), cueDetails = d.cueDetails.slice();
+    hotcues[slot] = timestamp;
+    cueDetails[slot] = { slot, type: "hotcue", name: String.fromCharCode(65 + slot), colour: "#ff5f57", ...cueDetails[slot], ...patch, timestamp };
+    this.patchDeck(deck, { hotcues, cueDetails });
+  }
+
+  keepLoop(deck: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready" || !d.loop || d.savedLoops.length >= 32) return;
+    let slot = 1; while (d.savedLoops.some((l) => l.slot === slot)) slot++;
+    const loop: SavedLoop = { id: `loop-${slot}`, slot, name: `Loop ${slot}`, colour: "#32ade6", start: d.loop.start, end: d.loop.end, beats: d.loop.beats };
+    this.patchDeck(deck, { savedLoops: [...d.savedLoops, loop] });
+  }
+  editSavedLoop(deck: number, id: string, patch: Partial<Pick<SavedLoop, "name" | "colour" | "start" | "end">>): void {
+    const d = this.state.decks[deck], old = d.savedLoops.find((l) => l.id === id);
+    if (!old || d.status !== "ready") return;
+    const loop = { ...old, ...patch };
+    if (![loop.start, loop.end].every(Number.isFinite) || loop.start < 0 || loop.end > d.duration || loop.end - loop.start < 0.01) return;
+    if (patch.start !== undefined || patch.end !== undefined) loop.beats = this.beatLength(deck) ? (loop.end - loop.start) / this.beatLength(deck)! : null;
+    this.patchDeck(deck, { savedLoops: d.savedLoops.map((l) => l.id === id ? loop : l) });
+    if (loop.slot === 0) this.setLoop(deck, { start: loop.start, end: loop.end, beats: loop.beats, active: d.loop?.active ?? false });
+  }
+  recallSavedLoop(deck: number, id: string): void {
+    const d = this.state.decks[deck], loop = d.savedLoops.find((l) => l.id === id);
+    if (!loop || d.status !== "ready") return;
+    this.setLoop(deck, { start: loop.start, end: loop.end, beats: loop.beats, active: true });
+    this.seekTo(deck, loop.start);
+  }
+  deleteSavedLoop(deck: number, id: string): void {
+    const d = this.state.decks[deck], loop = d.savedLoops.find((l) => l.id === id);
+    if (!loop || d.status !== "ready") return;
+    if (loop.slot === 0) this.setLoop(deck, null);
+    this.patchDeck(deck, { savedLoops: this.state.decks[deck].savedLoops.filter((l) => l.id !== id) });
+  }
 
   constructor(opts: {
     bus: CommandBus;
@@ -817,6 +892,9 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       if (token !== this.loadTokens[deck]) return;
       const decoded = await this.audio.decode(bytes);
       if (token !== this.loadTokens[deck]) return;
+      const prepared = await this.preparation?.restore(track, bytes, decoded.duration) ?? {};
+      if (token !== this.loadTokens[deck]) return;
+      track = prepared.track ?? track;
       this.audio.setPlaying(deck, false);
       this.audio.loadDeck(deck, decoded);
       this.patchDeck(deck, {
@@ -828,10 +906,13 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         previewing: false,
         cuePoint: 0,
         hotcues: new Array(HOTCUE_COUNT).fill(null),
+        cueDetails: new Array(HOTCUE_COUNT).fill(null),
+        savedLoops: [],
         beatGrid: null,
         stems: { ...this.state.decks[deck].stems, muted: [false, false, false, false], status: this.stemsSupport.ok ? "waiting" : "unavailable", progress: 0, message: undefined },
         loop: null,
         loopIn: null,
+        ...prepared,
       });
       this.rolls[deck] = null;
       this.applyStems(deck);
@@ -1254,10 +1335,16 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
   // ───────────────────────────── state plumbing ─────────────────────────────
 
   private patchDeck(deck: number, patch: Partial<DeckState>): void {
+    const previous = this.state.decks[deck];
     const decks = this.state.decks.slice();
     decks[deck] = { ...decks[deck], ...patch };
     this.state = { ...this.state, decks };
     this.emit("state", this.state);
+    if (!this.restoringPreparation && previous.status === "ready" && decks[deck].status === "ready" && !("status" in patch)) {
+      const durablePatch = this.rolls[deck] && "loop" in patch ? { ...patch, loop: undefined } : patch;
+      if (this.rolls[deck]) delete durablePatch.loop;
+      this.preparation?.changed(previous, decks[deck], durablePatch);
+    }
   }
 
   private patchChannel(ch: number, patch: Partial<ChannelState>): void {

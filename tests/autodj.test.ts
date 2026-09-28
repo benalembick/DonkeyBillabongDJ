@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AutoDJ } from "../src/autodj/AutoDJ";
-import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition } from "../src/autodj/transition";
+import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition, transitionRegion } from "../src/autodj/transition";
 import { CommandBus } from "../src/core/commands";
 import { DJEngine } from "../src/core/engine/DJEngine";
 import { EventLog } from "../src/core/log";
@@ -36,6 +36,44 @@ describe("Auto DJ", () => {
     expect(audio.positions[1]).toBeCloseTo(plan.mixIn + 0.02 * 120 / 124);
   });
 
+  it("phase-snaps after incoming playback starts so launch latency cannot leave beats flamming", async () => {
+    const { auto, playlist, engine, audio } = await setup();
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0.1, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 124, firstBeat: 0.2, confidence: 3, source: "analysis" });
+    auto.tick();
+    const plan = auto.getState().plan!;
+    audio.positions[0] = plan.mixOut;
+    const original = audio.setPlaying.bind(audio);
+    audio.setPlaying = (deck, playing) => {
+      original(deck, playing);
+      if (deck === 1 && playing) audio.positions[0] += 0.035; // command/start latency on the outgoing deck
+    };
+    auto.tick();
+    expect(auto.getState().status).toBe("TRANSITIONING");
+    expect(engine.phaseError(1, 0)).toBeCloseTo(0, 5);
+  });
+
+  it("uses the transition type selected in Auto DJ settings", async () => {
+    const { auto, playlist, engine } = await setup();
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 124, firstBeat: 0, confidence: 3, source: "analysis" });
+    auto.configure({ style: "beat-mix" }); auto.tick();
+    expect(auto.getState().plan?.kind).toBe("beat-mix");
+    auto.configure({ style: "crossfade" }); auto.tick();
+    expect(auto.getState().plan?.kind).toBe("crossfade");
+    auto.configure({ style: "quick-fade" }); auto.tick();
+    expect(auto.getState().plan?.kind).toBe("quick-fade");
+  });
+
+  it("reports a crossfade plan when explicit Beat Mix cannot safely sync the tracks", async () => {
+    const { auto, playlist } = await setup();
+    auto.configure({ style: "beat-mix" }); await auto.start(playlist.id); auto.tick();
+    expect(auto.getState().settings.style).toBe("beat-mix");
+    expect(auto.getState().plan).toMatchObject({ kind: "crossfade", sync: false, reason: "Clean fade; no reliable compatible beat grids" });
+  });
+
   it("fade progress follows audio even when renderer ticks are delayed", async () => {
     const { auto, playlist, audio, engine } = await setup();
     await auto.start(playlist.id); auto.skip();
@@ -58,19 +96,19 @@ describe("Auto DJ", () => {
     expect(engine.getState().decks[0].track?.ref).toBe("c");
     expect(playlists.get(playlist.id)?.refs).toEqual(["a", "b", "c"]);
   });
-  it("manual crossfader movement pauses automation and survives subsequent ticks", async () => {
+  it("manual playhead and crossfader movement leave automation switched on", async () => {
     const { auto, bus, engine, playlist, audio } = await setup();
     await auto.start(playlist.id);
+    bus.send("deck1.seek", 0.5, "midi");
+    auto.tick();
+    expect(auto.getState().status).toBe("ACTIVE");
+    expect(audio.positions[0]).toBe(90);
     audio.positions[0] = 173; auto.tick(); audio.positions[1] += 0.1; auto.tick();
     bus.send("mixer.crossfader", 0.37, "midi");
     auto.tick();
-    expect(auto.getState().status).toBe("PAUSED");
-    expect(engine.getState().mixer.crossfader).toBe(0.37);
+    expect(auto.getState().status).toBe("TRANSITIONING");
+    expect(engine.getState().mixer.crossfader).not.toBe(0.37);
     expect(engine.getState().decks.every((d) => d.playing)).toBe(true);
-    auto.resume(); auto.tick();
-    expect(engine.getState().mixer.crossfader).toBe(0.37);
-    audio.positions[1] += 0.1; auto.tick();
-    expect(engine.getState().mixer.crossfader).toBeGreaterThan(0.37);
   });
   it("queue edits are temporary until explicitly saved", async () => {
     const { auto, playlist, playlists } = await setup();
@@ -142,14 +180,13 @@ describe("Auto DJ", () => {
     expect([...auto.getState().upcoming].sort()).toEqual(["a", "c"]);
   });
 
-  it("resumes after manual playback changes without restarting a paused deck", async () => {
+  it("continues after manual playback changes without requiring resume", async () => {
     const { auto, playlist, bus, engine } = await setup();
     await auto.start(playlist.id);
-    bus.send("deck1.play"); auto.resume();
-    expect(auto.getState().status).toBe("PAUSED");
+    bus.send("deck1.play"); auto.tick();
+    expect(auto.getState().status).toBe("TRANSITIONING");
     expect(engine.getState().decks[0].playing).toBe(false);
-    bus.send("deck1.play"); auto.resume(); await settle();
-    expect(auto.getState().status).toBe("ACTIVE");
+    expect(engine.getState().decks[1].playing).toBe(true);
   });
   it("finishes a one-track playlist and leaves the queue off", async () => {
     const { auto, playlist, audio } = await setup();
@@ -157,9 +194,42 @@ describe("Auto DJ", () => {
     audio.fire({ type: "ended", deck: 0 }); auto.tick();
     expect(auto.getState()).toMatchObject({ status: "OFF", message: "Playlist complete" });
   });
+  it("restarts the preserved queue after Stop without returning to the playlist screen", async () => {
+    const { auto, playlist, engine } = await setup();
+    await auto.start(playlist.id);
+    auto.stop();
+    expect(auto.getState()).toMatchObject({ status: "OFF", current: "a", upcoming: ["b", "c"] });
+    expect(engine.getState().decks[0].playing).toBe(true);
+    await auto.restart();
+    expect(auto.getState()).toMatchObject({ status: "ACTIVE", current: "a", upcoming: ["b", "c"] });
+    expect(engine.getState().decks[0].playing).toBe(true);
+    expect(engine.getState().decks[1].track?.ref).toBe("b");
+  });
+
+  it("restart recovers a session stopped during a transition to one controlled outgoing deck", async () => {
+    const { auto, playlist, audio, engine } = await setup();
+    await auto.start(playlist.id); auto.skip();
+    expect(engine.getState().decks.every((d) => d.playing)).toBe(true);
+    auto.stop(); await auto.restart();
+    expect(auto.getState().status).toBe("ACTIVE");
+    expect(audio.playing).toEqual([true, false]);
+    expect(engine.getState().mixer.crossfader).toBe(0);
+  });
 });
 
 describe("transition planning", () => {
+  it("projects the exact playback plan into outgoing and incoming waveform regions", () => {
+    const plan = { kind: "beat-mix" as const, mixOut: 180, mixIn: 16, seconds: 15, sync: true, reason: "test" };
+    expect(transitionRegion(plan, 0, 0, 1, 240)).toEqual({ role: "out", label: "MIX OUT", start: 180, end: 195 });
+    expect(transitionRegion(plan, 0, 1, 120 / 128, 240)).toEqual({ role: "in", label: "MIX IN", start: 16, end: 30.0625 });
+  });
+  it("uses the user-selected transition duration in the playback plan", async () => {
+    const { engine, library } = await setup();
+    await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);
+    const [a, b] = engine.getState().decks;
+    expect(planTransition(a, b, { ...DEFAULT_AUTO_DJ, transitionSeconds: 15 }).seconds).toBe(15);
+    expect(planTransition(a, b, { ...DEFAULT_AUTO_DJ, transitionSeconds: 30 }).seconds).toBe(30);
+  });
   it("uses phrase boundaries and existing Sync for compatible grids, rejects extreme tempo changes", async () => {
     const { engine, library } = await setup();
     await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);
@@ -173,6 +243,13 @@ describe("transition planning", () => {
     [a, b] = engine.getState().decks;
     expect(planTransition(a, b, DEFAULT_AUTO_DJ)).toMatchObject({ sync: false, kind: "quick-fade" });
     expect(planTransition(a, b, { ...DEFAULT_AUTO_DJ, style: "beat-mix" }).sync).toBe(false);
+  });
+  it("beat-matches common 120 to 128 BPM transitions within the normal tempo range", async () => {
+    const { engine, library } = await setup();
+    await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 128, firstBeat: 0, confidence: 3, source: "analysis" });
+    expect(planTransition(engine.getState().decks[0], engine.getState().decks[1], DEFAULT_AUTO_DJ)).toMatchObject({ sync: true, kind: "beat-mix" });
   });
   it("handles Camelot, musical keys and unknown keys without inventing analysis", () => {
     expect(compatibleKeys("Am", "C major")).toBe(true);

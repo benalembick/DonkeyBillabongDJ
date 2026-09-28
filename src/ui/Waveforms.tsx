@@ -13,6 +13,7 @@ import { useApp, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS, setLayout, useLayout, zoom } from "./layout";
 import type { StemEnvelopes } from "../stems/StemService";
+import { transitionRegion } from "../autodj/transition";
 
 const LOW = "#2f6dff";
 const MID = "#ff9c1a";
@@ -165,7 +166,7 @@ function fitCanvas(c: HTMLCanvasElement): { w: number; h: number; dpr: number } 
 }
 
 export function ScrollingWaveform({ deck, orientation }: { deck: number; orientation: "horizontal" | "vertical" }) {
-  const { engine, stems } = useApp();
+  const { engine, stems, autoDJ } = useApp();
   const ov = useOverview(deck);
   const { zoomSeconds, waveMode } = useLayout();
   const stemNorm = useRef<{ env: StemEnvelopes | null; version: number; norms: number[] }>({ env: null, version: -1, norms: [1, 1, 1, 1] });
@@ -209,6 +210,10 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     const t0 = pos - playheadPx * secPerPx;
     const mid = cross / 2;
     const scale = (mid * 0.95) / norm.current;
+    const auto = autoDJ.getState();
+    const planned = auto.status !== "OFF" && auto.plan && (deck === auto.deck || deck === 1 - auto.deck)
+      ? transitionRegion(auto.plan, auto.deck, deck, d.rate, d.duration)
+      : null;
 
     // Waveform: pre-rendered tiles (cached per zoom/size/track) blitted each frame —
     // two cheap image copies per lane instead of re-rasterising the waveform every frame.
@@ -237,6 +242,14 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
         if (vertical) g.drawImage(tile, 0, at);
         else g.drawImage(tile, at, 0);
       }
+    }
+
+    // The shaded interval uses the exact plan and deck playback rate used by Auto DJ.
+    if (planned) {
+      const a = (planned.start - t0) / secPerPx;
+      const b = (planned.end - t0) / secPerPx;
+      g.fillStyle = planned.role === "out" ? "rgba(255,159,67,.24)" : "rgba(46,229,157,.22)";
+      if (vertical) g.fillRect(0, a, cross, b - a); else g.fillRect(a, 0, b - a, cross);
     }
 
     // Beat grid: thin beat lines, stronger bar lines (every 4 beats from the first beat).
@@ -278,6 +291,8 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
         else g.fillText(label, p + 3 * dpr, 17 * dpr);
       }
     };
+    ov?.recommendedCues.forEach((cue) => marker(cue.timestamp, cue.kind === "mix-in" ? "#2ee59d" : cue.kind === "mix-out" ? "#ff9f43" : "#bf5af2", cue.label.replace("Recommended ", "")));
+    if (planned) marker(planned.start, planned.role === "out" ? "#ff9f43" : "#2ee59d", planned.label);
     marker(d.cuePoint, "#ffd166", "");
     d.hotcues.forEach((hc, i) => hc != null && marker(hc, HOTCUE_COLORS[i], String(i + 1)));
 
@@ -329,7 +344,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
 }
 
 export function OverviewWaveform({ deck }: { deck: number }) {
-  const { engine } = useApp();
+  const { engine, autoDJ } = useApp();
   const ov = useOverview(deck);
   const send = useSend();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -398,6 +413,26 @@ export function OverviewWaveform({ deck }: { deck: number }) {
     if (d.loop) {
       g.fillStyle = d.loop.active ? "rgba(46,229,157,0.35)" : "rgba(160,170,180,0.25)";
       g.fillRect(x(d.loop.start), 0, Math.max(2 * dpr, x(d.loop.end) - x(d.loop.start)), h);
+    }
+    const auto = autoDJ.getState();
+    if (auto.status !== "OFF" && auto.plan && (deck === auto.deck || deck === 1 - auto.deck)) {
+      const region = transitionRegion(auto.plan, auto.deck, deck, d.rate, d.duration);
+      g.fillStyle = region.role === "out" ? "rgba(255,159,67,.3)" : "rgba(46,229,157,.28)";
+      g.fillRect(x(region.start), 0, Math.max(2 * dpr, x(region.end) - x(region.start)), h);
+      g.fillStyle = region.role === "out" ? "#ff9f43" : "#2ee59d";
+      g.fillRect(x(region.start) - dpr, 0, 2 * dpr, h);
+      g.font = `bold ${8 * dpr}px system-ui`; g.fillText(region.label, Math.min(w - 42 * dpr, x(region.start) + 3 * dpr), 9 * dpr);
+    }
+    if (ov) {
+      for (const section of ov.sections) {
+        const xa = x(section.start), xb = x(section.end);
+        g.fillStyle = section.kind === "drop" || section.kind === "chorus" ? "rgba(255,90,40,.12)" : section.kind === "breakdown" ? "rgba(80,140,255,.12)" : "rgba(255,255,255,.035)";
+        g.fillRect(xa, 0, Math.max(1, xb - xa), h);
+      }
+      for (const cue of ov.recommendedCues) {
+        g.fillStyle = cue.kind === "mix-in" ? "#2ee59d" : cue.kind === "mix-out" ? "#ff9f43" : "#bf5af2";
+        g.fillRect(x(cue.timestamp) - dpr, 0, 2 * dpr, h * .55);
+      }
     }
     g.fillStyle = "#ffd166";
     g.fillRect(x(d.cuePoint), 0, 2 * dpr, h);

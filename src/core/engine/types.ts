@@ -4,6 +4,13 @@ import type { FilterParams } from "./mixerMath";
 export type TrackSource = "local" | "spotify" | "apple-music" | "audius";
 
 export interface TrackInfo {
+  trackId?: string;
+  camelot?: string | null;
+  energy?: number | null;
+  analysisConfidence?: number;
+  hotCueCount?: number;
+  savedLoopCount?: number;
+  prepared?: boolean;
   /** Stable reference understood by the track loader (file path in desktop mode). */
   ref: string;
   title: string;

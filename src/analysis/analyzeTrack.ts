@@ -25,7 +25,20 @@ export interface TrackAnalysis {
   /** Beat detection confidence (comb peak / mean, ~1 = none, > 2 = good). */
   confidence: number;
   bpmSource: "analysis" | "metadata" | "none";
+  /** Perceptual estimates. Unknown values stay null rather than being guessed. */
+  key: string | null;
+  keyConfidence: number;
+  energy: number | null;
+  energyConfidence: number;
+  gainDb: number | null;
+  peak: number;
+  sections: AnalysisSection[];
+  recommendedCues: RecommendedCue[];
 }
+
+export type SectionKind = "intro" | "verse" | "breakdown" | "build" | "drop" | "chorus" | "outro" | "section";
+export interface AnalysisSection { kind: SectionKind; start: number; end: number; confidence: number; energy: number }
+export interface RecommendedCue { kind: "mix-in" | "mix-out" | SectionKind; timestamp: number; confidence: number; label: string }
 
 export function analyzeTrack(channels: Float32Array[], sampleRate: number, buckets: number, metaBpm: number | null = null): TrackAnalysis {
   const n = channels[0]?.length ?? 0;
@@ -97,7 +110,87 @@ export function analyzeTrack(channels: Float32Array[], sampleRate: number, bucke
   }
 
   const beat = detectBeats(onsetEnv, WAVE_FPS, metaBpm);
-  return { peaks, rms, low, mid, high, fps: WAVE_FPS, ...beat };
+  const musicalKey = detectKey(channels, sampleRate);
+  const structure = analyseStructure(rms, Math.max(0.001, n / sampleRate));
+  let peak = 0, square = 0;
+  for (const v of peaks) { peak = Math.max(peak, v); square += v * v; }
+  const perceived = Math.sqrt(square / Math.max(1, peaks.length));
+  const gainDb = perceived > 0 ? Math.max(-18, Math.min(18, 20 * Math.log10(0.18 / perceived))) : null;
+  return { peaks, rms, low, mid, high, fps: WAVE_FPS, ...beat,
+    key: musicalKey.key, keyConfidence: musicalKey.confidence, energy: structure.energy, energyConfidence: structure.confidence,
+    gainDb, peak, sections: structure.sections, recommendedCues: structure.cues };
+}
+
+/** Lightweight chroma estimate. Low-confidence or tonally ambiguous audio remains unknown. */
+export function detectKey(channels: Float32Array[], sampleRate: number): { key: string | null; confidence: number } {
+  const left = channels[0]; if (!left || left.length < sampleRate * 8) return { key: null, confidence: 0 };
+  const right = channels[1] ?? left, chroma = new Float64Array(12);
+  const semitone = (midi: number) => 440 * 2 ** ((midi - 69) / 12);
+  const windows = 18, size = 4096;
+  for (let w = 0; w < windows; w++) {
+    const start = Math.floor((left.length - size) * (w + 1) / (windows + 1));
+    for (let pc = 0; pc < 12; pc++) for (const midi of [48 + pc, 60 + pc]) {
+      const omega = 2 * Math.PI * semitone(midi) / sampleRate; let re = 0, im = 0;
+      for (let i = 0; i < size; i += 2) {
+        const x = (left[start + i] + right[start + i]) * 0.5 * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / size));
+        re += x * Math.cos(omega * i); im -= x * Math.sin(omega * i);
+      }
+      chroma[pc] += Math.sqrt(re * re + im * im);
+    }
+  }
+  const major = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+  const minor = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+  const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const scores: { key: string; score: number }[] = [];
+  for (let root = 0; root < 12; root++) for (const [profile, suffix] of [[major, ""], [minor, "m"]] as const) {
+    let score = 0; for (let pc = 0; pc < 12; pc++) score += chroma[(pc + root) % 12] * profile[pc];
+    scores.push({ key: `${names[root]}${suffix}`, score });
+  }
+  scores.sort((a, b) => b.score - a.score);
+  const confidence = scores[0].score ? Math.max(0, Math.min(1, (scores[0].score - scores[1].score) / scores[0].score * 5)) : 0;
+  return confidence >= 0.12 ? { key: scores[0].key, confidence } : { key: null, confidence };
+}
+
+/** Conservative structure estimates from smoothed energy. Labels other than intro/outro/build/drop need strong contrast. */
+export function analyseStructure(rms: Float32Array, duration: number): { energy: number | null; confidence: number; sections: AnalysisSection[]; cues: RecommendedCue[] } {
+  if (rms.length < 8 || duration < 8) return { energy: null, confidence: 0, sections: [], cues: [] };
+  const values = [...rms].sort((a, b) => a - b);
+  const p90 = values[Math.floor(values.length * 0.9)] || 0;
+  if (!p90) return { energy: null, confidence: 0, sections: [], cues: [] };
+  const bins = 32, e: number[] = [];
+  for (let b = 0; b < bins; b++) {
+    const from = Math.floor(b * rms.length / bins), to = Math.max(from + 1, Math.floor((b + 1) * rms.length / bins));
+    let sum = 0; for (let i = from; i < to; i++) sum += rms[i];
+    e.push(Math.min(1, sum / (to - from) / p90));
+  }
+  const mean = e.reduce((a, b) => a + b, 0) / bins;
+  const variance = e.reduce((s, x) => s + (x - mean) ** 2, 0) / bins;
+  const energy = Math.max(1, Math.min(10, Math.round(1 + mean * 7 + Math.sqrt(variance) * 3)));
+  const confidence = Math.min(1, 0.45 + Math.sqrt(variance) * 1.5);
+  const time = (i: number) => i / bins * duration;
+  let introEnd = Math.min(4, bins - 2); while (introEnd < bins / 3 && e[introEnd] < mean * 0.75) introEnd++;
+  let outroStart = bins - Math.min(4, bins - 2); while (outroStart > bins * 2 / 3 && e[outroStart] < mean * 0.75) outroStart--;
+  const sections: AnalysisSection[] = [];
+  sections.push({ kind: "intro", start: 0, end: time(introEnd), confidence: 0.65, energy: Math.round(e.slice(0, introEnd).reduce((a, b) => a + b, 0) / introEnd * 10) });
+  let last = introEnd;
+  for (let i = introEnd + 1; i < outroStart; i++) {
+    const delta = e[i] - e[i - 1];
+    if (Math.abs(delta) < 0.3) continue;
+    if (i - last >= 2) sections.push({ kind: delta > 0 ? "build" : "breakdown", start: time(last), end: time(i), confidence: Math.min(0.9, Math.abs(delta) + 0.4), energy: Math.round(e.slice(last, i).reduce((a, b) => a + b, 0) / (i - last) * 10) });
+    last = i;
+    if (delta > 0.35) sections.push({ kind: "drop", start: time(i), end: time(Math.min(outroStart, i + 3)), confidence: Math.min(0.9, delta + 0.4), energy: Math.round(e[i] * 10) });
+  }
+  if (last < outroStart) sections.push({ kind: mean > 0.6 ? "chorus" : "verse", start: time(last), end: time(outroStart), confidence: 0.4, energy: Math.round(mean * 10) });
+  sections.push({ kind: "outro", start: time(outroStart), end: duration, confidence: 0.65, energy: Math.round(e.slice(outroStart).reduce((a, b) => a + b, 0) / Math.max(1, bins - outroStart) * 10) });
+  const firstBeat = 0;
+  const mixIn = Math.max(firstBeat, time(introEnd));
+  const mixOut = time(outroStart);
+  const cues: RecommendedCue[] = [
+    { kind: "mix-in", timestamp: mixIn, confidence: 0.65, label: "Recommended Mix In" },
+    { kind: "mix-out", timestamp: mixOut, confidence: 0.65, label: "Recommended Mix Out" },
+    ...sections.filter((s) => s.kind === "drop" || s.kind === "breakdown").slice(0, 4).map((s) => ({ kind: s.kind, timestamp: s.start, confidence: s.confidence, label: s.kind === "drop" ? "Drop" : "Breakdown" })),
+  ];
+  return { energy, confidence, sections, cues };
 }
 
 /** Onset strength = positive change of the (log-compressed) energy envelope. */

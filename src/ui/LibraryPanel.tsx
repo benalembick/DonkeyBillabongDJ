@@ -15,6 +15,8 @@ import { useFrameStore } from "./hooks";
 import { useStemIndex, useStemStatus } from "./stemHooks";
 import { ArtTile } from "./ArtTile";
 import { AutoDJQueue, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
+import { compatibility } from "../analysis/discovery";
+import { DiscoveryDialog, type DiscoveryMode } from "./DiscoveryDialog";
 
 type Source = "local" | "audius" | "playlist" | "queue" | StreamingProviderId;
 
@@ -95,7 +97,7 @@ export function LibraryPanel() {
 
 // ─────────────────────────────── Local ───────────────────────────────
 
-type SortKey = "title" | "artist" | "album" | "genre" | "bpm" | "key" | "durationMs" | "rating" | "addedAt";
+type SortKey = "title" | "artist" | "album" | "genre" | "bpm" | "key" | "camelot" | "energy" | "durationMs" | "rating" | "addedAt";
 const COLUMNS: { key: SortKey | null; label: string; cls?: string }[] = [
   { key: null, label: "", cls: "col-art" },
   { key: "title", label: "Title" },
@@ -104,6 +106,9 @@ const COLUMNS: { key: SortKey | null; label: string; cls?: string }[] = [
   { key: "genre", label: "Genre" },
   { key: "bpm", label: "BPM", cls: "num" },
   { key: "key", label: "Key" },
+  { key: "camelot", label: "Camelot" },
+  { key: "energy", label: "Energy", cls: "num" },
+  { key: null, label: "Match", cls: "num" },
   { key: "durationMs", label: "Time", cls: "num" },
   { key: "rating", label: "Rating" },
   { key: null, label: "Source" },
@@ -136,6 +141,12 @@ function LocalView({ collection }: { collection: LocalCollection }) {
   const [menu, setMenu] = useState<{ x: number; y: number; track: TrackInfo } | null>(null);
   const [selectedRefs, setSelectedRefs] = useState<string[]>([]);
   const [info, setInfo] = useState<TrackInfo | null>(null);
+  const [advanced, setAdvanced] = useState({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" });
+  const [discovery, setDiscovery] = useState<DiscoveryMode | null>(null);
+  const analysisStatus = useFrameStore(useCallback((cb) => app.analysis.on("change", cb), [app.analysis]), () => app.analysis.getState());
+  const engineState = useEngineState();
+  const reference = engineState.decks.find((d) => d.playing)?.track ?? state.tracks[state.selected];
+  const match = useCallback((t: TrackInfo) => reference && reference.ref !== t.ref ? compatibility(reference, t, app.preparation.forRef(reference.ref), app.preparation.forRef(t.ref)) : null, [reference, app.preparation]);
 
   useEffect(() => {
     if (collection === "recent") setSort({ key: "addedAt", dir: -1 });
@@ -149,6 +160,13 @@ function LocalView({ collection }: { collection: LocalCollection }) {
     if (collection === "recent") list = list.filter((t) => t.addedAt && Date.now() - t.addedAt < 30 * 86400_000);
     if (collection === "rated") list = list.filter((t) => (t.rating ?? 0) >= 4);
     if (q) list = list.filter((t) => `${t.title} ${t.artist} ${t.album} ${t.genre ?? ""} ${t.key ?? ""}`.toLowerCase().includes(q));
+    if (advanced.minBpm) list = list.filter((t) => (t.bpm ?? -Infinity) >= Number(advanced.minBpm));
+    if (advanced.maxBpm) list = list.filter((t) => (t.bpm ?? Infinity) <= Number(advanced.maxBpm));
+    if (advanced.key) list = list.filter((t) => [t.key, t.camelot].some((x) => x?.toLowerCase().includes(advanced.key.toLowerCase())));
+    if (advanced.minEnergy) list = list.filter((t) => (t.energy ?? -Infinity) >= Number(advanced.minEnergy));
+    if (advanced.maxEnergy) list = list.filter((t) => (t.energy ?? Infinity) <= Number(advanced.maxEnergy));
+    if (advanced.genre) list = list.filter((t) => t.genre?.toLowerCase().includes(advanced.genre.toLowerCase()));
+    if (advanced.minMatch && reference) list = list.filter((t) => (match(t)?.score ?? 0) >= Number(advanced.minMatch));
     const k = sort.key;
     return [...list].sort((a, b) => {
       const va = (a as unknown as Record<string, unknown>)[k] ?? (typeof (b as unknown as Record<string, unknown>)[k] === "number" ? -1 : "");
@@ -156,7 +174,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
       const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
       return c * sort.dir;
     });
-  }, [state.tracks, query, sort, collection]);
+  }, [state.tracks, query, sort, collection, advanced, reference, match]);
 
   const selectedTrack = state.tracks[state.selected];
   const visibleRef = useRef(visible);
@@ -222,9 +240,20 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         {platform.kind === "browser" && <button onClick={() => void add(false)}>Reconnect files</button>}
         <button onClick={() => setSelectedRefs(visible.map((t) => t.ref))}>Select all</button>
         <PlaylistActions refs={selectedRefs.length ? selectedRefs : selectedTrack ? [selectedTrack.ref] : []} />
+        <button onClick={() => void app.analysis.analyseTracks((selectedRefs.length ? selectedRefs : selectedTrack ? [selectedTrack.ref] : []).map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t))}>ANALYSE TRACK</button>
+        <button onClick={() => void app.analysis.analyseTracks(state.tracks, true)}>REANALYSE LIBRARY</button>
+        <button disabled={!selectedTrack} onClick={() => setDiscovery("matches")}>FIND MATCHES</button>
+        <button disabled={!selectedTrack} onClick={() => setDiscovery("djmix")}>CREATE DJMIX</button>
+        <button disabled={!selectedTrack} onClick={() => setDiscovery("mashup")}>FIND MASHUPS</button>
+        {analysisStatus.busy && <><span className="hint">Analysing {analysisStatus.done + 1}/{analysisStatus.total}: {analysisStatus.current}</span><button onClick={() => app.analysis.cancelBatch()}>Cancel</button></>}
         <span className="hint">
           {visible.length} of {state.tracks.length} tracks · double-click loads into a free deck · drag to a deck · browse knob + LOAD on the DDJ-SB
         </span>
+      </div>
+      <div className="advanced-filters">
+        <input type="number" placeholder="Min BPM" value={advanced.minBpm} onChange={(e) => setAdvanced({ ...advanced, minBpm: e.target.value })}/><input type="number" placeholder="Max BPM" value={advanced.maxBpm} onChange={(e) => setAdvanced({ ...advanced, maxBpm: e.target.value })}/>
+        <input placeholder="Key / Camelot" value={advanced.key} onChange={(e) => setAdvanced({ ...advanced, key: e.target.value })}/><input type="number" min="1" max="10" placeholder="Min energy" value={advanced.minEnergy} onChange={(e) => setAdvanced({ ...advanced, minEnergy: e.target.value })}/><input type="number" min="1" max="10" placeholder="Max energy" value={advanced.maxEnergy} onChange={(e) => setAdvanced({ ...advanced, maxEnergy: e.target.value })}/><input placeholder="Genre" value={advanced.genre} onChange={(e) => setAdvanced({ ...advanced, genre: e.target.value })}/><input type="number" min="0" max="100" placeholder="Min match %" value={advanced.minMatch} onChange={(e) => setAdvanced({ ...advanced, minMatch: e.target.value })}/>
+        <button onClick={() => setAdvanced({ ...advanced, minEnergy: "4", maxEnergy: "6" })}>Warm Up</button><button onClick={() => setAdvanced({ ...advanced, minEnergy: "7", maxEnergy: "10" })}>Peak Hour Bangers</button><button onClick={() => setAdvanced({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" })}>Clear</button>
       </div>
       <div className="table-wrap">
         <table className="tracks">
@@ -287,6 +316,9 @@ function LocalView({ collection }: { collection: LocalCollection }) {
                   <td>{t.genre ?? ""}</td>
                   <td className="num">{t.bpm ? t.bpm.toFixed(1) : "—"}</td>
                   <td>{t.key ?? "—"}</td>
+                  <td>{t.camelot ?? "—"}</td>
+                  <td className="num" title={t.analysisConfidence === undefined ? "Not analysed" : `${Math.round(t.analysisConfidence * 100)}% confidence`}>{t.energy ?? "—"}</td>
+                  <td className="num" title={match(t)?.reasons.join(" · ")}>{match(t)?.score ?? "—"}{match(t) ? "%" : ""}</td>
                   <td className="num">{fmtDuration(t.durationMs)}</td>
                   <td>
                     <Stars value={t.rating ?? 0} onChange={(n) => void app.setRating(t.ref, n)} />
@@ -311,13 +343,14 @@ function LocalView({ collection }: { collection: LocalCollection }) {
       </div>
       {info && <TrackDetails track={state.tracks.find((t) => t.ref === info.ref) ?? info} onClose={() => setInfo(null)} />}
       {menu && <TrackMenu {...menu} refs={selectedRefs.includes(menu.track.ref) ? selectedRefs : [menu.track.ref]} cached={!!stemIdx[menu.track.ref]} onInfo={() => setInfo(menu.track)} onClose={() => setMenu(null)} />}
+      {discovery && selectedTrack && <DiscoveryDialog mode={discovery} start={selectedTrack} tracks={state.tracks} onClose={() => setDiscovery(null)} />}
     </div>
   );
 }
 
 /** Right-click menu for a local track: load, and STEM cache management. */
 function TrackMenu({ x, y, track, refs, cached, onInfo, onClose }: { x: number; y: number; track: TrackInfo; refs: string[]; cached: boolean; onInfo: () => void; onClose: () => void }) {
-  const { engine, stems, platform } = useApp();
+  const { engine, stems, platform, analysis, library } = useApp();
   const s = useEngineState();
   const stemStatus = useStemStatus();
   useEffect(() => {
@@ -348,6 +381,8 @@ function TrackMenu({ x, y, track, refs, cached, onInfo, onClose }: { x: number; 
       <hr />
       <PlaylistActions refs={refs} onDone={onClose} />
       <button onClick={act(onInfo)}>Track information</button>
+      <button onClick={act(() => void analysis.analyseTracks(refs.map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t)))}>Analyse selected</button>
+      <button onClick={act(() => void analysis.analyseTracks(refs.map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t), true))}>Reanalyse selected</button>
       <button disabled={!canAnalyse} title={canAnalyse ? "" : stemStatus.reason} onClick={act(() => stems.analyse([track], (r) => platform.readAudio(r)))}>
         Analyse STEMS
       </button>

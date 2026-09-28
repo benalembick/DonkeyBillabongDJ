@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("dbdj:openExternal", url),
   readTags: (paths: string[]) => ipcRenderer.invoke("dbdj:tags:read", paths),
   db: {
+    loadPreparation: () => ipcRenderer.invoke("dbdj:preparation:load"),
+    savePreparation: (record: unknown) => ipcRenderer.invoke("dbdj:preparation:save", record),
+    loadWaveform: (trackId: string) => ipcRenderer.invoke("dbdj:preparation:waveform", trackId),
+    saveWaveform: (record: unknown) => ipcRenderer.invoke("dbdj:preparation:waveform-save", record),
     loadTracks: () => ipcRenderer.invoke("dbdj:library:load"),
     upsertTracks: (rows: unknown[]) => ipcRenderer.invoke("dbdj:library:upsert", rows),
     removeTracks: (refs: string[]) => ipcRenderer.invoke("dbdj:library:remove", refs),

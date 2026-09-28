@@ -13,6 +13,8 @@ import type { SourceId } from "../matching/sources";
 import { LocalStorageStore } from "../providers/web";
 import type { StemBridge } from "../stems/StemService";
 import { BrowserLibrary, browserFileRef, coverDataUrl } from "../library/BrowserLibrary";
+import { BrowserPreparation } from "../preparation/BrowserPreparation";
+import type { PreparationPersistence, TrackPreparation, WaveformRecord } from "../preparation/types";
 
 /**
  * Platform abstraction: desktop (Electron, full filesystem access) vs browser
@@ -50,6 +52,10 @@ export interface DesktopBridge {
   openExternal(url: string): Promise<void>;
   readTags(paths: string[]): Promise<TagResult[]>;
   db: {
+    loadPreparation(): Promise<TrackPreparation[]>;
+    savePreparation(record: TrackPreparation): Promise<void>;
+    loadWaveform(trackId: string): Promise<WaveformRecord | null>;
+    saveWaveform(record: WaveformRecord): Promise<void>;
     loadTracks(): Promise<TrackRow[]>;
     upsertTracks(rows: TrackRow[]): Promise<void>;
     removeTracks(refs: string[]): Promise<void>;
@@ -147,6 +153,7 @@ export interface AudioFileRef {
 }
 
 export interface Platform {
+  preparation: PreparationPersistence;
   kind: "desktop" | "browser";
   os: string;
   pickAudioFiles(): Promise<AudioFileRef[]>;
@@ -305,6 +312,10 @@ class DesktopPlatform implements Platform {
     const db = this.bridge.db;
     return { load: () => db.loadPlaylists(), save: (p) => db.savePlaylist(p), remove: (id) => db.removePlaylist(id) };
   }
+  get preparation(): PreparationPersistence {
+    const db = this.bridge.db;
+    return { list: () => db.loadPreparation(), save: (r) => db.savePreparation(r), loadWaveform: (id) => db.loadWaveform(id), saveWaveform: (r) => db.saveWaveform(r) };
+  }
   get mappingStorage(): MappingStorage {
     const db = this.bridge.db;
     return {
@@ -342,6 +353,7 @@ class BrowserPlatform implements Platform {
 
   readonly streaming: StreamingBridge = createBrowserStreaming();
   readonly library = new BrowserLibrary();
+  readonly preparation = new BrowserPreparation();
   readonly mappingStorage: MappingStorage = new LocalStorageMappings();
   readonly playlists: PlaylistPersistence = new LocalStoragePlaylists();
 

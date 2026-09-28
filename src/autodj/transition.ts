@@ -4,13 +4,23 @@ import type { TrackAnalysis } from "../analysis/analyzeTrack";
 export interface AutoDJSettings {
   style: "smart" | "beat-mix" | "crossfade" | "quick-fade";
   bars: "auto" | 4 | 8 | 16 | 32;
+  /** Wall-clock crossfade duration. Auto derives it from the selected phrase length and BPM. */
+  transitionSeconds: "auto" | number;
   shuffle: boolean;
   repeat: boolean;
   bpmSync: boolean;
   keyAware: boolean;
 }
-export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false };
+export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false };
 export interface TransitionPlan { kind: "beat-mix" | "crossfade" | "quick-fade"; mixOut: number; mixIn: number; seconds: number; sync: boolean; reason: string }
+export interface TransitionRegion { role: "out" | "in"; label: "MIX OUT" | "MIX IN"; start: number; end: number }
+
+/** Timeline projection of the real playback plan; waveform UIs must use this rather than duplicating transition values. */
+export function transitionRegion(plan: TransitionPlan, outgoingDeck: number, deck: number, rate: number, duration: number): TransitionRegion {
+  const role = deck === outgoingDeck ? "out" : "in";
+  const start = role === "out" ? plan.mixOut : plan.mixIn;
+  return { role, label: role === "out" ? "MIX OUT" : "MIX IN", start, end: Math.min(duration, start + plan.seconds * rate) };
+}
 
 const KEYS: Record<string, string> = {
   "abm": "1A", "g#m": "1A", "ebm": "2A", "d#m": "2A", "bbm": "3A", "a#m": "3A", "fm": "4A", "cm": "5A", "gm": "6A", "dm": "7A", "am": "8A", "em": "9A", "bm": "10A", "f#m": "11A", "gbm": "11A", "c#m": "12A", "dbm": "12A",
@@ -44,13 +54,16 @@ export function planTransition(out: DeckState, incoming: DeckState, settings: Au
   const ratio = a && b ? a * out.rate / b : 0;
   const grids = !!out.beatGrid && !!incoming.beatGrid && out.beatGrid.confidence >= 1.4 && incoming.beatGrid.confidence >= 1.4;
   const keys = compatibleKeys(out.track?.key, incoming.track?.key);
-  const safeTempo = ratio >= 0.94 && ratio <= 1.06;
+  // The decks' normal tempo range is ±10%. Keeping Auto DJ to the same range
+  // covers common 120→128 and 128→120 transitions without extreme warping.
+  const safeTempo = ratio >= 0.9 && ratio <= 1.1;
   const beatMix = settings.bpmSync && safeTempo && grids && (settings.style === "beat-mix" || (settings.style === "smart" && (!settings.keyAware || keys !== false)));
   const kind = beatMix ? "beat-mix" : settings.style === "quick-fade" || (settings.style === "smart" && a && b && !safeTempo) ? "quick-fade" : "crossfade";
   const [inStart] = bounds(incoming, inAnalysis);
   const [, outEnd] = bounds(out, outAnalysis);
   const bars = settings.bars === "auto" ? (beatMix && keys !== false ? 16 : 8) : settings.bars;
-  const desired = settings.bars !== "auto" && a ? bars * 4 * 60 / (a * out.rate) : beatMix && a ? bars * 4 * 60 / (a * out.rate) : kind === "quick-fade" ? 2 : 8;
+  const automaticDuration = settings.bars !== "auto" && a ? bars * 4 * 60 / (a * out.rate) : beatMix && a ? bars * 4 * 60 / (a * out.rate) : kind === "quick-fade" ? 2 : 8;
+  const desired = settings.transitionSeconds === "auto" ? automaticDuration : Math.max(1, settings.transitionSeconds);
   const seconds = Math.max(0.1, Math.min(desired, out.duration / out.rate / 3, incoming.duration / (beatMix ? ratio : 1) / 3));
   let mixIn = Math.max(inStart, incoming.cuePoint, incoming.hotcues.find((x) => x !== null && x >= inStart && x < incoming.duration / 3) ?? 0);
   let mixOut = Math.max(0, outEnd - seconds * out.rate);

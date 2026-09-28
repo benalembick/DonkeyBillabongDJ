@@ -82,8 +82,11 @@ function AutoSettings() {
       <label>Transition style <select value={settings.style} onChange={(e) => autoDJ.configure({ style: e.target.value as AutoDJSettings["style"] })}>
         <option value="smart">Smart</option><option value="beat-mix">Beat Mix</option><option value="crossfade">Crossfade</option><option value="quick-fade">Quick Fade</option>
       </select></label>
-      <label>Transition length <select value={settings.bars} onChange={(e) => autoDJ.configure({ bars: e.target.value === "auto" ? "auto" : Number(e.target.value) as AutoDJSettings["bars"] })}>
+      <label>Phrase alignment <select value={settings.bars} onChange={(e) => autoDJ.configure({ bars: e.target.value === "auto" ? "auto" : Number(e.target.value) as AutoDJSettings["bars"] })}>
         <option value="auto">Auto</option>{[4, 8, 16, 32].map((n) => <option key={n} value={n}>{n} bars</option>)}
+      </select></label>
+      <label>Crossfade duration <select value={settings.transitionSeconds} onChange={(e) => autoDJ.configure({ transitionSeconds: e.target.value === "auto" ? "auto" : Number(e.target.value) })}>
+        <option value="auto">Auto</option>{[3, 5, 8, 10, 15, 20, 30, 45, 60].map((n) => <option key={n} value={n}>{n} sec</option>)}
       </select></label>
       {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering']] as const).map(([key, label]) =>
         <label key={key}><input type="checkbox" checked={settings[key]} onChange={(e) => autoDJ.configure({ [key]: e.target.checked })} />{label}</label>)}
@@ -94,15 +97,24 @@ function AutoSettings() {
 export function AutoDJControls({ onQueue }: { onQueue?: () => void }) {
   const { autoDJ } = useApp();
   const s = useAutoDJ();
+  const styleName = (style: AutoDJSettings["style"] | "beat-mix" | "crossfade" | "quick-fade") => style === "beat-mix" ? "Beat Mix" : style === "quick-fade" ? "Quick Fade" : style === "crossfade" ? "Crossfade" : "Smart";
+  const requested = styleName(s.settings.style);
+  const effective = s.plan ? styleName(s.plan.kind) : requested;
+  const fellBack = !!s.plan && s.settings.style !== "smart" && s.plan.kind !== s.settings.style;
   return <div className="auto-controls">
     <b className={`auto-status ${s.status.toLowerCase()}`}>AUTO DJ — {s.status}</b>
+    <strong className={`auto-transition-type ${fellBack ? "fallback" : ""}`}>Transition: {effective}{fellBack ? ` (${requested} unavailable)` : ""}</strong>
+    <strong className="auto-duration">Duration: {s.plan ? `${Math.round(s.plan.seconds)} sec` : s.settings.transitionSeconds === "auto" ? "Auto" : `${s.settings.transitionSeconds} sec`}</strong>
+    {s.status === "TRANSITIONING" && <strong className="auto-transition-banner">AUTO DJ TRANSITION — Deck {s.deck ? "B" : "A"} → Deck {s.deck ? "A" : "B"}</strong>}
+    {s.status === "OFF" && s.current && <button className="primary" onClick={() => void autoDJ.restart()}>▶ RESTART AUTO DJ</button>}
     {s.status !== "OFF" && <>
-      {s.status === "PAUSED" ? <button onClick={() => autoDJ.resume()}>RESUME AUTO DJ</button> : <button onClick={() => autoDJ.pause()}>PAUSE AUTO DJ</button>}
+      {s.status === "PAUSED" && <button onClick={() => autoDJ.resume()}>RETRY AUTO DJ</button>}
       <button onClick={() => autoDJ.stop()}>STOP AUTO DJ</button>
       <button disabled={s.status !== "ACTIVE" || s.preparing || !s.upcoming.length} onClick={() => autoDJ.skip()}>Skip to next</button>
     </>}
     {onQueue && s.playlistId && <button onClick={onQueue}>View queue</button>}
-    {s.nextSeconds !== null && s.status === "ACTIVE" && <span>Next transition in {duration(s.nextSeconds * 1000)}</span>}
+    {s.nextSeconds !== null && s.status === "ACTIVE" && <span>Transition in: {duration(s.nextSeconds * 1000)}</span>}
+    {fellBack && <span className="warn" title={s.plan?.reason}>Using {effective}: {s.plan?.reason}</span>}
     <span className="hint" role="status">{s.preparing ? "Loading / preparing…" : s.message}</span>
   </div>;
 }

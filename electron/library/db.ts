@@ -6,6 +6,7 @@
 import { app } from "electron";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { TrackPreparation, WaveformRecord } from "../../src/preparation/types";
 
 export interface TrackRow {
   ref: string;
@@ -89,6 +90,8 @@ function open(): DatabaseSync {
 
 /** Additive schema migrations for existing databases. */
 function migrate(d: DatabaseSync): void {
+  d.exec(`CREATE TABLE IF NOT EXISTS track_preparation (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS track_waveforms (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);`);
   const cols = (d.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("rating")) d.exec("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("artwork_read")) d.exec("ALTER TABLE tracks ADD COLUMN artwork_read INTEGER NOT NULL DEFAULT 0");
@@ -115,6 +118,22 @@ function migrate(d: DatabaseSync): void {
 
 export function loadTracks(): TrackRow[] {
   return open().prepare("SELECT * FROM tracks ORDER BY added_at, ref").all() as unknown as TrackRow[];
+}
+
+export function loadPreparation(): TrackPreparation[] {
+  return (open().prepare("SELECT data FROM track_preparation").all() as { data: string }[]).map((r) => JSON.parse(r.data));
+}
+export function savePreparation(r: TrackPreparation): void {
+  if (!r || !/^sha256:[a-f0-9]{64}$/.test(r.trackId) || r.schemaVersion !== 1) throw new Error("Invalid track preparation");
+  open().prepare("INSERT INTO track_preparation(track_id,data) VALUES (?,?) ON CONFLICT(track_id) DO UPDATE SET data=excluded.data").run(r.trackId, JSON.stringify(r));
+}
+export function loadWaveform(trackId: string): WaveformRecord | null {
+  const row = open().prepare("SELECT data FROM track_waveforms WHERE track_id=?").get(trackId) as { data: string } | undefined;
+  return row ? JSON.parse(row.data) : null;
+}
+export function saveWaveform(r: WaveformRecord): void {
+  if (!r || !/^sha256:[a-f0-9]{64}$/.test(r.trackId) || r.schemaVersion !== 1) throw new Error("Invalid waveform cache");
+  open().prepare("INSERT INTO track_waveforms(track_id,data) VALUES (?,?) ON CONFLICT(track_id) DO UPDATE SET data=excluded.data").run(r.trackId, JSON.stringify(r));
 }
 
 export function upsertTracks(rows: TrackRow[]): void {

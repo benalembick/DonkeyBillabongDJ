@@ -34,11 +34,9 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   constructor(private o: Options) {
     super();
     this.state = { status: "OFF", playlistId: null, current: null, deck: 0, upcoming: [], played: [], preparing: false, queueLocked: false, plan: null, nextSeconds: null, message: "", settings: { ...DEFAULT_AUTO_DJ, ...o.settings } };
-    this.unsub = [o.bus.on("dispatched", (cmd) => {
-      if (cmd.source !== "system" && /^(deck\d+\.|browser\.load\.|mixer\.crossfader|mixer\.channel)/.test(cmd.action)) this.pause("Manual control — automation paused");
-    }), o.engine.on("event", (e) => {
-      if (e.type === "loadRequested" && e.source === "manual") this.pause("Manual track loading — automation paused");
-    }), o.audio.on((e) => { if (e.type === "error") this.pause(`Audio error: ${e.message}`); })];
+    // Manual deck/mixer actions intentionally leave automation active. Once
+    // started, Auto DJ owns the transition schedule until STOP AUTO DJ is used.
+    this.unsub = [o.audio.on((e) => { if (e.type === "error") this.pause(`Audio error: ${e.message}`); })];
   }
   getState(): AutoDJState { return this.state; }
   private set(patch: Partial<AutoDJState>) { this.state = { ...this.state, ...patch }; this.emit("change", this.state); }
@@ -62,6 +60,24 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   stop() {
     this.cancelLoad(); this.fade = null; this.prepared = null;
     this.set({ status: "OFF", preparing: false, queueLocked: false, plan: null, nextSeconds: null, message: "Auto DJ stopped; decks remain under manual control" });
+  }
+  /** Restart the preserved session after STOP without rebuilding or losing queue edits. */
+  async restart(): Promise<void> {
+    if (this.state.status !== "OFF" || !this.state.current) return;
+    const deck = this.state.deck, other = 1 - deck;
+    this.fade = null; this.prepared = null;
+    // STOP deliberately leaves audio alone. Restart establishes one clear
+    // outgoing deck even if STOP was pressed halfway through a transition.
+    this.play(other, false);
+    let current = this.o.engine.getState().decks[deck];
+    if (current.status !== "ready" || current.track?.ref !== this.state.current) {
+      if (!await this.load(deck, this.state.current)) return;
+      current = this.o.engine.getState().decks[deck];
+    }
+    this.send("mixer.crossfader", deck);
+    this.play(deck, true);
+    this.set({ status: "ACTIVE", queueLocked: false, plan: null, nextSeconds: null, message: "Auto DJ restarted — preparing next track" });
+    await this.prepare();
   }
   dispose() { this.stop(); this.unsub.forEach((f) => f()); }
   private arrange(refs: string[], first?: string): string[] {
@@ -187,11 +203,16 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     if (quick) { plan.seconds = Math.min(2, plan.seconds); plan.sync = false; plan.kind = "quick-fade"; }
     if (plan.sync) {
       engine.setMaster(out);
-      if (!decks[incoming].sync) this.send(`deck${incoming + 1}.sync`);
     }
-    const phaseOffset = plan.sync ? lateness * engine.getState().decks[incoming].rate : 0;
+    const outBpm = engine.baseBpm(out), inBpm = engine.baseBpm(incoming);
+    const matchedIncomingRate = plan.sync && outBpm && inBpm ? outBpm * engine.getState().decks[out].rate / inBpm : engine.getState().decks[incoming].rate;
+    const phaseOffset = plan.sync ? lateness * matchedIncomingRate : 0;
     engine.seekTo(incoming, plan.mixIn + phaseOffset);
     this.play(incoming, true);
+    // Engage Sync only after both decks are running. toggleSync then performs its
+    // immediate phase snap, removing decoder/command scheduling latency before
+    // the crossfade becomes audible; tick() keeps the phases locked afterwards.
+    if (plan.sync && !engine.getState().decks[incoming].sync) this.send(`deck${incoming + 1}.sync`);
     this.fade = { from: engine.getState().mixer.crossfader, elapsed: 0, duration: plan.seconds, incoming: this.prepared, lastPosition: this.o.audio.getPosition(incoming) };
     this.set({ status: "TRANSITIONING", queueLocked: true, plan, nextSeconds: 0, message: plan.reason });
   }
