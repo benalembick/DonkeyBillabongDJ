@@ -31,6 +31,7 @@ import { PlaylistStore } from "../library/PlaylistStore";
 import { AutoDJ } from "../autodj/AutoDJ";
 import { DEFAULT_AUTO_DJ } from "../autodj/transition";
 import { PreparationStore } from "../preparation/PreparationStore";
+import { LiveMashupService } from "../mashup/LiveMashupService";
 
 export interface App {
   bus: CommandBus;
@@ -43,6 +44,7 @@ export interface App {
   autoDJ: AutoDJ;
   analysis: AnalysisService;
   preparation: PreparationStore;
+  liveMashup: LiveMashupService;
   /** STEM separation (desktop only; local ONNX model). */
   stems: StemService;
   keyboard: KeyboardShortcuts;
@@ -117,9 +119,13 @@ export function createApp(): App {
   });
   const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
   void playlists.load();
-  const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis,
-    settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s) });
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
+  const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis, stemAvailable: (ref) => stems.index()[ref] === "complete",
+    settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s) });
+  const liveMashup = new LiveMashupService({ engine, bus, preparation, persistence: platform.mashups, lookup: (ref) => library.getByRef(ref) ?? undefined, envelopes: (deck) => stems.envelopes(deck), renderData: (ref) => stems.renderData(ref), sourcePcm: (deck) => audio.exportPcm(deck), saveFile: (name,data) => platform.saveMashup(name,data), importRendered: async (file,track) => {
+    library.addFiles([file]); library.patchTracks([track]); await platform.library?.save([track]);
+    let mashups = playlists.getState().playlists.find((p) => p.name === "Mashups"); if (!mashups) mashups = playlists.create("Mashups"); playlists.addTracks(mashups.id,[file.ref]); analysis.queueTracks([track]);
+  } });
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
@@ -213,7 +219,7 @@ export function createApp(): App {
   void controllers.init();
   keyboard.attach(window);
   // Sync phase lock (and other time-based engine work) runs off the UI frame loop.
-  setInterval(() => { engine.tick(); autoDJ.tick(); }, 40);
+  setInterval(() => { engine.tick(); autoDJ.tick(); liveMashup.tick(); }, 40);
 
   return {
     bus,
@@ -226,6 +232,7 @@ export function createApp(): App {
     autoDJ,
     analysis,
     preparation,
+    liveMashup,
     stems,
     keyboard,
     platform,

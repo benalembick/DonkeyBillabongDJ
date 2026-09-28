@@ -44,6 +44,7 @@ export interface StemBridge {
   clearCache(): Promise<void>;
   setConfig(patch: Partial<{ cacheDir: string; maxCacheGB: number; device: StemDevice }>): Promise<unknown>;
   pickCacheDir(): Promise<string | null>;
+  renderData(ref: string): Promise<{ rate: number; total: number; pcm: ArrayBuffer }>;
 }
 
 /** Per-deck waveform envelopes (150 fps), filled in as regions arrive. */
@@ -178,6 +179,7 @@ export class StemService extends Emitter<Events> {
   index(): Record<string, "complete" | "partial"> {
     return this.idx;
   }
+  renderData(ref: string) { if (!this.bridge || typeof this.bridge.renderData !== "function") return Promise.reject(new Error("Restart DonkeyBillabongDJ to enable offline rendering")); return this.bridge.renderData(ref); }
 
   async refresh(): Promise<void> {
     if (!this.bridge) return;

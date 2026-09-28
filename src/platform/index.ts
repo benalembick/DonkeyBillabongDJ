@@ -15,6 +15,7 @@ import type { StemBridge } from "../stems/StemService";
 import { BrowserLibrary, browserFileRef, coverDataUrl } from "../library/BrowserLibrary";
 import { BrowserPreparation } from "../preparation/BrowserPreparation";
 import type { PreparationPersistence, TrackPreparation, WaveformRecord } from "../preparation/types";
+import type { MashupPersistence, MashupRecipe } from "../mashup/types";
 
 /**
  * Platform abstraction: desktop (Electron, full filesystem access) vs browser
@@ -47,6 +48,7 @@ export interface DesktopBridge {
   expandPaths(paths: string[]): Promise<ScannedFile[]>;
   getPathForFile(file: File): string;
   readAudioFile(path: string): Promise<ArrayBuffer>;
+  saveMashupFile(name: string, data: ArrayBuffer): Promise<AudioFileRef | null>;
   openMappingFile(): Promise<string | null>;
   readTextFile(path: string): Promise<string>;
   openExternal(url: string): Promise<void>;
@@ -56,6 +58,9 @@ export interface DesktopBridge {
     savePreparation(record: TrackPreparation): Promise<void>;
     loadWaveform(trackId: string): Promise<WaveformRecord | null>;
     saveWaveform(record: WaveformRecord): Promise<void>;
+    loadMashupRecipes(): Promise<MashupRecipe[]>;
+    saveMashupRecipe(record: MashupRecipe): Promise<void>;
+    removeMashupRecipe(id: string): Promise<void>;
     loadTracks(): Promise<TrackRow[]>;
     upsertTracks(rows: TrackRow[]): Promise<void>;
     removeTracks(refs: string[]): Promise<void>;
@@ -133,6 +138,13 @@ class LocalStoragePlaylists implements PlaylistPersistence {
   }
 }
 
+class LocalStorageMashups implements MashupPersistence {
+  private key = "dbdj.mashup.recipes.v2";
+  async list(): Promise<MashupRecipe[]> { try { return JSON.parse(localStorage.getItem(this.key) || "[]"); } catch { return []; } }
+  async save(recipe: MashupRecipe): Promise<void> { const rows = await this.list(), at = rows.findIndex((r) => r.id === recipe.id); if (at < 0) rows.push(recipe); else rows[at] = recipe; localStorage.setItem(this.key, JSON.stringify(rows)); }
+  async remove(id: string): Promise<void> { localStorage.setItem(this.key, JSON.stringify((await this.list()).filter((r) => r.id !== id))); }
+}
+
 /** Persistent local library (desktop only; browser file references don't survive a reload). */
 export interface LibraryPersistence {
   load(): Promise<TrackInfo[]>;
@@ -154,6 +166,7 @@ export interface AudioFileRef {
 
 export interface Platform {
   preparation: PreparationPersistence;
+  mashups: MashupPersistence;
   kind: "desktop" | "browser";
   os: string;
   pickAudioFiles(): Promise<AudioFileRef[]>;
@@ -161,6 +174,7 @@ export interface Platform {
   /** Files/folders dropped from the OS file manager → audio file refs (folders are scanned on desktop). */
   refsFromDrop(files: File[]): Promise<AudioFileRef[]>;
   readAudio(ref: string): Promise<ArrayBuffer>;
+  saveMashup(name: string, data: ArrayBuffer): Promise<AudioFileRef | null>;
   pickTextFile(accept: string): Promise<{ name: string; text: string } | null>;
   openExternal(url: string): void;
   /** Null in browser mode: streaming accounts need the desktop app. */
@@ -291,6 +305,10 @@ class DesktopPlatform implements Platform {
   readAudio(ref: string): Promise<ArrayBuffer> {
     return this.bridge.readAudioFile(ref);
   }
+  saveMashup(name: string, data: ArrayBuffer) {
+    if (typeof this.bridge.saveMashupFile !== "function") return Promise.reject(new Error("Restart DonkeyBillabongDJ to enable MP3 export"));
+    return this.bridge.saveMashupFile(name, data);
+  }
   openExternal(url: string): void {
     void this.bridge.openExternal(url).catch(() => undefined);
   }
@@ -315,6 +333,10 @@ class DesktopPlatform implements Platform {
   get preparation(): PreparationPersistence {
     const db = this.bridge.db;
     return { list: () => db.loadPreparation(), save: (r) => db.savePreparation(r), loadWaveform: (id) => db.loadWaveform(id), saveWaveform: (r) => db.saveWaveform(r) };
+  }
+  get mashups(): MashupPersistence {
+    const db = this.bridge.db, fallback = new LocalStorageMashups();
+    return { list: () => typeof db.loadMashupRecipes === "function" ? db.loadMashupRecipes() : fallback.list(), save: (r) => typeof db.saveMashupRecipe === "function" ? db.saveMashupRecipe(r) : fallback.save(r), remove: (id) => typeof db.removeMashupRecipe === "function" ? db.removeMashupRecipe(id) : fallback.remove(id) };
   }
   get mappingStorage(): MappingStorage {
     const db = this.bridge.db;
@@ -354,6 +376,7 @@ class BrowserPlatform implements Platform {
   readonly streaming: StreamingBridge = createBrowserStreaming();
   readonly library = new BrowserLibrary();
   readonly preparation = new BrowserPreparation();
+  readonly mashups: MashupPersistence = new LocalStorageMashups();
   readonly mappingStorage: MappingStorage = new LocalStorageMappings();
   readonly playlists: PlaylistPersistence = new LocalStoragePlaylists();
 
@@ -419,6 +442,10 @@ class BrowserPlatform implements Platform {
     const f = this.files.get(ref);
     if (!f) throw new Error("File is no longer available in this browser session");
     return f.arrayBuffer();
+  }
+  async saveMashup(name: string, data: ArrayBuffer): Promise<AudioFileRef | null> {
+    const file = new File([data], name, { type: "audio/mpeg", lastModified: Date.now() });
+    const [row] = this.register([file]); const url = URL.createObjectURL(file), a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); return row ?? null;
   }
   async pickTextFile(accept: string): Promise<{ name: string; text: string } | null> {
     const [f] = await this.pick({ accept });

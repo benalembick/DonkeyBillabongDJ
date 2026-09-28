@@ -152,6 +152,11 @@ export async function registerStemIpc(): Promise<void> {
   });
 
   ipcMain.handle("dbdj:stems:setIndex", (_e, ref: string, key: string | null) => new StemCache(config.cacheDir).setIndex(String(ref), key ? String(key) : null));
+  ipcMain.handle("dbdj:stems:renderData", async (_e, ref: string) => {
+    const cache = new StemCache(config.cacheDir), key = (await cache.readIndex())[String(ref)];
+    if (!key) throw new Error("No cached STEMS for this track");
+    return cache.renderData(key);
+  });
 
   ipcMain.handle("dbdj:stems:remove", async (_e, refs: string[]) => {
     const c = new StemCache(config.cacheDir);

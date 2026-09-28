@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
     }
   },
   readAudioFile: (p: string): Promise<ArrayBuffer> => ipcRenderer.invoke("dbdj:readAudioFile", p),
+  saveMashupFile: (name: string, data: ArrayBuffer): Promise<{ ref: string; name: string } | null> => ipcRenderer.invoke("dbdj:mashup:saveFile", name, data),
   openMappingFile: (): Promise<string | null> => ipcRenderer.invoke("dbdj:openMappingFile"),
   readTextFile: (p: string): Promise<string> => ipcRenderer.invoke("dbdj:readTextFile", p),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("dbdj:openExternal", url),
@@ -25,6 +26,9 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
     savePreparation: (record: unknown) => ipcRenderer.invoke("dbdj:preparation:save", record),
     loadWaveform: (trackId: string) => ipcRenderer.invoke("dbdj:preparation:waveform", trackId),
     saveWaveform: (record: unknown) => ipcRenderer.invoke("dbdj:preparation:waveform-save", record),
+    loadMashupRecipes: () => ipcRenderer.invoke("dbdj:mashups:load"),
+    saveMashupRecipe: (record: unknown) => ipcRenderer.invoke("dbdj:mashups:save", record),
+    removeMashupRecipe: (id: string) => ipcRenderer.invoke("dbdj:mashups:remove", id),
     loadTracks: () => ipcRenderer.invoke("dbdj:library:load"),
     upsertTracks: (rows: unknown[]) => ipcRenderer.invoke("dbdj:library:upsert", rows),
     removeTracks: (refs: string[]) => ipcRenderer.invoke("dbdj:library:remove", refs),
@@ -57,6 +61,7 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
     clearCache: () => ipcRenderer.invoke("dbdj:stems:clearCache"),
     setConfig: (patch: unknown) => ipcRenderer.invoke("dbdj:stems:setConfig", patch),
     pickCacheDir: () => ipcRenderer.invoke("dbdj:stems:pickCacheDir"),
+    renderData: (ref: string) => ipcRenderer.invoke("dbdj:stems:renderData", ref),
   },
   streaming: {
     status: (id: string) => ipcRenderer.invoke("dbdj:stream:status", id),

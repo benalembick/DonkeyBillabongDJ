@@ -21,7 +21,7 @@ export interface AutoDJState {
   message: string;
   settings: AutoDJSettings;
 }
-interface Options { engine: DJEngine; bus: CommandBus; audio: AudioEngine; library: LibraryStore; playlists: PlaylistStore; analysis: Pick<AnalysisService, "get">; settings?: Partial<AutoDJSettings>; saveSettings?: (s: AutoDJSettings) => void }
+interface Options { engine: DJEngine; bus: CommandBus; audio: AudioEngine; library: LibraryStore; playlists: PlaylistStore; analysis: Pick<AnalysisService, "get">; stemAvailable?: (ref: string) => boolean; settings?: Partial<AutoDJSettings>; saveSettings?: (s: AutoDJSettings) => void }
 
 /** Only references and transient playback state; the library owns all track metadata. */
 export class AutoDJ extends Emitter<{ change: AutoDJState }> {
@@ -29,7 +29,7 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   private generation = 0;
   private loadingDeck: number | null = null;
   private prepared: string | null = null;
-  private fade: { from: number; elapsed: number; duration: number; incoming: string; lastPosition: number } | null = null;
+  private fade: { from: number; elapsed: number; duration: number; incoming: string; lastPosition: number; mashup: boolean } | null = null;
   private unsub: (() => void)[];
   constructor(private o: Options) {
     super();
@@ -213,8 +213,15 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     // immediate phase snap, removing decoder/command scheduling latency before
     // the crossfade becomes audible; tick() keeps the phases locked afterwards.
     if (plan.sync && !engine.getState().decks[incoming].sync) this.send(`deck${incoming + 1}.sync`);
-    this.fade = { from: engine.getState().mixer.crossfader, elapsed: 0, duration: plan.seconds, incoming: this.prepared, lastPosition: this.o.audio.getPosition(incoming) };
-    this.set({ status: "TRANSITIONING", queueLocked: true, plan, nextSeconds: 0, message: plan.reason });
+    const currentRef = decks[out].track?.ref;
+    const mashup = !!(plan.sync && this.state.settings.intelligentMashups && currentRef && this.o.stemAvailable?.(currentRef) && this.o.stemAvailable?.(this.prepared));
+    if (mashup) {
+      engine.setStemMix(out, [true, true, true, true], [.72, .82, .82, .72]);
+      engine.setStemMix(incoming, [true, false, false, false], [.78, 0, 0, 0]);
+      this.send("mixer.crossfader", .5);
+    }
+    this.fade = { from: engine.getState().mixer.crossfader, elapsed: 0, duration: plan.seconds, incoming: this.prepared, lastPosition: this.o.audio.getPosition(incoming), mashup };
+    this.set({ status: "TRANSITIONING", queueLocked: true, plan, nextSeconds: 0, message: mashup ? "Intelligent Mashup: vocal overlay, then instrumental handover" : plan.reason });
   }
   tick() {
     if (this.state.status === "OFF" || this.state.status === "PAUSED" || this.o.audio.getStatus().state !== "running") return;
@@ -226,8 +233,12 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
       this.fade.elapsed += Math.max(0, position - this.fade.lastPosition) / decks[incoming].rate;
       this.fade.lastPosition = position;
       const progress = Math.min(1, this.fade.elapsed / this.fade.duration);
-      this.send("mixer.crossfader", this.fade.from + (incoming - this.fade.from) * progress);
+      if (this.fade.mashup) {
+        this.o.engine.setStemMix(deck, [true, true, true, true], [.72 * (1 - progress), .82 * (1 - progress), .82 * (1 - progress), .72 * (1 - progress)]);
+        this.o.engine.setStemMix(incoming, [true, true, true, true], [.78, .82 * progress, .82 * progress, .72 * progress]);
+      } else this.send("mixer.crossfader", this.fade.from + (incoming - this.fade.from) * progress);
       if (progress >= 1) {
+        if (this.fade.mashup) { this.o.engine.setStemMix(incoming, [true, true, true, true], [1, 1, 1, 1]); this.send("mixer.crossfader", incoming); }
         this.play(deck, false);
         if (decks[deck].sync) this.send(`deck${deck + 1}.sync`);
         this.o.engine.setMaster(incoming);

@@ -58,7 +58,7 @@ select { padding: 2px 4px; }
 .brand-logo { display: block; width: clamp(180px, 20vw, 260px); height: auto; }
 
 /* Local playlists and the temporary Auto DJ runtime queue. */
-.playlist-view, .auto-queue { min-height: 0; overflow: auto; }
+.playlist-view, .auto-queue { min-height: 0; }
 .playlist-toolbar, .playlist-view > .toolbar, .auto-queue > .toolbar { flex-wrap: wrap; flex-shrink: 0; }
 .playlist-create { padding: 4px; }
 .playlist-create input { width: 100%; min-width: 0; }
@@ -279,7 +279,9 @@ tbody tr:hover td { background: #ffffff08; }
 .stars { display: inline-flex; }
 .stars button { background: none; border: none; padding: 0 1px; color: #3a404c; font-size: 12px; line-height: 1; }
 .stars button.on { color: var(--cue); }
-.library .table-wrap { overflow: auto; }
+.library { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.library-controls { flex: 0 0 auto; position: relative; z-index: 2; background: var(--panel); }
+.library .table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .row-actions { white-space: nowrap; }
 .deck-a-btn { border-color: var(--deck-a); color: var(--deck-a); }
 .deck-b-btn { border-color: var(--deck-b); color: var(--deck-b); }
@@ -348,7 +350,7 @@ button.linklike { background: none; border: none; padding: 0; color: var(--deck-
 .browser-sources button { text-align: left; display: flex; justify-content: space-between; background: transparent; }
 .browser-sources button.active { background: var(--panel-2); border-color: var(--deck-a); }
 .count { color: var(--muted); font-size: 11px; margin-left: 6px; }
-.browser-body { min-width: 0; min-height: 0; overflow: auto; }
+.browser-body { min-width: 0; min-height: 0; overflow: hidden; }
 .provider { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 .provider-msg { padding: 16px; color: var(--muted); }
 .provider-error { color: var(--warn); border: 1px solid #ffb02066; border-radius: 6px; padding: 6px 10px; }
@@ -523,6 +525,20 @@ tr.stream-only td { color: var(--muted); }
 .discovery .table-wrap { max-height: 60vh; }
 .discovery td:nth-child(3) { max-width: 380px; white-space: normal; }
 .confidence { display: block; color: #8d98a8; font-weight: normal; }
+.live-workspace { width: min(1180px, calc(100vw - 24px)); }
+.mashup-summary { display: flex; justify-content: center; gap: 18px; padding: 8px; border: 1px solid #37546b; background: #101923; color: #bceaff; }
+.mashup-sources { display: grid; grid-template-columns: minmax(0,1fr) 40px minmax(0,1fr); gap: 10px; align-items: stretch; }
+.mashup-source { border: 1px solid #303946; border-radius: 7px; padding: 10px; background: #10141b; min-width: 0; }
+.mashup-source h3 { color: var(--accent); font-size: 12px; }
+.mashup-track { display: flex; gap: 10px; align-items: center; min-height: 70px; }
+.mashup-track p { margin: 3px 0; }.mashup-source .overview { width: 100%; margin: 8px 0; }
+.mashup-stems label { display: grid; grid-template-columns: 110px 1fr 42px; align-items: center; gap: 7px; margin: 7px 0; }
+.mashup-stems input[type="range"] { width: 100%; }.mashup-center { display: grid; place-content: center; font-size: 28px; color: var(--accent); }.mashup-center small { font-size: 9px; }
+.stem-progress-text { display: block; color: var(--muted); }.stem-progress-text.ready { color: var(--ok); }.stem-progress-text.error { color: var(--warn); }
+.mashup-scroll { height: 72px; position: relative; border: 1px solid #283343; margin-bottom: 8px; }.mashup-scroll canvas { width: 100%; height: 100%; }
+.mashup-projects { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding: 6px 0; }.mashup-projects span { display: flex; flex: 0 0 auto; }
+.mashup-arrangement { margin-top: 10px; border-top: 1px solid #303946; padding-top: 6px; }.mashup-block { display: grid; grid-template-columns: 135px 130px 1fr 1fr auto; gap: 8px; align-items: center; padding: 5px; border-bottom: 1px solid #242c37; }.mashup-block input { width: 55px; }
+.vocal-regions { display: grid; gap: 4px; margin-top: 8px; padding: 7px; background: #141b24; color: #a9d9ef; }
 
 /* ── loops / sync ── */
 .loops.looping .loop-size span { color: #2ee59d; }

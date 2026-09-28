@@ -5,6 +5,7 @@ import type { AutoDJSettings } from "../autodj/transition";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 import { ArtTile } from "./ArtTile";
+import { compatibility } from "../analysis/discovery";
 
 export const TRACK_REFS = "application/x-dbdj-track-refs";
 const PLAYLIST_MOVE = "application/x-dbdj-playlist-move";
@@ -12,6 +13,10 @@ const QUEUE_MOVE = "application/x-dbdj-queue-move";
 export function duration(ms = 0): string {
   const seconds = Math.round(ms / 1000);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+function PlaylistStars({ track }: { track: TrackInfo }) {
+  const { setRating } = useApp();
+  return <span className="stars" onClick={(e) => e.stopPropagation()}>{[1, 2, 3, 4, 5].map((n) => <button key={n} className={n <= (track.rating ?? 0) ? "on" : ""} onClick={() => void setRating(track.ref, n === track.rating ? 0 : n)} aria-label={`${n} stars`}>★</button>)}</span>;
 }
 export function draggedRefs(data: DataTransfer): string[] {
   try {
@@ -88,7 +93,7 @@ function AutoSettings() {
       <label>Crossfade duration <select value={settings.transitionSeconds} onChange={(e) => autoDJ.configure({ transitionSeconds: e.target.value === "auto" ? "auto" : Number(e.target.value) })}>
         <option value="auto">Auto</option>{[3, 5, 8, 10, 15, 20, 30, 45, 60].map((n) => <option key={n} value={n}>{n} sec</option>)}
       </select></label>
-      {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering']] as const).map(([key, label]) =>
+      {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering'], ['intelligentMashups', 'Intelligent Mashups']] as const).map(([key, label]) =>
         <label key={key}><input type="checkbox" checked={settings[key]} onChange={(e) => autoDJ.configure({ [key]: e.target.checked })} />{label}</label>)}
     </div><p className="hint">Shuffle and key-aware ordering apply when starting a set or repeating it. Beat Mix falls back to a fade when grids or tempos are unsuitable.</p>
   </details>;
@@ -170,7 +175,10 @@ export function PlaylistView({ id, onOpen, onQueue }: { id: string; onOpen: (id:
     } else setSelected(e.ctrlKey || e.metaKey ? selected.includes(ref) ? selected.filter((r) => r !== ref) : [...selected, ref] : [ref]);
     library.select(library.getState().tracks.findIndex((t) => t.ref === ref));
   };
+  const reference = decks.find((deck) => deck.playing)?.track ?? library.getSelected();
+  const trackMatch = (track: TrackInfo) => reference && reference.ref !== track.ref ? compatibility(reference, track, app.preparation.forRef(reference.ref), app.preparation.forRef(track.ref)) : null;
   return <div className="library playlist-view" onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e)}>
+    <div className="library-controls">
     <div className="toolbar playlist-toolbar">
       {name === null ? <b>{p.name}</b> : <form onSubmit={(e) => { e.preventDefault(); playlists.rename(id, name); setName(null); }}><input aria-label="Rename playlist" autoFocus value={name} onChange={(e) => setName(e.target.value)} /><button>Save name</button><button type="button" onClick={() => setName(null)}>Cancel</button></form>}
       <span>{sum.count} tracks · {duration(sum.durationMs)}{sum.missing ? ` · ${sum.missing} missing` : ""}</span>
@@ -186,7 +194,8 @@ export function PlaylistView({ id, onOpen, onQueue }: { id: string; onOpen: (id:
     <AutoSettings />
     <AutoDJControls onQueue={onQueue} />
     <div className="toolbar"><button onClick={() => setSelected(p.refs)}>Select all</button><span>{selected.length} selected</span><button disabled={!selected.length} onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); }}>Remove from playlist</button><PlaylistActions refs={selected} /></div>
-    <div className="table-wrap"><table className="tracks"><thead><tr><th>#</th><th /><th>Title</th><th>Artist</th><th>Album</th><th>BPM</th><th>Key</th><th>Time</th><th>Actions</th></tr></thead><tbody>
+    </div>
+    <div className="table-wrap"><table className="tracks"><thead><tr><th /><th>Title</th><th>Artist</th><th>Album</th><th>Genre</th><th className="num">BPM</th><th>Key</th><th>Camelot</th><th className="num">Energy</th><th className="num">Match</th><th className="num">Time</th><th>Rating</th><th>Source</th><th>Added</th><th>Load</th></tr></thead><tbody>
       {p.refs.map((ref, i) => {
         const track = library.getByRef(ref);
         return <tr key={ref} className={selected.includes(ref) ? "selected" : ""} draggable onClick={(e) => select(ref, e)}
@@ -194,11 +203,11 @@ export function PlaylistView({ id, onOpen, onQueue }: { id: string; onOpen: (id:
           onDragStart={(e) => { e.dataTransfer.setData(PLAYLIST_MOVE, JSON.stringify({ id, from: i })); e.dataTransfer.setData(TRACK_REFS, JSON.stringify(selected.includes(ref) ? selected : [ref])); if (track) e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(track)); e.dataTransfer.effectAllowed = "copyMove"; }}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, i)}
           onContextMenu={(e) => { e.preventDefault(); if (!selected.includes(ref)) setSelected([ref]); setMenu({ x: e.clientX, y: e.clientY }); }}>
-          <td>{i + 1}</td><td>{track && <ArtTile track={track} size={28} />}</td><td>{track?.title ?? ref}{track?.unavailableReason && <span className="warn"> · Reconnect file</span>}</td><td>{track?.artist}</td><td>{track?.album}</td><td>{track?.bpm?.toFixed(1) ?? "—"}</td><td>{track?.key ?? "—"}</td><td>{duration(track?.durationMs)}</td>
+          <td>{track && <ArtTile track={track} size={22} />}</td><td className="title-cell">{track?.title ?? ref}{track?.unavailableReason && <span className="warn"> · Reconnect file</span>}</td><td>{track?.artist}</td><td>{track?.album}</td><td>{track?.genre ?? ""}</td><td className="num">{track?.bpm?.toFixed(1) ?? "—"}</td><td>{track?.key ?? "—"}</td><td>{track?.camelot ?? "—"}</td><td className="num" title={track?.analysisConfidence === undefined ? "Not analysed" : `${Math.round(track.analysisConfidence * 100)}% confidence`}>{track?.energy ?? "—"}</td><td className="num" title={track ? trackMatch(track)?.reasons.join(" · ") : ""}>{track ? trackMatch(track)?.score ?? "—" : "—"}{track && trackMatch(track) ? "%" : ""}</td><td className="num">{duration(track?.durationMs)}</td><td>{track && <PlaylistStars track={track} />}</td><td>{track && <span className="source-badge">LOCAL</span>}</td><td className="hint">{track?.addedAt ? new Date(track.addedAt).toLocaleDateString() : ""}</td>
           <td className="row-actions" onClick={(e) => e.stopPropagation()}>{decks.map((d, deck) => <button key={deck} disabled={!track || d.playing || !!track.unavailableReason} onClick={() => track && void engine.loadTrack(deck, track)}>→ {deck ? "B" : "A"}</button>)}<button disabled={!track} onClick={() => setInfo(track)}>Info</button><button disabled={i === 0} onClick={() => playlists.move(id, i, i - 1)}>↑</button><button disabled={i === p.refs.length - 1} onClick={() => playlists.move(id, i, i + 2)}>↓</button><button onClick={() => playlists.removeAt(id, [i])}>Remove</button></td>
         </tr>;
       })}
-      <tr onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e)}><td colSpan={9} className="empty">{p.refs.length ? "Drop here to move to the end" : "Drop library tracks or local files here. Use Ctrl/⌘ or Shift to select multiple tracks."}</td></tr>
+      <tr onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e)}><td colSpan={15} className="empty">{p.refs.length ? "Drop here to move to the end" : "Drop library tracks or local files here. Use Ctrl/⌘ or Shift to select multiple tracks."}</td></tr>
     </tbody></table></div>
     {info && <TrackDetails track={library.getByRef(info.ref) ?? info} onClose={() => setInfo(null)} />}
     {menu && <div className="ctx-menu" style={{ left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 160) }}><PlaylistActions refs={selected} onDone={() => setMenu(null)} /><button onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); setMenu(null); }}>Remove from playlist</button><button onClick={() => setMenu(null)}>Close</button></div>}

@@ -71,6 +71,17 @@ function registerIpc(): void {
   ipcMain.handle("dbdj:preparation:save", (_e, r) => libraryDb.savePreparation(r));
   ipcMain.handle("dbdj:preparation:waveform", (_e, id: string) => libraryDb.loadWaveform(String(id)));
   ipcMain.handle("dbdj:preparation:waveform-save", (_e, r) => libraryDb.saveWaveform(r));
+  ipcMain.handle("dbdj:mashups:load", () => libraryDb.loadMashupRecipes());
+  ipcMain.handle("dbdj:mashups:save", (_e, r) => libraryDb.saveMashupRecipe(r));
+  ipcMain.handle("dbdj:mashups:remove", (_e, id: string) => libraryDb.removeMashupRecipe(String(id)));
+  ipcMain.handle("dbdj:mashup:saveFile", async (e, name: string, data: ArrayBuffer) => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    const opts = { defaultPath: String(name).replace(/[<>:"/\\|?*]/g, "_"), filters: [{ name: "MP3 audio", extensions: ["mp3"] }] };
+    const r = w ? await dialog.showSaveDialog(w, opts) : await dialog.showSaveDialog(opts);
+    if (r.canceled || !r.filePath) return null;
+    await fs.writeFile(r.filePath, Buffer.from(data));
+    return { ref: r.filePath, name: path.basename(r.filePath) };
+  });
   // Dialogs are parented to the app window; unparented dialogs can open behind it on Windows.
   const open = (e: IpcMainInvokeEvent, opts: OpenDialogOptions) => {
     const w = BrowserWindow.fromWebContents(e.sender);

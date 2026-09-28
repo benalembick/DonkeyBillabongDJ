@@ -139,6 +139,12 @@ export class StemCache {
   async remove(key: string): Promise<void> {
     await fs.rm(this.keyDir(key), { recursive: true, force: true });
   }
+  async renderData(key: string): Promise<{ rate: number; total: number; pcm: ArrayBuffer }> {
+    const m = await this.meta(key);
+    if (!m?.complete) throw new Error("Complete STEM cache required before rendering");
+    const data = await fs.readFile(path.join(this.keyDir(key), "stems.pcm"));
+    return { rate: 44100, total: m.total, pcm: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) };
+  }
 
   async list(): Promise<CacheMeta[]> {
     let names: string[] = [];

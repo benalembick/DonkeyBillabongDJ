@@ -7,6 +7,7 @@ import { app } from "electron";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { TrackPreparation, WaveformRecord } from "../../src/preparation/types";
+import type { MashupRecipe } from "../../src/mashup/types";
 
 export interface TrackRow {
   ref: string;
@@ -91,7 +92,8 @@ function open(): DatabaseSync {
 /** Additive schema migrations for existing databases. */
 function migrate(d: DatabaseSync): void {
   d.exec(`CREATE TABLE IF NOT EXISTS track_preparation (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS track_waveforms (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS track_waveforms (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS mashup_recipes (id TEXT PRIMARY KEY, data TEXT NOT NULL);`);
   const cols = (d.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("rating")) d.exec("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("artwork_read")) d.exec("ALTER TABLE tracks ADD COLUMN artwork_read INTEGER NOT NULL DEFAULT 0");
@@ -135,6 +137,12 @@ export function saveWaveform(r: WaveformRecord): void {
   if (!r || !/^sha256:[a-f0-9]{64}$/.test(r.trackId) || r.schemaVersion !== 1) throw new Error("Invalid waveform cache");
   open().prepare("INSERT INTO track_waveforms(track_id,data) VALUES (?,?) ON CONFLICT(track_id) DO UPDATE SET data=excluded.data").run(r.trackId, JSON.stringify(r));
 }
+export function loadMashupRecipes(): MashupRecipe[] { return (open().prepare("SELECT data FROM mashup_recipes").all() as { data: string }[]).map((r) => JSON.parse(r.data)); }
+export function saveMashupRecipe(r: MashupRecipe): void {
+  if (!r?.id || r.version !== 2) throw new Error("Invalid mashup recipe");
+  open().prepare("INSERT INTO mashup_recipes(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data").run(r.id, JSON.stringify(r));
+}
+export function removeMashupRecipe(id: string): void { open().prepare("DELETE FROM mashup_recipes WHERE id=?").run(id); }
 
 export function upsertTracks(rows: TrackRow[]): void {
   const d = open();

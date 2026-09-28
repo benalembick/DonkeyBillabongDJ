@@ -437,6 +437,15 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.patchStems(deck, { enabled });
   }
 
+  /** Atomic STEM routing for Live Mashup and automation. */
+  setStemMix(deck: number, selected: boolean[], levels: number[]): void {
+    if (!this.state.decks[deck] || selected.length !== 4 || levels.length !== 4) return;
+    if (!this.stemsSupport.ok) {
+      this.log.warn("engine", `STEMS unavailable: ${this.stemsSupport.reason ?? "not supported here"}`); return;
+    }
+    this.patchStems(deck, { enabled: true, muted: selected.map((v) => !v), volume: levels.map((v) => clamp(v, 0, 1)) });
+  }
+
   private toggleStem(deck: number, k: number): void {
     const st = this.state.decks[deck].stems;
     if (!st.enabled) this.setStemsEnabled(deck, true);

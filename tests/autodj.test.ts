@@ -9,11 +9,11 @@ import { PlaylistStore } from "../src/library/PlaylistStore";
 import { browserFileRef } from "../src/library/BrowserLibrary";
 import { FakeAudioEngine } from "./fakes";
 
-async function setup(loader: (ref: string) => Promise<ArrayBuffer> = async () => new ArrayBuffer(180)) {
+async function setup(loader: (ref: string) => Promise<ArrayBuffer> = async () => new ArrayBuffer(180), stemAvailable?: (ref: string) => boolean) {
   const bus = new CommandBus(), audio = new FakeAudioEngine(), library = new LibraryStore(), playlists = new PlaylistStore(null);
   library.addFiles(["a", "b", "c", "d"].map((ref) => ({ ref, name: ref + ".wav" })));
   const engine = new DJEngine({ bus, audio, log: new EventLog(), browser: library, loadBytes: (t) => loader(t.ref) });
-  const auto = new AutoDJ({ engine, bus, audio, library, playlists, analysis: { get: () => null } });
+  const auto = new AutoDJ({ engine, bus, audio, library, playlists, analysis: { get: () => null }, stemAvailable });
   const playlist = playlists.create("Set", ["a", "b", "c"]);
   return { bus, audio, library, playlists, engine, auto, playlist };
 }
@@ -72,6 +72,22 @@ describe("Auto DJ", () => {
     auto.configure({ style: "beat-mix" }); await auto.start(playlist.id); auto.tick();
     expect(auto.getState().settings.style).toBe("beat-mix");
     expect(auto.getState().plan).toMatchObject({ kind: "crossfade", sync: false, reason: "Clean fade; no reliable compatible beat grids" });
+  });
+
+  it("uses cached STEM routing for an enabled Intelligent Mashup transition", async () => {
+    const { auto, playlist, engine, audio } = await setup(undefined, () => true);
+    engine.setStemsSupport(true);
+    auto.configure({ intelligentMashups: true, style: "beat-mix" });
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 124, firstBeat: 0, confidence: 3, source: "analysis" });
+    auto.tick();
+    const plan = auto.getState().plan!;
+    audio.positions[0] = plan.mixOut;
+    auto.tick();
+    expect(auto.getState()).toMatchObject({ status: "TRANSITIONING", message: "Intelligent Mashup: vocal overlay, then instrumental handover" });
+    expect(engine.getState().decks[0].stems.enabled).toBe(true);
+    expect(engine.getState().decks[1].stems.muted).toEqual([false, true, true, true]);
   });
 
   it("fade progress follows audio even when renderer ticks are delayed", async () => {

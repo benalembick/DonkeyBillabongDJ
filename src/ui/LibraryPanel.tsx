@@ -233,6 +233,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         if (files.length) void platform.refsFromDrop(files).then((refs) => app.addFiles(refs));
       }}
     >
+      <div className="library-controls">
       <div className="toolbar">
         <input className="search-input" placeholder="Search title, artist, album, genre, key…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button className="primary" onClick={() => void add(false)}>+ Add files…</button>
@@ -254,6 +255,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         <input type="number" placeholder="Min BPM" value={advanced.minBpm} onChange={(e) => setAdvanced({ ...advanced, minBpm: e.target.value })}/><input type="number" placeholder="Max BPM" value={advanced.maxBpm} onChange={(e) => setAdvanced({ ...advanced, maxBpm: e.target.value })}/>
         <input placeholder="Key / Camelot" value={advanced.key} onChange={(e) => setAdvanced({ ...advanced, key: e.target.value })}/><input type="number" min="1" max="10" placeholder="Min energy" value={advanced.minEnergy} onChange={(e) => setAdvanced({ ...advanced, minEnergy: e.target.value })}/><input type="number" min="1" max="10" placeholder="Max energy" value={advanced.maxEnergy} onChange={(e) => setAdvanced({ ...advanced, maxEnergy: e.target.value })}/><input placeholder="Genre" value={advanced.genre} onChange={(e) => setAdvanced({ ...advanced, genre: e.target.value })}/><input type="number" min="0" max="100" placeholder="Min match %" value={advanced.minMatch} onChange={(e) => setAdvanced({ ...advanced, minMatch: e.target.value })}/>
         <button onClick={() => setAdvanced({ ...advanced, minEnergy: "4", maxEnergy: "6" })}>Warm Up</button><button onClick={() => setAdvanced({ ...advanced, minEnergy: "7", maxEnergy: "10" })}>Peak Hour Bangers</button><button onClick={() => setAdvanced({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" })}>Clear</button>
+      </div>
       </div>
       <div className="table-wrap">
         <table className="tracks">

@@ -103,6 +103,12 @@ export class WebAudioEngine implements AudioEngine {
       loop: null,
     }));
   }
+  /** Copies decoded source PCM for deterministic offline mashup rendering. */
+  exportPcm(deck: number): { sampleRate: number; channels: Float32Array[] } | null {
+    const b = this.models[deck]?.buffer;
+    if (!b) return null;
+    return { sampleRate: b.sampleRate, channels: Array.from({ length: Math.min(2, b.numberOfChannels) }, (_, i) => b.getChannelData(i).slice()) };
+  }
 
   // ─────────────────────────── lifecycle ───────────────────────────
 

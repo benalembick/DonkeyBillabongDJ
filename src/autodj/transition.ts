@@ -10,8 +10,9 @@ export interface AutoDJSettings {
   repeat: boolean;
   bpmSync: boolean;
   keyAware: boolean;
+  intelligentMashups: boolean;
 }
-export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false };
+export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false, intelligentMashups: false };
 export interface TransitionPlan { kind: "beat-mix" | "crossfade" | "quick-fade"; mixOut: number; mixIn: number; seconds: number; sync: boolean; reason: string }
 export interface TransitionRegion { role: "out" | "in"; label: "MIX OUT" | "MIX IN"; start: number; end: number }
 
