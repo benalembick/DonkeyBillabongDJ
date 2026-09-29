@@ -7,7 +7,7 @@ import { ControllerTest, LiveEvents, MidiMonitor } from "./ControllerPanels";
 import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
 import { useFrameStore, useTick } from "./hooks";
-import { LibraryPanel } from "./LibraryPanel";
+import { LibraryPanel, type MainBrowserArea } from "./LibraryPanel";
 import { MatchDialogHost } from "./MatchDialog";
 import { Mixer } from "./Mixer";
 import { Diagnostics, Settings } from "./SystemPanels";
@@ -221,6 +221,7 @@ function Stage({ mode }: { mode: LayoutMode }) {
 
 function Shell() {
   const [tool, setTool] = useState<ToolTab | null>(null);
+  const [navigation, setNavigation] = useState<{ area: MainBrowserArea; id: number }>({ area: "collections", id: 0 });
   const app = useApp();
   const { platform } = app;
   const layout = useLayout();
@@ -256,6 +257,9 @@ function Shell() {
         <div className="brand">
           <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={2153} height={730} draggable={false} />
         </div>
+        <nav className="main-navigation" aria-label="Main browser areas">
+          {([['collections','▦','Collections'],['playlists','▤','Playlists'],['mashups','⚡','Mashup Projects'],['practice','◆','Practice Mode'],['streaming','◉','Streaming']] as const).map(([area,icon,label])=><button key={area} className={navigation.area===area?"active":""} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><span>{icon}</span>{label}</button>)}
+        </nav>
         <LayoutSwitch />
         <div className="statuses">
           <AudioStatusBadge />
@@ -270,7 +274,7 @@ function Shell() {
       <Stage mode={layout.mode} />
       {layout.mode !== "classic" && <Splitter mode={layout.mode} />}
       <section className="lower">
-        <Boundary name="Library"><LibraryPanel /></Boundary>
+        <Boundary name="Library"><LibraryPanel navigation={navigation} /></Boundary>
       </section>
       {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}
       <Toasts />

@@ -21,6 +21,7 @@ import { MashipsView } from "./MashipsPanel";
 import { PracticePanel } from "./PracticePanel";
 
 type Source = "local" | "audius" | "playlist" | "practice" | "auto-mashups" | "manual-mashups" | "queue" | StreamingProviderId;
+export type MainBrowserArea = "collections" | "playlists" | "mashups" | "practice" | "streaming";
 
 function fmtDuration(ms?: number): string {
   if (!ms) return "—";
@@ -45,7 +46,7 @@ function useFreeDeck(): number | null {
 
 type LocalCollection = "all" | "recent" | "rated";
 
-export function LibraryPanel() {
+export function LibraryPanel({ navigation }: { navigation?: { area: MainBrowserArea; id: number } }) {
   const [source, setSource] = useState<Source>(() => {
     try {
       const saved = localStorage.getItem("dbdj.ui.librarySource");
@@ -56,9 +57,11 @@ export function LibraryPanel() {
   });
   const [collection, setCollection] = useState<LocalCollection>("all");
   const [playlistId, setPlaylistId] = useState<string | null>(null);
-  const openPlaylist = (id: string) => { setPlaylistId(id); setSource("playlist"); };
-  const openQueue = () => setSource("queue");
-  const openMaships = (kind: "auto" | "manual") => setSource(kind === "manual" ? "manual-mashups" : "auto-mashups");
+  const [home, setHome] = useState<MainBrowserArea | null>(navigation?.area ?? null);
+  const [practiceView, setPracticeView] = useState<"practice" | "history">("practice");
+  const openPlaylist = (id: string) => { setHome(null); setPlaylistId(id); setSource("playlist"); };
+  const openQueue = () => { setHome(null); setSource("queue"); };
+  const openMaships = (kind: "auto" | "manual") => { setHome(null); setSource(kind === "manual" ? "manual-mashups" : "auto-mashups"); };
   const lib = useLibraryState();
   const streams = useStreamingState();
   const audiusState = useAudiusState();
@@ -74,30 +77,49 @@ export function LibraryPanel() {
   };
   const recent = lib.tracks.filter((t) => t.addedAt && Date.now() - t.addedAt < 30 * 86400_000).length;
   const rated = lib.tracks.filter((t) => (t.rating ?? 0) >= 4).length;
+  useEffect(() => { if (navigation) setHome(navigation.area); }, [navigation]);
+  const open = (s: Source, c?: LocalCollection) => { setHome(null); choose(s, c); };
   const item = (s: Source, label: React.ReactNode, c?: LocalCollection) => (
-    <button data-source={c ? `local-${c}` : s} className={source === s && (!c || collection === c) ? "active" : ""} onClick={() => choose(s, c)}>
+    <button data-source={c ? `local-${c}` : s} className={!home && source === s && (!c || collection === c) ? "active" : ""} onClick={() => open(s, c)}>
       {label}
     </button>
   );
   return (
-    <div className="browser">
+    <div className="browser header-navigation">
       <nav className="browser-sources">
         <div className="browser-heading">COLLECTION</div>
         {item("local", <>♫ All Tracks <span className="count">{lib.tracks.length}</span></>, "all")}
         {item("local", <>⏱ Recently Added <span className="count">{recent}</span></>, "recent")}
         {item("local", <>★ Top Rated <span className="count">{rated}</span></>, "rated")}
         {item("practice", <>◆ Practice Mode</>)}
-        <PlaylistNav selected={source === "playlist" ? playlistId : null} mashipsSelected={source === "manual-mashups" ? "manual" : source === "auto-mashups" ? "auto" : null} onOpen={openPlaylist} onMaships={openMaships} onQueue={openQueue} />
+        <PlaylistNav selected={!home && source === "playlist" ? playlistId : null} mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} onOpen={openPlaylist} onMaships={openMaships} onQueue={openQueue} />
         <div className="browser-heading">STREAMING</div>
         {item("spotify", <>{dot(streams.spotify)}Spotify</>)}
         {item("apple-music", <>{dot(streams["apple-music"])}Apple Music</>)}
         {item("audius", <>{audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span></>)}
       </nav>
       <div className="browser-body">
-        {source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "practice" ? <PracticePanel /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
+        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
       </div>
     </div>
   );
+}
+
+function SectionHome({ area, open, openPlaylist, openPractice }: { area: MainBrowserArea; open: (s: Source, c?: LocalCollection) => void; openPlaylist: (id: string) => void; openPractice: (view: "practice" | "history") => void }) {
+  const app = useApp(), lib = useLibraryState();
+  const playlists = useFrameStore(useCallback((cb) => app.playlists.on("change", cb), [app.playlists]), () => app.playlists.getState());
+  const mashups = useFrameStore(useCallback((cb) => app.liveMashup.on("change", cb), [app.liveMashup]), () => app.liveMashup.getState());
+  const practice = useFrameStore(useCallback((cb) => app.practice.on("change", cb), [app.practice]), () => app.practice.getState());
+  const streams = useStreamingState(), audius = useAudiusState();
+  const recent=lib.tracks.filter(t=>t.addedAt&&Date.now()-t.addedAt<30*86400_000).length,rated=lib.tracks.filter(t=>(t.rating??0)>=4).length;
+  const Tile=({icon,title,detail,onClick,accent}:{icon:string;title:string;detail:string;onClick:()=>void;accent?:string})=><button className="nav-tile" onClick={onClick} style={{["--tile-accent" as string]:accent}}><span className="nav-tile-icon">{icon}</span><span><b>{title}</b><small>{detail}</small></span><i>›</i></button>;
+  let title="COLLECTIONS",tiles:React.ReactNode;
+  if(area==="collections")tiles=<><Tile icon="♫" title="All Tracks" detail={`${lib.tracks.length} tracks`} onClick={()=>open("local","all")}/><Tile icon="◷" title="Recently Added" detail={`${recent} tracks from the last 30 days`} onClick={()=>open("local","recent")}/><Tile icon="★" title="Top Rated" detail={`${rated} tracks rated 4 stars or higher`} onClick={()=>open("local","rated")}/><Tile icon="◆" title="Practice Mode" detail="Build and review your mixing skills" onClick={()=>openPractice("practice")} accent="#39dca0"/></>;
+  else if(area==="playlists"){title="PLAYLISTS";tiles=<>{playlists.playlists.map(p=><Tile key={p.id} icon="▤" title={p.name} detail={`${p.refs.length} tracks`} onClick={()=>openPlaylist(p.id)} accent="#4ca8ff"/>)}<Tile icon="＋" title="Create New Playlist" detail="Create an empty playlist, then add tracks" onClick={()=>{const p=app.playlists.create("New Playlist");openPlaylist(p.id)}} accent="#39dca0"/></>}
+  else if(area==="mashups"){title="MASHUP PROJECTS";tiles=<><Tile icon="⚡" title="Auto Mashups" detail={`${mashups.recipes.filter(r=>!r.manual).length} saved projects`} onClick={()=>open("auto-mashups")} accent="#ff9f43"/><Tile icon="🎚" title="Manual Mashups" detail={`${mashups.recipes.filter(r=>!!r.manual).length} saved deck setups`} onClick={()=>open("manual-mashups")} accent="#d16cff"/></>}
+  else if(area==="practice"){title="PRACTICE MODE";tiles=<><Tile icon="▶" title="Start or Continue Practice" detail="Choose difficulty and begin a mixing challenge" onClick={()=>openPractice("practice")} accent="#39dca0"/><Tile icon="↗" title="Practice History" detail={`${practice.history.length} sessions · review your progress`} onClick={()=>openPractice("history")} accent="#4ca8ff"/></>}
+  else {title="STREAMING";tiles=<><Tile icon="◉" title="Spotify" detail={streams.spotify.status?.connected?"Connected":"Browse and configure Spotify"} onClick={()=>open("spotify")} accent="#1ed760"/><Tile icon="♪" title="Apple Music" detail={streams["apple-music"].status?.connected?"Connected":"Browse and configure Apple Music"} onClick={()=>open("apple-music")} accent="#fa586a"/><Tile icon="●" title="Audius" detail={audius.connection==="ok"?"Connected · free streaming":"Free music discovery"} onClick={()=>open("audius")} accent="#8b5cf6"/></>}
+  return <div className="section-home"><div className="section-home-title"><b>{title}</b><span>Choose where you want to go</span></div><div className="nav-tiles">{tiles}</div></div>;
 }
 
 // ─────────────────────────────── Local ───────────────────────────────
