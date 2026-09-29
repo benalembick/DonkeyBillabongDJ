@@ -36,7 +36,7 @@ export function useAutoDJ() {
   return useFrameStore(useCallback((cb) => autoDJ.on("change", cb), [autoDJ]), () => autoDJ.getState());
 }
 
-export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQueue }: { selected: string | null; mashipsSelected: "auto" | "manual" | null; onOpen: (id: string) => void; onMaships: (kind: "auto" | "manual") => void; onQueue: () => void }) {
+export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQueue, onArea }: { selected: string | null; mashipsSelected: "auto" | "manual" | null; onOpen: (id: string) => void; onMaships: (kind: "auto" | "manual") => void; onQueue: () => void; onArea: (area: "playlists" | "mashups") => void }) {
   const app = useApp();
   const state = usePlaylists();
   const auto = useAutoDJ();
@@ -44,7 +44,7 @@ export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQu
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   return <>
-    <div className="browser-heading">PLAYLISTS</div>
+    <button className="browser-heading browser-section-link" onClick={() => onArea("playlists")}>PLAYLISTS <span>›</span></button>
     <button disabled={!state.loaded} onClick={() => setCreating(true)}>+ Create New Playlist</button>
     {creating && <form className="playlist-create" onSubmit={(e) => { e.preventDefault(); const p = app.playlists.create(name); setCreating(false); setName(""); onOpen(p.id); }}>
       <input autoFocus aria-label="Playlist name" placeholder="Playlist name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -60,7 +60,7 @@ export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQu
         if (files.length) void app.platform.refsFromDrop(files).then(async (rows) => { await app.addFiles(rows); app.playlists.addTracks(p.id, rows.map((r) => r.ref)); }).catch((err) => app.log.warn("library", String(err)));
       }}>{p.name}<span className="count">{p.refs.length}</span></button>)}
     <button data-source="auto-dj" onClick={onQueue}>Auto DJ Queue <span className={`auto-status ${auto.status.toLowerCase()}`}>{auto.status}</span></button>
-    <div className="browser-heading">MASHUP PROJECTS</div>
+    <button className="browser-heading browser-section-link" onClick={() => onArea("mashups")}>MASHUP PROJECTS <span>›</span></button>
     <button data-source="auto-mashups" className={mashipsSelected === "auto" ? "active" : ""} onClick={() => onMaships("auto")}>Auto Mashups <span className="count">{maships.recipes.filter((r) => !r.manual).length}</span></button>
     <button data-source="manual-mashups" className={mashipsSelected === "manual" ? "active" : ""} onClick={() => onMaships("manual")}>Manual Mashups <span className="count">{maships.recipes.filter((r) => !!r.manual).length}</span></button>
   </>;

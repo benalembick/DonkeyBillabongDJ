@@ -110,6 +110,8 @@ function LayoutSwitch() {
   const { liveMashup, log } = useApp();
   const engine = useEngineState();
   const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const { mode, zoomSeconds } = useLayout();
   const canSave = engine.decks.slice(0, 2).every((d) => d.status === "ready" && d.track);
   const saveManual = async () => {
@@ -121,18 +123,26 @@ function LayoutSwitch() {
     } catch (e) { log.error("mashup", `Could not save Manual Mashup: ${String(e)}`); }
     finally { setSaving(false); }
   };
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => { if (!menuRef.current?.contains(e.target as Node)) setOpen(false); };
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("pointerdown", close); window.removeEventListener("keydown", escape); };
+  }, [open]);
   return (
-    <div className="layout-switch" role="group" aria-label="Layout">
-      {MODES.map((m) => (
-        <button key={m.id} className={mode === m.id ? "active" : ""} title={m.title} onClick={() => setLayout({ mode: m.id })}>
-          {m.label}
-        </button>
-      ))}
-      <span className="zoom" title="Waveform zoom (or scroll over a waveform)">
-        <button className="tiny" onClick={() => zoom(-1)} aria-label="Zoom in">＋</button>
-        <span>{zoomSeconds}s</span>
-        <button className="tiny" onClick={() => zoom(1)} aria-label="Zoom out">－</button>
-      </span>
+    <div className="layout-actions">
+      <div className="view-menu-wrap" ref={menuRef}>
+        <button className={`view-menu-trigger ${open ? "active" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}><span>▣</span> VIEW</button>
+        {open && <div className="view-popover" role="menu">
+          <b>DECK VIEW</b>
+          <div className="layout-switch" role="group" aria-label="View options">
+            {MODES.map((m) => <button key={m.id} className={mode === m.id ? "active" : ""} title={m.title} onClick={() => { setLayout({ mode: m.id }); setOpen(false); }}>{m.label}</button>)}
+          </div>
+          <div className="view-zoom"><span>WAVEFORM ZOOM</span><button className="tiny" onClick={() => zoom(-1)} aria-label="Zoom in">＋</button><output>{zoomSeconds}s</output><button className="tiny" onClick={() => zoom(1)} aria-label="Zoom out">－</button></div>
+        </div>}
+      </div>
       <button className="manual-mashup-save" disabled={!canSave || saving} title="Save the current tracks, positions, tempo, STEMS, mixer, filters and effects as an editable Mashup Project" onClick={() => void saveManual()}>
         {saving ? "SAVING…" : "SAVE MANUAL MASHUP"}
       </button>
@@ -262,19 +272,18 @@ function Shell() {
         </nav>
         <LayoutSwitch />
         <div className="statuses">
-          <AudioStatusBadge />
-          <ControllerStatus />
+          <div className="system-status-stack"><AudioStatusBadge /><ControllerStatus /></div>
           {platform.kind === "desktop" ? null : <DownloadDesktopButton />}
-          <button className="status open-tools" onClick={() => setTool("Controller events")} title="Controller events, test, MIDI monitor">🎛 Controller</button>
-          <button className="status" onClick={() => setTool("Diagnostics")}>Diagnostics</button>
-          <button className="status" onClick={() => setTool("Settings")}>⚙ Settings</button>
+          <button className="status open-tools utility-button" onClick={() => setTool("Controller events")} title="Controller events, test and MIDI monitor"><span aria-hidden="true">🎛</span> Controller</button>
+          <button className="status utility-button" onClick={() => setTool("Diagnostics")}><span aria-hidden="true">◫</span> Diagnostics</button>
+          <button className="status utility-button" onClick={() => setTool("Settings")}><span aria-hidden="true">⚙</span> Settings</button>
         </div>
       </header>
       <Boundary name="FX"><FxBar /></Boundary>
       <Stage mode={layout.mode} />
       {layout.mode !== "classic" && <Splitter mode={layout.mode} />}
       <section className="lower">
-        <Boundary name="Library"><LibraryPanel navigation={navigation} /></Boundary>
+        <Boundary name="Library"><LibraryPanel navigation={navigation} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} /></Boundary>
       </section>
       {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}
       <Toasts />

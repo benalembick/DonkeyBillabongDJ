@@ -46,7 +46,7 @@ function useFreeDeck(): number | null {
 
 type LocalCollection = "all" | "recent" | "rated";
 
-export function LibraryPanel({ navigation }: { navigation?: { area: MainBrowserArea; id: number } }) {
+export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { area: MainBrowserArea; id: number }; onNavigateArea?: (area: MainBrowserArea) => void }) {
   const [source, setSource] = useState<Source>(() => {
     try {
       const saved = localStorage.getItem("dbdj.ui.librarySource");
@@ -87,13 +87,13 @@ export function LibraryPanel({ navigation }: { navigation?: { area: MainBrowserA
   return (
     <div className="browser header-navigation">
       <nav className="browser-sources">
-        <div className="browser-heading">COLLECTION</div>
+        <button className="browser-heading browser-section-link" onClick={() => { setHome("collections"); onNavigateArea?.("collections"); }}>COLLECTION <span>›</span></button>
         {item("local", <>♫ All Tracks <span className="count">{lib.tracks.length}</span></>, "all")}
         {item("local", <>⏱ Recently Added <span className="count">{recent}</span></>, "recent")}
         {item("local", <>★ Top Rated <span className="count">{rated}</span></>, "rated")}
         {item("practice", <>◆ Practice Mode</>)}
-        <PlaylistNav selected={!home && source === "playlist" ? playlistId : null} mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} onOpen={openPlaylist} onMaships={openMaships} onQueue={openQueue} />
-        <div className="browser-heading">STREAMING</div>
+        <PlaylistNav selected={!home && source === "playlist" ? playlistId : null} mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} onOpen={openPlaylist} onMaships={openMaships} onQueue={openQueue} onArea={(area) => { setHome(area); onNavigateArea?.(area); }} />
+        <button className="browser-heading browser-section-link" onClick={() => { setHome("streaming"); onNavigateArea?.("streaming"); }}>STREAMING <span>›</span></button>
         {item("spotify", <>{dot(streams.spotify)}Spotify</>)}
         {item("apple-music", <>{dot(streams["apple-music"])}Apple Music</>)}
         {item("audius", <>{audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span></>)}
