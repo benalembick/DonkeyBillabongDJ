@@ -54,6 +54,16 @@ function normFor(ov: Overview): number {
   return sample[Math.floor(sample.length * 0.995)] || 1;
 }
 
+/**
+ * Shared 3-band geometry for every waveform view (overview and scrolling), so a
+ * zoomed-in section always looks like the same part of the whole-track view:
+ * blue lows (with some mids), orange mids, white highs, centred and stacked.
+ * `half` = available half-height in px, `scale` = px per analysis unit.
+ */
+function bandHeights(lo: number, md: number, hi: number, scale: number, half: number): [number, number, number] {
+  return [Math.min(half * 0.96, (lo + md * 0.35) * scale), Math.min(half * 0.9, md * scale * 0.78), Math.min(half * 0.76, hi * scale * 0.58)];
+}
+
 const TILE_PX = 1024;
 
 /** Render one waveform tile (TILE_PX along the time axis) starting at `startSec`. */
@@ -64,7 +74,8 @@ function renderTile(ov: Overview, startSec: number, secPerPx: number, cross: num
   const g = c.getContext("2d")!;
   const fps = ov.fps;
   const n = ov.low.length;
-  const e = new Float32Array(TILE_PX * 3);
+  const cols = [LOW, MID, HIGH];
+  const h = new Float32Array(TILE_PX * 3);
   for (let p = 0; p < TILE_PX; p++) {
     const ta = startSec + p * secPerPx;
     let i0 = Math.floor(ta * fps);
@@ -79,20 +90,20 @@ function renderTile(ov: Overview, startSec: number, secPerPx: number, cross: num
       if (ov.mid[i] > md) md = ov.mid[i];
       if (ov.high[i] > hi) hi = ov.high[i];
     }
-    e[p] = Math.min(mid, (lo + md * 0.5) * scale);
-    e[TILE_PX + p] = Math.min(mid, md * scale * 0.9);
-    e[2 * TILE_PX + p] = Math.min(mid, hi * scale * 0.75);
+    const b = bandHeights(lo, md, hi, scale, mid);
+    h[p] = b[0];
+    h[TILE_PX + p] = b[1];
+    h[2 * TILE_PX + p] = b[2];
   }
-  // One envelope per track, coloured by its real spectral balance. Painting
-  // three opaque shapes on top of each other made the white high band hide
-  // most track-specific detail, especially for beat-matched dance music.
-  for (let p = 0; p < TILE_PX; p++) {
-    const lo=e[p],md=e[TILE_PX+p],hi=e[2*TILE_PX+p];
-    const height=Math.min(mid,Math.sqrt(lo*lo+md*md+hi*hi));
-    const sum=lo+md+hi||1,lr=lo/sum,mr=md/sum,hr=hi/sum;
-    const red=Math.round(35+210*mr+220*hr),green=Math.round(70+105*mr+185*hr),blue=Math.round(75+180*lr+170*hr);
-    g.fillStyle=`rgb(${Math.min(255,red)},${Math.min(255,green)},${Math.min(255,blue)})`;
-    if(vertical)g.fillRect(mid-height,p,Math.max(1,height*2),1);else g.fillRect(p,mid-height,1,Math.max(1,height*2));
+  // Same drawing as the overview: low, then mid, then high on top, mirrored around the centre.
+  for (let band = 0; band < 3; band++) {
+    g.fillStyle = cols[band];
+    for (let p = 0; p < TILE_PX; p++) {
+      const v = h[band * TILE_PX + p];
+      if (v <= 0) continue;
+      if (vertical) g.fillRect(mid - v, p, v * 2, 1);
+      else g.fillRect(p, mid - v, 1, v * 2);
+    }
   }
   return c;
 }
@@ -204,7 +215,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     const playheadPx = len * 0.5;
     const t0 = pos - playheadPx * secPerPx;
     const mid = cross / 2;
-    const scale = (mid * 0.95) / norm.current;
+    const scale = (mid * 0.94) / norm.current; // same vertical scale as the overview
     const auto = autoDJ.getState();
     const planned = auto.status !== "OFF" && auto.plan && (deck === auto.deck || deck === 1 - auto.deck)
       ? transitionRegion(auto.plan, auto.deck, deck, d.rate, d.duration)
@@ -400,9 +411,7 @@ export function OverviewWaveform({ deck }: { deck: number }) {
           // Draw a conventional centred waveform. Keeping the bands within
           // the available half-height preserves each track's dynamics instead
           // of flattening loud masters into a similar bottom-filled silhouette.
-          const lowHeight = Math.min(centre * .96, (lo + md * .35) * scale);
-          const midHeight = Math.min(centre * .9, md * scale * .78);
-          const highHeight = Math.min(centre * .76, hi * scale * .58);
+          const [lowHeight, midHeight, highHeight] = bandHeights(lo, md, hi, scale, centre);
           og.fillStyle = LOW;
           og.fillRect(x, centre - lowHeight, 1, lowHeight * 2);
           og.fillStyle = MID;
