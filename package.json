@@ -59,7 +59,8 @@
       "package.json",
       "!node_modules/onnxruntime-node/bin/napi-v6/linux/**",
       "!**/node_modules/**/*.log",
-      "!**/node_modules/**/build/config.gypi"
+      "!**/node_modules/**/build/config.gypi",
+      "!*.log"
     ],
     "mac": {
       "target": [
