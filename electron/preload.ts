@@ -64,6 +64,22 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
     revealLog: () => ipcRenderer.invoke("dbdj:stems:revealLog"),
     renderData: (ref: string) => ipcRenderer.invoke("dbdj:stems:renderData", ref),
   },
+  lighting: {
+    load: () => ipcRenderer.invoke("dbdj:lighting:load"),
+    save: (cfg: unknown) => ipcRenderer.invoke("dbdj:lighting:save", cfg),
+    configure: (io: unknown, exit: unknown) => ipcRenderer.invoke("dbdj:dmx:configure", io, exit),
+    frame: (universe: number, data: Uint8Array) => ipcRenderer.send("dbdj:dmx:frame", universe, data),
+    onStatus: (cb: (universe: number, status: unknown) => void) => {
+      const h = (_e: unknown, u: number, s: unknown) => cb(u, s);
+      ipcRenderer.on("dbdj:dmx:status", h);
+      return () => ipcRenderer.removeListener("dbdj:dmx:status", h);
+    },
+    onInput: (cb: (universe: number, data: Uint8Array) => void) => {
+      const h = (_e: unknown, u: number, d: Uint8Array) => cb(u, d);
+      ipcRenderer.on("dbdj:dmx:input", h);
+      return () => ipcRenderer.removeListener("dbdj:dmx:input", h);
+    },
+  },
   streaming: {
     status: (id: string) => ipcRenderer.invoke("dbdj:stream:status", id),
     configure: (id: string, cfg: unknown) => ipcRenderer.invoke("dbdj:stream:configure", id, cfg),

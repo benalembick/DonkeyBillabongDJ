@@ -138,6 +138,16 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
     add(`sampler${s}.load`, `Sampler ${s} load`, "button", "Sampler", false);
     add(`sampler${s}.eject`, `Sampler ${s} eject`, "button", "Sampler", false);
   }
+  // Lighting (stable ids so a DDJ-SB / MIDI controller can be mapped to them)
+  add("lighting.blackout", "Lighting blackout (toggle)", "button", "Lighting");
+  add("lighting.master", "Lighting master brightness", "absolute", "Lighting");
+  add("lighting.desk.clear", "Lighting desk clear", "button", "Lighting");
+  add("lighting.sound.enable", "Sound-to-light on/off", "button", "Lighting");
+  add("lighting.sound.beatFlash", "Sound-to-light beat flash on/off", "button", "Lighting");
+  add("lighting.sound.downbeatAccent", "Sound-to-light downbeat accent on/off", "button", "Lighting");
+  add("lighting.sound.brightness", "Sound-to-light brightness", "absolute", "Lighting");
+  add("lighting.sound.sensitivity", "Sound-to-light sensitivity", "absolute", "Lighting");
+  add("lighting.sound.speed", "Sound-to-light speed / response", "absolute", "Lighting");
   add("recording.toggle", "Record", "button", "Recording", false);
   add("modifier.shift", "Shift (mapping modifier)", "button", "Controller");
   return out;

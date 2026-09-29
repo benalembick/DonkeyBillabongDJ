@@ -17,6 +17,7 @@ import { WaveformStack } from "./Waveforms";
 import brandLogo from "../assets/donkey-billabong-dj-logo.png";
 import { About } from "./About";
 import { WaveStylePicker } from "./WaveStylePicker";
+import { LightingWorkspace } from "./lighting/LightingWorkspace";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -236,7 +237,9 @@ function Stage({ mode }: { mode: LayoutMode }) {
 
 function Shell() {
   const [tool, setTool] = useState<ToolTab | null>(null);
-  const [navigation, setNavigation] = useState<{ area: MainBrowserArea; id: number }>({ area: "collections", id: 0 });
+  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting"; id: number }>({ area: "collections", id: 0 });
+  const libraryNavigation = useRef<{ area: MainBrowserArea; id: number }>({ area: "collections", id: 0 });
+  if (navigation.area !== "lighting") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
   const app = useApp();
   const { platform } = app;
   const layout = useLayout();
@@ -273,7 +276,7 @@ function Shell() {
           <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={2153} height={730} draggable={false} />
         </div>
         <nav className="main-navigation" aria-label="Main browser areas">
-          {([['collections','▦','Collections'],['playlists','▤','Playlists'],['mashups','⚡','Mashup Projects'],['practice','◆','Practice Mode'],['streaming','◉','Streaming']] as const).map(([area,icon,label])=><button key={area} className={navigation.area===area?"active":""} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><span>{icon}</span>{label}</button>)}
+          {([['collections','▦','Collections'],['playlists','▤','Playlists'],['mashups','⚡','Mashup Projects'],['practice','◆','Practice Mode'],['streaming','◉','Streaming'],['lighting','✺','Lighting']] as const).map(([area,icon,label])=><button key={area} title={label} className={navigation.area===area?"active":""} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><span>{icon}</span>{label}</button>)}
         </nav>
         <LayoutSwitch />
         <div className="statuses">
@@ -289,7 +292,11 @@ function Shell() {
       <Stage mode={layout.mode} />
       {layout.mode !== "classic" && <Splitter mode={layout.mode} />}
       <section className="lower">
-        <Boundary name="Library"><LibraryPanel navigation={navigation} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} /></Boundary>
+        {/* The library stays mounted (hidden) while Lighting is open, so it comes back exactly as it was. */}
+        <div className="lower-pane" hidden={navigation.area === "lighting"}>
+          <Boundary name="Library"><LibraryPanel navigation={libraryNavigation.current} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} /></Boundary>
+        </div>
+        {navigation.area === "lighting" && <Boundary name="Lighting"><LightingWorkspace /></Boundary>}
       </section>
       {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}
       <Toasts />

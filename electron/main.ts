@@ -12,15 +12,17 @@ import os from "node:os";
 import path from "node:path";
 import { registerStreamingIpc } from "./streaming/ipc";
 import { registerStemIpc } from "./stems/host";
+import { registerLightingIpc } from "./lighting/ipc";
 import { handleArtProtocol, registerArtScheme } from "./library/artwork";
 
 registerArtScheme();
 import * as libraryDb from "./library/db";
 import { readTags } from "./library/tags";
 import { autoDJFixtures, runAutoDJSmoke } from "./autodjSmoke";
+import { runLightingSmoke } from "./lightingSmoke";
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".flac", ".ogg", ".opus", ".aif", ".aiff"]);
-const ALLOWED_PERMISSIONS = new Set(["midi", "midiSysex", "media", "speaker-selection", "clipboard-sanitized-write"]);
+const ALLOWED_PERMISSIONS = new Set(["midi", "midiSysex", "media", "speaker-selection", "clipboard-sanitized-write", "serial"]);
 
 // Smoke tests run in a throwaway profile so they never touch the user's library, settings or credentials.
 if (process.env.DBDJ_SMOKE_TEST) {
@@ -171,6 +173,7 @@ function registerIpc(): void {
  */
 function runSmokeTest(win: BrowserWindow): void {
   const errors: string[] = [];
+  let smokeLighting: unknown = null;
   win.webContents.on("console-message", (details) => {
     if (details.level === "error") errors.push(details.message);
   });
@@ -182,6 +185,7 @@ function runSmokeTest(win: BrowserWindow): void {
         // plays ~1.5 s through the real output device and reports playhead/levels.
         const track = JSON.stringify(process.env.DBDJ_SMOKE_TRACK ?? "");
         const autoFixtures = process.env.DBDJ_SMOKE_AUTODJ ? await autoDJFixtures() : null;
+        smokeLighting = process.env.DBDJ_SMOKE_LIGHTING ? await runLightingSmoke(win, process.env.DBDJ_SMOKE_LIGHTING, process.env.DBDJ_SMOKE_LIGHTING_TRACK ?? "").catch((e) => ({ error: String(e) })) : null;
         report = await win.webContents.executeJavaScript(`(async () => {
           const a = window.dbdj;
           const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -602,7 +606,7 @@ function runSmokeTest(win: BrowserWindow): void {
       }
       const gpuStatus = app.getGPUFeatureStatus() as unknown as Record<string, string>;
       const gpu = { canvas: gpuStatus["2d_canvas"], compositing: gpuStatus.gpu_compositing, rasterization: gpuStatus.rasterization };
-      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu }, null, 2)}\n`);
+      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu, lighting: smokeLighting }, null, 2)}\n`);
       app.exit(errors.length ? 1 : 0);
     }, Number(process.env.DBDJ_SMOKE_WAIT_MS ?? 8000));
   });
@@ -652,8 +656,18 @@ app.whenReady().then(() => {
   ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
 
   handleArtProtocol();
+  // USB DMX (Web Serial): choose a DMX interface automatically — FTDI-based interfaces
+  // (Enttec DMX USB Pro, DMXking…) or ports that say DMX/Enttec — never an arbitrary COM port.
+  ses.on("select-serial-port", (event, portList, _wc, callback) => {
+    event.preventDefault();
+    const text = (p: (typeof portList)[number]) => `${p.displayName ?? ""} ${p.portName ?? ""}`;
+    const pick = portList.find((p) => /dmx|enttec|ultradmx/i.test(text(p))) ?? portList.find((p) => (p.vendorId ?? "").toLowerCase() === "0403");
+    callback(pick ? pick.portId : "");
+  });
+  ses.setDevicePermissionHandler((details) => details.deviceType === "serial");
   registerIpc();
   registerStreamingIpc();
+  registerLightingIpc();
   void registerStemIpc();
   createWindow();
   app.on("activate", () => {

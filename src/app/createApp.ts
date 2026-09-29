@@ -27,6 +27,7 @@ import { AudiusSource } from "../providers/audius/AudiusSource";
 import { AudiusStore, BrowserRouter } from "../providers/audius/AudiusStore";
 import { audiusIdFromRef } from "../providers/audius/audiusTracks";
 import { StemService } from "../stems/StemService";
+import { LightingService } from "../lighting/LightingService";
 import { PlaylistStore } from "../library/PlaylistStore";
 import { AutoDJ } from "../autodj/AutoDJ";
 import { DEFAULT_AUTO_DJ } from "../autodj/transition";
@@ -49,6 +50,8 @@ export interface App {
   practice: PracticeService;
   /** STEM separation (desktop only; local ONNX model). */
   stems: StemService;
+  /** DMX lighting: fixtures, desk, virtual console, sound-to-light, Art-Net / sACN / USB DMX output. */
+  lighting: LightingService;
   keyboard: KeyboardShortcuts;
   platform: Platform;
   streaming: StreamingStore;
@@ -122,6 +125,8 @@ export function createApp(): App {
   const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
   void playlists.load();
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
+  const lighting = new LightingService({ bus, log, dj: engine, audio, bridge: platform.kind === "desktop" ? (window.dbdjDesktop?.lighting ?? null) : null });
+  void lighting.start();
   const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis, stemAvailable: (ref) => stems.index()[ref] === "complete",
     settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s) });
   const liveMashup = new LiveMashupService({ engine, bus, preparation, persistence: platform.mashups, lookup: (ref) => library.getByRef(ref) ?? undefined, envelopes: (deck) => stems.envelopes(deck), renderData: (ref) => stems.renderData(ref), sourcePcm: (deck) => audio.exportPcm(deck), saveFile: (name,data) => platform.saveMashup(name,data), importRendered: async (file,track) => {
@@ -252,6 +257,7 @@ export function createApp(): App {
     liveMashup,
     practice,
     stems,
+    lighting,
     keyboard,
     platform,
     streaming,

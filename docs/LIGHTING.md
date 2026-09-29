@@ -1,0 +1,141 @@
+# DMX Lighting (MVP)
+
+DonkeyBillabongDJ can drive DMX lighting directly, with no separate lighting software. The workflow follows QLC+: a fixture patch, universes with inputs and outputs, a simple desk, and a Virtual Console. It's all built around one DMX engine, so scenes, chases, MIDI control and DJ-aware (Auto DJ) lighting can be added later without rebuilding anything.
+
+Open it from **Lighting** in the main navigation. It replaces the library area, so the decks stay visible, and it has four tabs: **Virtual Console | DMX Desk | Fixtures | Inputs / Outputs**. The **MASTER** fader and **BLACKOUT** button sit in the Lighting bar on every tab.
+
+## Architecture
+
+```
+Control sources                          DmxEngine (src/lighting/DmxEngine.ts)
+  DMX Desk ─────────── layer "desk"  ──►  universe → channel (1–512) → value (0–255)
+  Sound-to-Light ───── layer "sound" ──►  · output = HTP merge of all layers
+  Art-Net input ────── layer "input" ──►  · grand master scales light-output channels only
+  later: scenes, chases, MIDI,           · blackout zeroes the output, layers untouched
+  Auto DJ lighting → more layers                     │ compute() at 40 Hz
+                                                     ▼
+Fixture patch (fixtures.ts)            Output providers (one per universe)
+  JSON fixture definitions,              Art-Net · sACN/E1.31  → main process UDP (electron/lighting/dmxNet.ts)
+  modes, channel types, address map      USB DMX (Enttec Pro)  → Web Serial (src/lighting/usbPro.ts)
+                                         None
+```
+
+- **One state.** The desk, the Virtual Console and sound-to-light never own DMX values; they write layers in the engine. The desk shows the engine live, so values set by sound or input appear on its faders' output bars.
+- **Channel types, not channel numbers.** Fixture definitions describe each channel's function (red, dimmer, pan…). The grand master, sound mappings and Full On all work from these types. Position, strobe and effect channels are never scaled by the master or driven by sound.
+- **Protocols are pure encoders** in `src/lighting/protocol.ts` (ArtDmx/ArtPoll/ArtPollReply, the E1.31 data packet, the Enttec USB Pro message). They're shared by the main process, the Web Serial provider and the tests.
+- **Stable control IDs.** Lighting controls are command-bus actions, so the DDJ-SB or any MIDI controller can be mapped to them later through the normal mapping system:
+  - `lighting.blackout`, `lighting.master`, `lighting.desk.clear`
+  - `lighting.sound.enable`, `lighting.sound.beatFlash`, `lighting.sound.downbeatAccent`
+  - `lighting.sound.brightness`, `lighting.sound.sensitivity`, `lighting.sound.speed`
+
+## Inputs / Outputs
+
+| Output | How | Status shown |
+|---|---|---|
+| Art-Net | UDP from the desktop app to a node IP or broadcast, port 6454. ArtPoll every 3 s | **Connected** only when a node answers ArtPoll; otherwise **Disconnected** ("no node answered") |
+| sACN / E1.31 | UDP multicast 239.255.x.y:5568, or unicast to a host. Per-universe priority | **Sending**. sACN has no acknowledgement, so it never claims a connection |
+| USB DMX (Enttec Pro protocol) | Web Serial, "send DMX" label-6 messages: Enttec DMX USB Pro / Mk2, DMXking ultraDMX Pro and compatibles | **Connected** only after the port opened and writes succeed; **Error** on write failure (e.g. unplugged) |
+| None | — | Disabled |
+
+- **Input:** Art-Net. Received ArtDmx for a chosen port-address feeds the universe's input layer.
+- **Refresh:** frames go out when values change, with a keep-alive at least once a second.
+- **Exit behaviour** (default **DMX output → 0**): on quit, network outputs are zeroed three times before the app exits, and USB gets a zero frame. The alternative is **Hold last look**.
+- **Browser version:** browsers can't send UDP, so Art-Net and sACN show as unavailable there and need the desktop app.
+- **USB port choice:** the app picks the interface automatically, and only FTDI-based or DMX-named USB serial ports; it never opens an arbitrary COM port. There's no port-picker yet if several interfaces are connected.
+
+**Not yet supported: raw FTDI "Open DMX" dongles.** These need the host to generate precise DMX break/mark-after-break timing. That's unreliable through Web Serial, so it needs a small **companion service**, a native helper that owns the serial timing. The interface for it is the same `send(universe, frame)` provider contract as the others: implement it in the main process, like `dmxNet.ts`, and add `"open-dmx"` to `OutputKind`.
+
+## Fixtures
+
+- **Library:** built-in generic fixtures:
+  - RGB PAR (5ch / 3ch)
+  - RGBW PAR
+  - RGBWAUV PAR
+  - Moving Head (11ch spot / 8ch wash)
+  - LED Bar (4ch / 12ch segments)
+  - Strobe
+  - Dimmer
+  - Generic single channel
+- **Definition format:** `FixtureDef` (manufacturer, model, modes, typed channels), a JSON-friendly schema in the spirit of QLC+ / Open Fixture Library, so real fixture definitions can be added or imported later.
+- **Patching:**
+  - Pick a fixture, mode, name, universe and start address; the next free address is suggested.
+  - The occupied range is shown (start 21 with 5 channels → 21–25).
+  - **Overlaps are refused** and the clashing fixtures are named, unless you press **Overlap anyway**.
+  - The **address map** shows all 512 channels of a universe, coloured per fixture, with overlaps hatched red.
+
+## DMX Desk
+
+- **Faders:** 32 channel faders per page, labelled with channel number, fixture and function (e.g. `001 Front PAR Left RED`).
+- **Live output:** the bar behind each fader and the small number underneath show the **actual output** after merge, master and blackout, so you see sound-to-light or input changing values in real time.
+- **Groups:** click channel numbers to select; Ctrl/Shift-click to build a group, and a moved fader then moves the whole group.
+- **Buttons:**
+  - **Universe** selector.
+  - **FULL ON:** light-output channels only, never pan/tilt/strobe.
+  - **RESET:** clears the desk layer.
+  - Master and **BLACKOUT** are in the Lighting bar.
+
+## Virtual Console and Sound Activated Light Control
+
+The Virtual Console is a list of widgets (`VcWidget`, with a type registry). The MVP ships one widget type, **Sound Activated Light Control**. Buttons, faders, XY pads, scenes, chases, colour and group widgets are new entries in `VC_WIDGET_TYPES`.
+
+**Audio sources.** These reuse the app's own audio graph:
+- **Master:** the DJ mix, after the master level.
+- **Deck A / Deck B:** after EQ/filter/FX and before the channel fader, so a deck can drive the lights even when faded out.
+- **Microphone:** `getUserMedia`, for music not playing through the app.
+
+**Analysis.** It reads an `AnalyserNode` tap on the source, 40 times a second:
+- **Bands:** split at the **same crossovers as the channel EQ and the EQ-reactive waveforms** (LOW < 220 Hz, MID 220 Hz–3.5 kHz, HIGH > 3.5 kHz).
+- **Levels:** one **shared** auto-gain across the three bands (so their balance is kept), plus sensitivity and attack/release set by Speed.
+- **Beats from the beat grid:** when the source deck is playing and has a grid, beats come from it (exact tempo, with a downbeat every 4 beats). For Master, that's the tempo-master deck or the loudest playing deck.
+- **Beats without a grid:** with no grid (e.g. the microphone), beats come from kick detection on the bass band, and BPM from the median beat interval.
+- **Events:** `beat`, `downbeat`, `bar`, `bassHit`, `midHit`, `highHit` (for future effects).
+
+**Mappings** are editable data, not code. The defaults are:
+- Bass → Red, Mid → Green, High → Blue (+ a little White).
+- Overall level → Dimmer.
+- Beat → Dimmer flash (downbeats flash stronger with Downbeat Accent).
+- Fixtures without a dimmer carry the flash in their colour channels.
+- Strobe, pan/tilt and effect channels are never driven by sound.
+
+**Controls:**
+- Enable, source, Sensitivity, Master Brightness, Speed (Slow ↔ Fast), and Bass/Mid/High Response.
+- Beat Flash and Downbeat Accent toggles, and BLACKOUT.
+- Live **BASS / MID / HIGH / BEAT** meters, with BPM and where the beats come from.
+- **Controlled fixtures** checklist with Select all / Clear.
+- Sound control never switches itself on at startup.
+
+## Persistence
+
+The whole setup is saved to `<userData>/lighting.json` (desktop) or localStorage (browser) and restored at start:
+- fixtures, modes and addresses;
+- universes and input/output settings;
+- exit behaviour and master;
+- Virtual Console widgets;
+- sound settings, mappings and controlled fixtures.
+
+## Verified
+
+Unit tests (`tests/lighting.test.ts`, 12 tests) cover:
+- ArtDmx / ArtPoll / ArtPollReply, the E1.31 layout, and Enttec framing;
+- address ranges, overlaps and channel labels;
+- HTP merge, master mask, and non-destructive blackout;
+- sound mappings, grid beats, quiet signals, and editable mappings;
+- **real UDP on localhost**: Art-Net frames and ArtPoll, "connected" only after a node's ArtPollReply, sACN packets, and zeroing on shutdown.
+
+End-to-end in the desktop app (`DBDJ_SMOKE_LIGHTING=run`, then `=verify` after a restart), with the main process acting as an sACN receiver and an Art-Net node:
+- Lighting opened, and a fixture was added through the Fixtures form.
+- An overlapping fixture was refused.
+- sACN on universe 1 and Art-Net on universe 2.
+- A desk fader reached the wire (200 on sACN, 123 on Art-Net).
+- Sound-to-light on a real track: beats from the grid at 128.04 BPM (`DbbbDbbbD`), and 146 distinct colour frames on sACN with the strobe at 0.
+- Blackout: dark frames until release, then the look returned.
+- After a restart, fixtures, universes and controlled fixtures were all restored.
+
+Not tested with real hardware here: a physical Art-Net/sACN node and a USB DMX Pro interface.
+
+## Next steps
+
+**Scenes, Chases and BPM Sync** fit straight into this design:
+- A scene is a stored layer.
+- A chase steps scenes on `beat`/`bar` events from the deck's grid, e.g. a 4-colour chase locked to 128 BPM.
+- Auto DJ can later pick scenes from the track's analysed sections (build-ups, drops, breakdowns) and phrase boundaries, and prepare the next deck's lighting before the transition.

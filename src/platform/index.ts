@@ -12,6 +12,7 @@ import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackRe
 import type { SourceId } from "../matching/sources";
 import { LocalStorageStore } from "../providers/web";
 import type { StemBridge } from "../stems/StemService";
+import type { LightingBridge } from "../lighting/LightingService";
 import { BrowserLibrary, browserFileRef, coverDataUrl } from "../library/BrowserLibrary";
 import { BrowserPreparation } from "../preparation/BrowserPreparation";
 import type { PreparationPersistence, TrackPreparation, WaveformRecord } from "../preparation/types";
@@ -73,6 +74,7 @@ export interface DesktopBridge {
   };
   streaming: StreamingBridge;
   stems: StemBridge;
+  lighting?: LightingBridge;
 }
 
 /** Row shapes of the desktop SQLite database (electron/library/db.ts). */

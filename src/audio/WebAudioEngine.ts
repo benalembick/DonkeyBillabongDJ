@@ -623,6 +623,29 @@ export class WebAudioEngine implements AudioEngine {
     this.headLevel?.gain.setTargetAtTime(d.headphoneGain, t, PARAM_SMOOTH_S);
   }
 
+  private taps = new Map<string, AnalyserNode>();
+
+  /**
+   * Analyser on the master mix or a deck (after EQ/filter/FX, before the channel fader) for
+   * sound-to-light and similar consumers. Created on first use; recreated after an audio
+   * rebuild. Costs nothing on the audio thread beyond a buffer copy.
+   */
+  getAnalysisTap(source: "master" | number): AnalyserNode | null {
+    const ctx = this.ctx;
+    if (!ctx) return null;
+    const key = String(source);
+    const existing = this.taps.get(key);
+    if (existing && existing.context === ctx) return existing;
+    const node = source === "master" ? this.masterGain : this.decks[source]?.post;
+    if (!node) return null;
+    const a = ctx.createAnalyser();
+    a.fftSize = 2048;
+    a.smoothingTimeConstant = 0;
+    node.connect(a);
+    this.taps.set(key, a);
+    return a;
+  }
+
   getLevels(): { channels: number[]; master: number } {
     const peak = (a: AnalyserNode | null | undefined): number => {
       if (!a) return 0;
