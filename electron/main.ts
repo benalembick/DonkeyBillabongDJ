@@ -492,8 +492,23 @@ function runSmokeTest(win: BrowserWindow): void {
           checks.layoutFps = layoutFps;
           const wantLayout = ${JSON.stringify(process.env.DBDJ_SMOKE_LAYOUT ?? "")};
           if (wantLayout) {
-            document.querySelectorAll(".layout-switch > button").forEach((b) => b.textContent === wantLayout.toUpperCase() && b.click());
+            // Layout buttons live in the VIEW menu.
+            document.querySelector(".view-menu-trigger")?.click();
+            await sleep(200);
+            document.querySelectorAll(".view-popover .layout-switch:not(.wave-style-picker) > button").forEach((b) => b.textContent.trim().toUpperCase() === wantLayout.toUpperCase() && b.click());
             await sleep(400);
+          }
+          // Waveform style (DBDJ_SMOKE_WAVESTYLE=Simple|Filtered|RGB|RGB L/R|HSV), picked in the VIEW menu like a user would.
+          const wantStyle = ${JSON.stringify(process.env.DBDJ_SMOKE_WAVESTYLE ?? "")};
+          if (wantStyle) {
+            if (!document.querySelector(".view-popover")) document.querySelector(".view-menu-trigger")?.click();
+            await sleep(200);
+            document.querySelectorAll(".wave-style-picker > button").forEach((b) => b.textContent.trim() === wantStyle && b.click());
+            await sleep(100);
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+            await sleep(500);
+            checks.waveStyle = JSON.parse(localStorage.getItem("dbdj.ui.layout.v1") || "{}").waveStyle;
           }
           // Simulate what an OS file drop does by default: navigate to the file. Must be blocked.
           if (ref) location.href = "file:///" + ref.replace(/\\\\/g, "/");

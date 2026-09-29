@@ -3,6 +3,7 @@
  * engine, loaded tracks, cue points or analysis). Persisted in localStorage.
  */
 import { useSyncExternalStore } from "react";
+import { DEFAULT_WAVE_STYLE, WAVE_STYLES, type WaveStyle } from "./waveStyle";
 
 export type LayoutMode = "horizontal" | "vertical" | "classic";
 
@@ -14,6 +15,8 @@ export interface LayoutPrefs {
   zoomSeconds: number;
   /** Scrolling waveform colouring: frequency bands or separated STEMS lanes. */
   waveMode: "standard" | "stems";
+  /** Waveform colouring (Mixxx-style): simple / filtered / rgb / rgbLR / hsv. */
+  waveStyle: WaveStyle;
 }
 
 const KEY = "dbdj.ui.layout.v1";
@@ -24,13 +27,15 @@ const DEFAULTS: LayoutPrefs = {
   libraryHeight: { horizontal: Math.round(vh * 0.32), vertical: Math.round(vh * 0.3), classic: Math.round(vh * 0.45) },
   zoomSeconds: 10,
   waveMode: "standard",
+  waveStyle: DEFAULT_WAVE_STYLE,
 };
 export const ZOOM_STEPS = [2, 4, 6, 8, 10, 14, 20, 30];
 
 function load(): LayoutPrefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<LayoutPrefs>;
-    return { ...DEFAULTS, ...raw, libraryHeight: { ...DEFAULTS.libraryHeight, ...raw.libraryHeight } };
+    const waveStyle = WAVE_STYLES.some((s) => s.id === raw.waveStyle) ? raw.waveStyle! : DEFAULTS.waveStyle;
+    return { ...DEFAULTS, ...raw, waveStyle, libraryHeight: { ...DEFAULTS.libraryHeight, ...raw.libraryHeight } };
   } catch {
     return DEFAULTS;
   }

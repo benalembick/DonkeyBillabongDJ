@@ -51,7 +51,11 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     const trackId = track.trackId;
     if (!force && trackId && this.options) {
       const cached = await this.options.preparation.waveform(trackId);
-      if (cached) { this.set({ cacheHits: this.state.cacheHits + 1 }); return cached; }
+      if (cached) {
+        this.set({ cacheHits: this.state.cacheHits + 1 });
+        if (!cached.bands) this.upgradeDisplay(track, trackId, buffer, cached);
+        return cached;
+      }
     }
     const key = trackId ?? track.ref, current = this.inflight.get(key);
     if (current) return current;
@@ -71,6 +75,34 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     this.inflight.set(key, work);
     try { return await work; } finally { this.inflight.delete(key); }
   }
+  /**
+   * Caches from before waveform styles lack per-channel display bands. Add them once in the
+   * background from the already-decoded deck buffer, keeping every cached result (grid, cues,
+   * sections, key) exactly as it was — only the display data is new.
+   */
+  private upgrading = new Set<string>();
+  private upgradeDisplay(track: TrackInfo, trackId: string, buffer: AudioBuffer, cached: Overview): void {
+    if (this.upgrading.has(trackId) || !this.options) return;
+    this.upgrading.add(trackId);
+    void (async () => {
+      const channels: Float32Array[] = [];
+      for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) channels.push(buffer.getChannelData(c));
+      const id = this.nextId++;
+      const fresh = await new Promise<Overview>((resolve, reject) => {
+        this.pending.set(id, { resolve, reject });
+        this.getWorker().postMessage({ id, channels, sampleRate: buffer.sampleRate, buckets: this.buckets, metaBpm: track.bpm ?? null });
+      });
+      if (!fresh.bands) return;
+      const merged: Overview = { ...cached, bands: fresh.bands };
+      await this.options!.preparation.saveAnalysis(trackId, merged, buffer.duration, track);
+      this.engine.getState().decks.forEach((d, deck) => {
+        if (d.status === "ready" && d.track?.trackId === trackId && this.overviews[deck] === cached) this.show(deck, merged);
+      });
+    })()
+      .catch((err) => this.options?.onError(err))
+      .finally(() => this.upgrading.delete(trackId));
+  }
+
   cancelBatch(): void { this.cancelled = true; }
   /** Add import work without blocking the caller; one sequential batch protects playback responsiveness. */
   queueTracks(tracks: TrackInfo[]): void {

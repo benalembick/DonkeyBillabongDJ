@@ -1,5 +1,5 @@
 import type { BeatGrid } from "../core/engine/DJEngine";
-import type { TrackAnalysis } from "../analysis/analyzeTrack";
+import { DISPLAY_KEYS, type DisplayBands, type TrackAnalysis } from "../analysis/analyzeTrack";
 
 export const ANALYSIS_VERSION = 1;
 export const PREPARATION_SCHEMA = 1;
@@ -54,6 +54,8 @@ export interface WaveformRecord {
   recommendedCues: TrackAnalysis["recommendedCues"];
   fps: number;
   arrays: Record<"peaks" | "rms" | "low" | "mid" | "high", string>;
+  /** Waveform-style display bands, 8-bit companded (absent in older caches). */
+  bands?: { max: number; stereo: boolean; data: Record<(typeof DISPLAY_KEYS)[number], string> };
 }
 export interface PreparationPersistence {
   list(): Promise<TrackPreparation[]>;
@@ -77,6 +79,41 @@ export async function contentTrackId(bytes: ArrayBuffer): Promise<string> {
 }
 /** SHA-256 of zero bytes. A decodable audio file can never legitimately use it. */
 export const EMPTY_CONTENT_ID = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+function b64(bytes: Uint8Array): string {
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(text);
+}
+
+/** 8-bit square-root companding: small values keep resolution; ±0.4% of full scale at the top. */
+function packBands(b: DisplayBands): NonNullable<WaveformRecord["bands"]> {
+  let max = 0;
+  for (const k of DISPLAY_KEYS) for (const v of b[k]) if (v > max) max = v;
+  const scale = max > 0 ? max : 1;
+  const data = {} as Record<(typeof DISPLAY_KEYS)[number], string>;
+  for (const k of DISPLAY_KEYS) {
+    const src = b[k];
+    const q = new Uint8Array(src.length);
+    for (let i = 0; i < src.length; i++) q[i] = Math.round(Math.sqrt(Math.max(0, src[i]) / scale) * 255);
+    data[k] = b64(q);
+  }
+  return { max: scale, stereo: b.stereo, data };
+}
+
+function unpackBands(r: NonNullable<WaveformRecord["bands"]>): DisplayBands {
+  const out = { stereo: r.stereo } as DisplayBands;
+  for (const k of DISPLAY_KEYS) {
+    const q = Uint8Array.from(atob(r.data[k]), (c) => c.charCodeAt(0));
+    const f = new Float32Array(q.length);
+    for (let i = 0; i < q.length; i++) {
+      const u = q[i] / 255;
+      f[i] = u * u * r.max;
+    }
+    out[k] = f;
+  }
+  return out;
+}
+
 function encode(array: Float32Array): string {
   const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
   let text = "";
@@ -91,12 +128,14 @@ function decode(text: string): Float32Array {
 export function packWaveform(trackId: string, a: TrackAnalysis, analysedAt = Date.now()): WaveformRecord {
   return { schemaVersion: PREPARATION_SCHEMA, trackId, analysisVersion: ANALYSIS_VERSION, analysedAt, bpm: a.bpm, firstBeat: a.firstBeat, confidence: a.confidence, bpmSource: a.bpmSource,
     key: a.key, keyConfidence: a.keyConfidence, energy: a.energy, energyConfidence: a.energyConfidence, gainDb: a.gainDb, peak: a.peak, sections: a.sections, recommendedCues: a.recommendedCues, fps: a.fps,
-    arrays: { peaks: encode(a.peaks), rms: encode(a.rms), low: encode(a.low), mid: encode(a.mid), high: encode(a.high) } };
+    arrays: { peaks: encode(a.peaks), rms: encode(a.rms), low: encode(a.low), mid: encode(a.mid), high: encode(a.high) },
+    ...(a.bands ? { bands: packBands(a.bands) } : {}) };
 }
 export function unpackWaveform(r: WaveformRecord): TrackAnalysis {
   if (r.schemaVersion !== PREPARATION_SCHEMA) throw new Error("Unsupported waveform schema");
   return { bpm: r.bpm, firstBeat: r.firstBeat, confidence: r.confidence, bpmSource: r.bpmSource,
     key: r.key ?? null, keyConfidence: r.keyConfidence ?? 0, energy: r.energy ?? null, energyConfidence: r.energyConfidence ?? 0,
     gainDb: r.gainDb ?? null, peak: r.peak ?? 0, sections: r.sections ?? [], recommendedCues: r.recommendedCues ?? [], fps: r.fps,
-    peaks: decode(r.arrays.peaks), rms: decode(r.arrays.rms), low: decode(r.arrays.low), mid: decode(r.arrays.mid), high: decode(r.arrays.high) };
+    peaks: decode(r.arrays.peaks), rms: decode(r.arrays.rms), low: decode(r.arrays.low), mid: decode(r.arrays.mid), high: decode(r.arrays.high),
+    ...(r.bands ? { bands: unpackBands(r.bands) } : {}) };
 }

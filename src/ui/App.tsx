@@ -16,6 +16,7 @@ import { getLayout, setLayout, useLayout, zoom, type LayoutMode } from "./layout
 import { WaveformStack } from "./Waveforms";
 import brandLogo from "../assets/donkey-billabong-dj-logo.png";
 import { About } from "./About";
+import { WaveStylePicker } from "./WaveStylePicker";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -141,6 +142,8 @@ function LayoutSwitch() {
           <div className="layout-switch" role="group" aria-label="View options">
             {MODES.map((m) => <button key={m.id} className={mode === m.id ? "active" : ""} title={m.title} onClick={() => { setLayout({ mode: m.id }); setOpen(false); }}>{m.label}</button>)}
           </div>
+          <b>WAVEFORM STYLE</b>
+          <WaveStylePicker compact />
           <div className="view-zoom"><span>WAVEFORM ZOOM</span><button className="tiny" onClick={() => zoom(-1)} aria-label="Zoom in">＋</button><output>{zoomSeconds}s</output><button className="tiny" onClick={() => zoom(1)} aria-label="Zoom out">－</button></div>
         </div>}
       </div>

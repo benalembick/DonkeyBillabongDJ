@@ -582,3 +582,8 @@ tr.stream-only td { color: var(--muted); }
 button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000; }
 .hardware-audio-notice { display:flex; flex-direction:column; gap:6px; margin-top:8px; padding:9px; border:1px solid #765525; background:#21180c; color:#e8c98f; line-height:1.35; }
 .hardware-audio-notice button { align-self:flex-start; border-color:#a8782f; }
+
+/* ── waveform style picker ── */
+.wave-style-picker { display: inline-flex; flex-wrap: wrap; gap: 0; }
+.wave-style-picker > button { padding: 3px 9px; font-weight: 700; }
+.wave-style-picker.compact > button { padding: 2px 7px; font-size: 11px; }

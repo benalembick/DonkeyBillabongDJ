@@ -2,7 +2,7 @@
  * Track analysis worker (off the UI and audio threads): 3-band waveform,
  * overview and tempo/beat-phase estimation. See analyzeTrack.ts.
  */
-import { analyzeTrack } from "./analyzeTrack";
+import { analyzeTrack, DISPLAY_KEYS } from "./analyzeTrack";
 
 interface AnalysisRequest {
   id: number;
@@ -16,6 +16,7 @@ self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
   const { id, channels, sampleRate, buckets, metaBpm } = e.data;
   try {
     const a = analyzeTrack(channels, sampleRate, buckets, metaBpm);
-    (self as unknown as Worker).postMessage({ id, ...a }, [a.peaks.buffer, a.rms.buffer, a.low.buffer, a.mid.buffer, a.high.buffer]);
+    const band = a.bands ? DISPLAY_KEYS.map((k) => a.bands![k].buffer) : [];
+    (self as unknown as Worker).postMessage({ id, ...a }, [a.peaks.buffer, a.rms.buffer, a.low.buffer, a.mid.buffer, a.high.buffer, ...band]);
   } catch (error) { (self as unknown as Worker).postMessage({ id, error: String(error) }); }
 };

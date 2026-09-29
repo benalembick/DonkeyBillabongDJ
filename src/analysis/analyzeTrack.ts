@@ -9,6 +9,24 @@
  */
 
 export const WAVE_FPS = 150;
+/** Display crossovers for the waveform styles (Hz). */
+export const DISPLAY_LOW_HZ = 250;
+export const DISPLAY_HIGH_HZ = 4000;
+
+/** Per-channel display bands (peaks per frame at `fps`): full-band, low, mid, high for L and R. */
+export interface DisplayBands {
+  allL: Float32Array;
+  lowL: Float32Array;
+  midL: Float32Array;
+  highL: Float32Array;
+  allR: Float32Array;
+  lowR: Float32Array;
+  midR: Float32Array;
+  highR: Float32Array;
+  /** False for mono sources (R duplicates L). */
+  stereo: boolean;
+}
+export const DISPLAY_KEYS = ["allL", "lowL", "midL", "highL", "allR", "lowR", "midR", "highR"] as const;
 
 export interface TrackAnalysis {
   /** Overview (fixed number of buckets): peak and RMS, 0..1-ish. */
@@ -18,6 +36,8 @@ export interface TrackAnalysis {
   low: Float32Array;
   mid: Float32Array;
   high: Float32Array;
+  /** Waveform-style display data (absent in caches made before waveform styles; upgraded on next load). */
+  bands?: DisplayBands;
   fps: number;
   bpm: number | null;
   /** Time (s) of the first beat of the grid (≥ 0). */
@@ -50,6 +70,15 @@ export function analyzeTrack(channels: Float32Array[], sampleRate: number, bucke
   const mid = new Float32Array(frames);
   const high = new Float32Array(frames);
   const onsetEnv = new Float32Array(frames);
+  // Display bands per channel: 2-pole (12 dB/oct) splits at ~250 Hz and ~4 kHz. Separate from the
+  // mono 200 Hz / 2.5 kHz bands above, which drive beat, energy and cue detection and stay unchanged.
+  const stereo = !!channels[1] && channels[1] !== channels[0];
+  const bands: DisplayBands = { stereo } as DisplayBands;
+  for (const k of DISPLAY_KEYS) bands[k] = new Float32Array(frames);
+  const dLo = Math.exp((-2 * Math.PI * DISPLAY_LOW_HZ) / sampleRate);
+  const dHi = Math.exp((-2 * Math.PI * DISPLAY_HIGH_HZ) / sampleRate);
+  let l1L = 0, l2L = 0, h1L = 0, h2L = 0, l1R = 0, l2R = 0, h1R = 0, h2R = 0;
+  let aL = 0, bL = 0, cL = 0, eL = 0, aR = 0, bR = 0, cR = 0, eR = 0;
 
   // One-pole filters: low < 200 Hz, high > 2.5 kHz, mid = the rest.
   const aLow = Math.exp((-2 * Math.PI * 200) / sampleRate);
@@ -64,7 +93,23 @@ export function analyzeTrack(channels: Float32Array[], sampleRate: number, bucke
   let eSum = 0;
   let eCount = 0;
   for (let i = 0; i < n; i++) {
-    const x = (L[i] + R[i]) * 0.5;
+    const xl = L[i];
+    const xr = R[i];
+    l1L += (1 - dLo) * (xl - l1L); l2L += (1 - dLo) * (l1L - l2L);
+    h1L += (1 - dHi) * (xl - h1L); h2L += (1 - dHi) * (h1L - h2L);
+    let v = xl < 0 ? -xl : xl; if (v > aL) aL = v;
+    v = l2L < 0 ? -l2L : l2L; if (v > bL) bL = v;
+    v = h2L - l2L; if (v < 0) v = -v; if (v > cL) cL = v;
+    v = xl - h2L; if (v < 0) v = -v; if (v > eL) eL = v;
+    if (stereo) {
+      l1R += (1 - dLo) * (xr - l1R); l2R += (1 - dLo) * (l1R - l2R);
+      h1R += (1 - dHi) * (xr - h1R); h2R += (1 - dHi) * (h1R - h2R);
+      v = xr < 0 ? -xr : xr; if (v > aR) aR = v;
+      v = l2R < 0 ? -l2R : l2R; if (v > bR) bR = v;
+      v = h2R - l2R; if (v < 0) v = -v; if (v > cR) cR = v;
+      v = xr - h2R; if (v < 0) v = -v; if (v > eR) eR = v;
+    }
+    const x = (xl + xr) * 0.5;
     yLow += (1 - aLow) * (x - yLow);
     yHi += (1 - aHi) * (x - yHi);
     const lo = yLow;
@@ -84,7 +129,10 @@ export function analyzeTrack(channels: Float32Array[], sampleRate: number, bucke
         mid[f] = pM;
         high[f] = pH;
         onsetEnv[f] = Math.sqrt(eSum / Math.max(1, eCount));
+        bands.allL[f] = aL; bands.lowL[f] = bL; bands.midL[f] = cL; bands.highL[f] = eL;
+        bands.allR[f] = stereo ? aR : aL; bands.lowR[f] = stereo ? bR : bL; bands.midR[f] = stereo ? cR : cL; bands.highR[f] = stereo ? eR : eL;
       }
+      aL = bL = cL = eL = aR = bR = cR = eR = 0;
       f++;
       next += hop;
       pL = pM = pH = eSum = 0;
@@ -116,7 +164,7 @@ export function analyzeTrack(channels: Float32Array[], sampleRate: number, bucke
   for (const v of peaks) { peak = Math.max(peak, v); square += v * v; }
   const perceived = Math.sqrt(square / Math.max(1, peaks.length));
   const gainDb = perceived > 0 ? Math.max(-18, Math.min(18, 20 * Math.log10(0.18 / perceived))) : null;
-  return { peaks, rms, low, mid, high, fps: WAVE_FPS, ...beat,
+  return { peaks, rms, low, mid, high, bands, fps: WAVE_FPS, ...beat,
     key: musicalKey.key, keyConfidence: musicalKey.confidence, energy: structure.energy, energyConfidence: structure.confidence,
     gainDb, peak, sections: structure.sections, recommendedCues: structure.cues };
 }

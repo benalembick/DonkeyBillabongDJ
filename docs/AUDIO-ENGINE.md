@@ -87,6 +87,34 @@ The DJ engine, mappings and UI stay unchanged. That independence is the reason t
 
 A tag or service BPM is used as a hint and is octave-aware. The result is an **estimated** beat grid: BPM, first beat, and downbeats assumed every 4 beats. Unit tests confirm 96, 128 and 174 BPM are detected within ±0.3 BPM and 30 ms of phase on synthetic tracks. Manual grid editing, key detection and sync are Phase 2.
 
+## Waveform styles
+
+Settings → Waveform (also in the VIEW menu) offers five Mixxx-style renderings. The choice applies immediately to both decks, the overview and the scrolling waveform in every layout, and is remembered:
+
+| Style | Rendering |
+|---|---|
+| Simple | Full-band peak in one colour; stereo tracks show left above and right below the centre |
+| Filtered | Red lows, green mids, blue highs as stacked bands |
+| RGB (default) | One waveform whose colour mixes low (R), mid (G) and high (B) energy; overlaps give orange, yellow, purple |
+| RGB L/R | RGB colouring per channel: left above, right below |
+| HSV | Hue follows the spectral balance, highs desaturate, strong lows darken |
+
+The data comes from the same analysis pass. It adds per-channel display bands: 2-pole splits at ~250 Hz and ~4 kHz, plus a full-band peak, stored 150 times per second. The mono 200 Hz / 2.5 kHz bands that drive beat, energy and cue detection are unchanged. Display bands are cached with the waveform as 8-bit square-root-companded data. Tracks cached before this feature display at once from the mono bands, and gain the stereo data in the background the next time they are loaded; their cached grid, cues and sections are kept as they were. All styles share one renderer (), so every view of a track matches.
+
+## Waveform styles
+
+Settings → Waveform (also in the VIEW menu) offers five Mixxx-style renderings. The choice applies immediately to both decks, the overview and the scrolling waveform in every layout, and is remembered:
+
+| Style | Rendering |
+|---|---|
+| Simple | Full-band peak in one colour; stereo tracks show left above and right below the centre |
+| Filtered | Red lows, green mids, blue highs as stacked bands |
+| RGB (default) | One waveform whose colour mixes low (R), mid (G) and high (B) energy; overlaps give orange, yellow, purple |
+| RGB L/R | RGB colouring per channel: left above, right below |
+| HSV | Hue follows the spectral balance, highs desaturate, strong lows darken |
+
+The data comes from the same analysis pass. It adds per-channel display bands: 2-pole splits at ~250 Hz and ~4 kHz, plus a full-band peak, stored 150 times per second. The mono 200 Hz / 2.5 kHz bands that drive beat, energy and cue detection are unchanged. Display bands are cached with the waveform as 8-bit square-root-companded data. Tracks cached before this feature display at once from the mono bands, and gain the stereo data in the background the next time they are loaded; their cached grid, cues and sections are kept as they were. All styles share one renderer (`src/ui/waveStyle.ts`), so every view of a track matches.
+
 ## Adding an audio effect (Phase 6 structure)
 
 1. Create `src/audio/effects/<Name>.ts` that exposes `{ input: AudioNode, output: AudioNode, setParam(name, value) }`, or an AudioWorklet processor for custom DSP.

@@ -8,6 +8,7 @@ import { MatchDiagnostics } from "./MatchDialog";
 import { useAudiusState } from "./AudiusPane";
 import { AUDIUS_APP_NAME } from "../providers/audius/AudiusClient";
 import { StemDiagnostics, StemSettings } from "./StemSettings";
+import { WaveformSettings } from "./WaveStylePicker";
 
 const audiusAppName = () => AUDIUS_APP_NAME;
 import type { SourceId } from "../matching/sources";
@@ -474,6 +475,7 @@ export function Settings() {
       </fieldset>
 
       <StreamingSettings />
+      <WaveformSettings />
       <StemSettings />
       <AudiusSettings />
       <ProviderStatusTable />

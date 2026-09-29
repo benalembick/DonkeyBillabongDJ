@@ -1,10 +1,11 @@
 /**
  * Waveform views, all drawn on canvas every animation frame straight from the
  * engine (no React re-renders while playing):
- *  - ScrollingWaveform: 3-band colour waveform around the playhead with beat
+ *  - ScrollingWaveform: styled waveform around the playhead with beat
  *    grid (beats + bars), cue / hot-cue markers; horizontal or vertical.
  *  - OverviewWaveform: whole track, played region, markers, click-to-seek.
- * Colours: low = blue, mid = orange, high = white (frequency, not deck).
+ * Colours come from the selected waveform style (see waveStyle.ts): Simple,
+ * Filtered, RGB, RGB L/R or HSV — the same renderer for every view.
  */
 import { useEffect, useRef, useState } from "react";
 import type { Overview } from "../analysis/AnalysisService";
@@ -12,12 +13,10 @@ import { deckLetter } from "../core/actions";
 import { useApp, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS, setLayout, useLayout, zoom } from "./layout";
+import { column, drawColumn, newColumn, waveData, type WaveData, type WaveStyle } from "./waveStyle";
 import type { StemEnvelopes } from "../stems/StemService";
 import { transitionRegion } from "../autodj/transition";
 
-const LOW = "#2f6dff";
-const MID = "#ff9c1a";
-const HIGH = "#ffffff";
 
 /** Draw-time stats for diagnostics (ms per waveform frame). */
 export const waveStats = {
@@ -44,66 +43,22 @@ function useOverview(deck: number): Overview | null {
   return ov;
 }
 
-/** Normalisation: 99.5th percentile of the loudest band, so one spike doesn't flatten the view. */
-function normFor(ov: Overview): number {
-  const n = ov.low.length;
-  const sample: number[] = [];
-  const step = Math.max(1, Math.floor(n / 4000));
-  for (let i = 0; i < n; i += step) sample.push(Math.max(ov.low[i], ov.mid[i], ov.high[i]));
-  sample.sort((a, b) => a - b);
-  return sample[Math.floor(sample.length * 0.995)] || 1;
-}
-
-/**
- * Shared 3-band geometry for every waveform view (overview and scrolling), so a
- * zoomed-in section always looks like the same part of the whole-track view:
- * blue lows (with some mids), orange mids, white highs, centred and stacked.
- * `half` = available half-height in px, `scale` = px per analysis unit.
- */
-function bandHeights(lo: number, md: number, hi: number, scale: number, half: number): [number, number, number] {
-  return [Math.min(half * 0.96, (lo + md * 0.35) * scale), Math.min(half * 0.9, md * scale * 0.78), Math.min(half * 0.76, hi * scale * 0.58)];
-}
-
 const TILE_PX = 1024;
 
-/** Render one waveform tile (TILE_PX along the time axis) starting at `startSec`. */
-function renderTile(ov: Overview, startSec: number, secPerPx: number, cross: number, vertical: boolean, scale: number, mid: number): HTMLCanvasElement {
+/** Render one waveform tile (TILE_PX along the time axis) starting at `startSec`, in the chosen style. */
+function renderTile(wd: WaveData, style: WaveStyle, startSec: number, secPerPx: number, cross: number, vertical: boolean): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = vertical ? cross : TILE_PX;
   c.height = vertical ? TILE_PX : cross;
   const g = c.getContext("2d")!;
-  const fps = ov.fps;
-  const n = ov.low.length;
-  const cols = [LOW, MID, HIGH];
-  const h = new Float32Array(TILE_PX * 3);
+  const col = newColumn();
+  const mid = cross / 2;
   for (let p = 0; p < TILE_PX; p++) {
     const ta = startSec + p * secPerPx;
-    let i0 = Math.floor(ta * fps);
-    let i1 = Math.max(i0 + 1, Math.floor((ta + secPerPx) * fps));
-    if (i0 < 0) i0 = 0;
-    if (i1 > n) i1 = n;
-    let lo = 0;
-    let md = 0;
-    let hi = 0;
-    for (let i = i0; i < i1; i++) {
-      if (ov.low[i] > lo) lo = ov.low[i];
-      if (ov.mid[i] > md) md = ov.mid[i];
-      if (ov.high[i] > hi) hi = ov.high[i];
-    }
-    const b = bandHeights(lo, md, hi, scale, mid);
-    h[p] = b[0];
-    h[TILE_PX + p] = b[1];
-    h[2 * TILE_PX + p] = b[2];
-  }
-  // Same drawing as the overview: low, then mid, then high on top, mirrored around the centre.
-  for (let band = 0; band < 3; band++) {
-    g.fillStyle = cols[band];
-    for (let p = 0; p < TILE_PX; p++) {
-      const v = h[band * TILE_PX + p];
-      if (v <= 0) continue;
-      if (vertical) g.fillRect(mid - v, p, v * 2, 1);
-      else g.fillRect(p, mid - v, 1, v * 2);
-    }
+    const i0 = Math.floor(ta * wd.fps);
+    const i1 = Math.max(i0 + 1, Math.floor((ta + secPerPx) * wd.fps));
+    if (i1 <= 0 || i0 >= wd.n) continue;
+    drawColumn(g, style, column(wd, i0, i1, col), wd, p, mid, mid, vertical);
   }
   return c;
 }
@@ -171,16 +126,12 @@ function fitCanvas(c: HTMLCanvasElement): { w: number; h: number; dpr: number } 
 export function ScrollingWaveform({ deck, orientation }: { deck: number; orientation: "horizontal" | "vertical" }) {
   const { engine, stems, autoDJ } = useApp();
   const ov = useOverview(deck);
-  const { zoomSeconds, waveMode } = useLayout();
+  const { zoomSeconds, waveMode, waveStyle } = useLayout();
   const stemNorm = useRef<{ env: StemEnvelopes | null; version: number; norms: number[] }>({ env: null, version: -1, norms: [1, 1, 1, 1] });
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const norm = useRef(1);
   const drag = useRef<{ start: number; pos: number } | null>(null);
   const tiles = useRef<{ key: string; ov: Overview | null; env: StemEnvelopes | null; map: Map<number, HTMLCanvasElement> }>({ key: "", ov: null, env: null, map: new Map() });
   const send = useSend();
-  useEffect(() => {
-    norm.current = ov ? normFor(ov) : 1;
-  }, [ov]);
 
   useAnimationFrame(() => {
     const c = canvasRef.current;
@@ -214,8 +165,6 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     const secPerPx = (zoomSeconds * Math.max(0.01, d.rate)) / len;
     const playheadPx = len * 0.5;
     const t0 = pos - playheadPx * secPerPx;
-    const mid = cross / 2;
-    const scale = (mid * 0.94) / norm.current; // same vertical scale as the overview
     const auto = autoDJ.getState();
     const planned = auto.status !== "OFF" && auto.plan && (deck === auto.deck || deck === 1 - auto.deck)
       ? transitionRegion(auto.plan, auto.deck, deck, d.rate, d.duration)
@@ -232,7 +181,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     const muted = d.stems.muted.map((m, k) => d.stems.enabled && (m || d.stems.volume[k] === 0));
     if (ov || env) {
       const trackKey = d.track?.trackId ?? d.track?.ref ?? `deck-${deck}`;
-      const cacheKey = `${trackKey}|${orientation}|${secPerPx.toFixed(7)}|${cross}|${ov?.low.length ?? 0}|${env ? `stems:${env.version}:${muted.join()}` : "std"}`;
+      const cacheKey = `${trackKey}|${orientation}|${secPerPx.toFixed(7)}|${cross}|${ov?.low.length ?? 0}|${ov?.bands ? "b" : "m"}|${env ? `stems:${env.version}:${muted.join()}` : waveStyle}`;
       if (tiles.current.key !== cacheKey || tiles.current.ov !== ov || tiles.current.env !== env) tiles.current = { key: cacheKey, ov, env, map: new Map() };
       const tileSec = TILE_PX * secPerPx;
       const first = Math.floor(t0 / tileSec);
@@ -241,7 +190,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
         if (ti < 0 || ti * tileSec > d.duration) continue;
         let tile = tiles.current.map.get(ti);
         if (!tile) {
-          tile = env ? renderStemTile(env, stemNorm.current.norms, muted, ti * tileSec, secPerPx, cross, vertical) : renderTile(ov!, ti * tileSec, secPerPx, cross, vertical, scale, mid);
+          tile = env ? renderStemTile(env, stemNorm.current.norms, muted, ti * tileSec, secPerPx, cross, vertical) : renderTile(waveData(ov!), waveStyle, ti * tileSec, secPerPx, cross, vertical);
           tiles.current.map.set(ti, tile);
           if (tiles.current.map.size > 24) tiles.current.map.delete(tiles.current.map.keys().next().value!);
         }
@@ -352,6 +301,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
 
 export function OverviewWaveform({ deck }: { deck: number }) {
   const { engine, autoDJ } = useApp();
+  const { waveStyle } = useLayout();
   const ov = useOverview(deck);
   const send = useSend();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -385,7 +335,7 @@ export function OverviewWaveform({ deck }: { deck: number }) {
     const trackKey = d?.track?.trackId ?? d?.track?.ref ?? "empty";
     // Static colour waveform is cached per track, analysis and size. Array
     // length alone is not unique: similarly sized songs often have equal frames.
-    const key = `${deck}:${trackKey}:${w}x${h}:${ov ? `${ov.low.length}:${ov.fps}` : "none"}`;
+    const key = `${deck}:${trackKey}:${w}x${h}:${ov ? `${ov.low.length}:${ov.fps}:${ov.bands ? "b" : "m"}` : "none"}:${waveStyle}`;
     if (baseKey.current !== key) {
       baseKey.current = key;
       const off = document.createElement("canvas");
@@ -393,31 +343,14 @@ export function OverviewWaveform({ deck }: { deck: number }) {
       off.height = h;
       const og = off.getContext("2d")!;
       if (ov) {
-        const n = ov.low.length;
-        const norm = normFor(ov);
+        // Same style renderer as the scrolling waveform, so both always match.
+        const wd = waveData(ov);
+        const col = newColumn();
         const centre = h * 0.5;
-        const scale = (centre * 0.94) / norm;
         for (let x = 0; x < w; x++) {
-          const i0 = Math.floor((x / w) * n);
-          const i1 = Math.max(i0 + 1, Math.floor(((x + 1) / w) * n));
-          let lo = 0;
-          let md = 0;
-          let hi = 0;
-          for (let i = i0; i < i1; i++) {
-            if (ov.low[i] > lo) lo = ov.low[i];
-            if (ov.mid[i] > md) md = ov.mid[i];
-            if (ov.high[i] > hi) hi = ov.high[i];
-          }
-          // Draw a conventional centred waveform. Keeping the bands within
-          // the available half-height preserves each track's dynamics instead
-          // of flattening loud masters into a similar bottom-filled silhouette.
-          const [lowHeight, midHeight, highHeight] = bandHeights(lo, md, hi, scale, centre);
-          og.fillStyle = LOW;
-          og.fillRect(x, centre - lowHeight, 1, lowHeight * 2);
-          og.fillStyle = MID;
-          og.fillRect(x, centre - midHeight, 1, midHeight * 2);
-          og.fillStyle = HIGH;
-          og.fillRect(x, centre - highHeight, 1, highHeight * 2);
+          const i0 = Math.floor((x / w) * wd.n);
+          const i1 = Math.max(i0 + 1, Math.floor(((x + 1) / w) * wd.n));
+          drawColumn(og, waveStyle, column(wd, i0, i1, col), wd, x, centre, centre, false);
         }
       }
       baseRef.current = off;
