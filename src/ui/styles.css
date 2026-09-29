@@ -93,11 +93,12 @@ select { padding: 2px 4px; }
 .practice-instruction { background: #101722; border: 1px solid #274766; padding: 12px 18px; justify-content: center; }
 .practice-instruction div { min-width: 30%; display: flex; flex-direction: column; gap: 5px; }
 .practice-instruction small { color: #8eb8df; font-weight: 800; }
-.practice-score-overall { font-size: 20px; margin: 14px 0; }.practice-score-overall strong { color: #4cb5ff; font-size: 32px; margin-left: 10px; }
+.practice-score-overall { display:flex; align-items:baseline; gap:10px; font-size: 20px; margin: 14px 0; }.practice-score-overall strong { color: #4cb5ff; font-size: 32px; }.practice-score-overall em { color:#ffb85c; font-size:11px; font-style:normal; }
 .practice-scores { display: grid; grid-template-columns: repeat(2,minmax(260px,1fr)); gap: 7px 22px; max-width: 900px; }
 .practice-scores > div { display: grid; grid-template-columns: 160px 1fr 42px; gap: 8px; align-items: center; }.practice-scores meter { width: 100%; }
 .practice-coach { align-items: stretch; }.practice-coach section { flex: 1; background: #11151c; border: 1px solid var(--line); padding: 8px 14px; }.practice-coach p { line-height: 1.4; }
-.practice-timeline { height: 95px; position: relative; margin: 10px 10px 20px; border-top: 3px solid #4778a8; }.practice-timeline button { position: absolute; top: -7px; width: 110px; margin-left: -8px; padding: 0; border: 0; background: transparent; text-align: left; color: var(--muted); }.practice-timeline button i { display: block; width: 11px; height: 11px; border-radius: 50%; background: #fff; margin-bottom: 5px; }.practice-timeline button span { display: block; color: #dbeaff; }
+.practice-timeline { display:flex; gap:8px; overflow-x:auto; padding:16px 4px 10px; margin:8px 0 16px; border-top:3px solid #4778a8; scroll-snap-type:x proximity; }.practice-timeline button { position:relative; flex:0 0 175px; min-height:76px; padding:9px 10px; border:1px solid #2b3d50; border-radius:5px; background:#111923; text-align:left; color:var(--muted); scroll-snap-align:start; }.practice-timeline button::before { content:""; position:absolute; left:12px; top:-20px; width:1px; height:20px; background:#7ea9d1; }.practice-timeline button i { position:absolute; left:7px; top:-23px; width:11px; height:11px; border-radius:50%; background:#fff; box-shadow:0 0 0 3px #162c42; }.practice-timeline button time { display:block; color:#75bfff; font-size:10px; font-variant-numeric:tabular-nums; }.practice-timeline button span { display:block; margin-top:4px; color:#e7f1fb; font-weight:700; line-height:1.25; }.practice-timeline button small { display:block; margin-top:4px; color:#8599ad; line-height:1.25; }
+.match-help { border-color:#8b6a31; color:#ffd182; }.penalty-note { color:#ffb85c; font-size:10px; }.practice-matches { width:min(900px,90vw); }.match-suggestions { display:flex; flex-direction:column; gap:5px; max-height:55vh; overflow:auto; }.match-suggestions > div { display:grid; grid-template-columns:58px 1fr auto; align-items:center; gap:10px; padding:9px; border:1px solid #29384a; background:#111821; }.match-suggestions > div > strong { color:#55c2ff; font-size:18px; }.match-suggestions > div > span { display:flex; flex-direction:column; gap:3px; min-width:0; }.match-suggestions small { color:#8da1b6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .practice-hide-bpm .deck-bpm .big, .practice-hide-bpm .jog-bpm { visibility: hidden; }.practice-hide-key .deck-bpm .key { visibility: hidden; }
 .mashup-projects { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
 .mashup-projects label { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -579,3 +580,5 @@ tr.stream-only td { color: var(--muted); }
 /* ── loops / sync ── */
 .loops.looping .loop-size span { color: #2ee59d; }
 button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000; }
+.hardware-audio-notice { display:flex; flex-direction:column; gap:6px; margin-top:8px; padding:9px; border:1px solid #765525; background:#21180c; color:#e8c98f; line-height:1.35; }
+.hardware-audio-notice button { align-self:flex-start; border-color:#a8782f; }

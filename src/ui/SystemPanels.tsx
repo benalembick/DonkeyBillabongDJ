@@ -334,11 +334,12 @@ export function Settings() {
     void audio.listOutputDevices().then(setDevices).catch(() => setDevices([]));
   }, [audio]);
 
-  const applyAudio = async () => {
+  const applyAudio = async (next: AudioConfig = cfg) => {
     setBusy(true);
     try {
-      await audio.reconfigure(cfg);
-      app.saveAudioConfig(cfg);
+      await audio.reconfigure(next);
+      app.saveAudioConfig(next);
+      setCfg(next);
       log.info("audio", "Audio configuration applied");
     } catch (err) {
       log.error("audio", String(err));
@@ -370,6 +371,10 @@ export function Settings() {
 
   const jog = settings.jog;
   const setJog = (k: keyof typeof jog, v: number) => app.saveEngineSettings({ jog: { ...jog, [k]: v } });
+  const ddjAudio = devices.find((d) => /ddj[- ]?sb/i.test(d.label));
+  const selectedDevice = devices.find((d) => d.id === cfg.outputDeviceId);
+  const ddjConnected = controllers.getControllers().some((c) => c.connected && /ddj[- ]?sb/i.test(c.portName));
+  const usingDdjAudio = !!selectedDevice && /ddj[- ]?sb/i.test(selectedDevice.label);
 
   return (
     <div className="settings">
@@ -419,6 +424,7 @@ export function Settings() {
         <button disabled={busy} onClick={() => void applyAudio()}>
           {busy ? "Applying…" : "Apply audio settings"}
         </button>
+        {ddjConnected && !usingDdjAudio && <div className="hardware-audio-notice"><b>DDJ-SB hardware level knobs</b><span>MASTER LEVEL and HEADPHONES LEVEL do not send MIDI. They control the DDJ-SB sound card directly, so they only affect audio routed to that device.</span>{ddjAudio?<button disabled={busy} onClick={()=>void applyAudio({...cfg,outputDeviceId:ddjAudio.id,routing:"quad"})}>Use DDJ-SB audio + headphone cue</button>:<span className="hint">The DDJ-SB audio output is not currently exposed by Windows. Connect it, install or enable its audio driver, then reopen Settings.</span>}</div>}
         <p className="hint">Changing sample rate, latency or routing restarts the audio engine (loaded tracks are kept).</p>
       </fieldset>
 
