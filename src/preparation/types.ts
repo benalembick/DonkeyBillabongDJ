@@ -1,5 +1,5 @@
 import type { BeatGrid } from "../core/engine/DJEngine";
-import { DISPLAY_KEYS, type DisplayBands, type TrackAnalysis } from "../analysis/analyzeTrack";
+import { DISPLAY_HIGH_HZ, DISPLAY_KEYS, DISPLAY_LOW_HZ, type DisplayBands, type TrackAnalysis } from "../analysis/analyzeTrack";
 
 export const ANALYSIS_VERSION = 1;
 export const PREPARATION_SCHEMA = 1;
@@ -55,7 +55,7 @@ export interface WaveformRecord {
   fps: number;
   arrays: Record<"peaks" | "rms" | "low" | "mid" | "high", string>;
   /** Waveform-style display bands, 8-bit companded (absent in older caches). */
-  bands?: { max: number; stereo: boolean; data: Record<(typeof DISPLAY_KEYS)[number], string> };
+  bands?: { max: number; stereo: boolean; data: Record<(typeof DISPLAY_KEYS)[number], string>; xover?: [number, number] };
 }
 export interface PreparationPersistence {
   list(): Promise<TrackPreparation[]>;
@@ -97,7 +97,7 @@ function packBands(b: DisplayBands): NonNullable<WaveformRecord["bands"]> {
     for (let i = 0; i < src.length; i++) q[i] = Math.round(Math.sqrt(Math.max(0, src[i]) / scale) * 255);
     data[k] = b64(q);
   }
-  return { max: scale, stereo: b.stereo, data };
+  return { max: scale, stereo: b.stereo, data, xover: [DISPLAY_LOW_HZ, DISPLAY_HIGH_HZ] };
 }
 
 function unpackBands(r: NonNullable<WaveformRecord["bands"]>): DisplayBands {
@@ -137,5 +137,6 @@ export function unpackWaveform(r: WaveformRecord): TrackAnalysis {
     key: r.key ?? null, keyConfidence: r.keyConfidence ?? 0, energy: r.energy ?? null, energyConfidence: r.energyConfidence ?? 0,
     gainDb: r.gainDb ?? null, peak: r.peak ?? 0, sections: r.sections ?? [], recommendedCues: r.recommendedCues ?? [], fps: r.fps,
     peaks: decode(r.arrays.peaks), rms: decode(r.arrays.rms), low: decode(r.arrays.low), mid: decode(r.arrays.mid), high: decode(r.arrays.high),
-    ...(r.bands ? { bands: unpackBands(r.bands) } : {}) };
+    // Bands analysed with different crossovers are ignored (and re-derived in the background on next load).
+    ...(r.bands && r.bands.xover?.[0] === DISPLAY_LOW_HZ && r.bands.xover?.[1] === DISPLAY_HIGH_HZ ? { bands: unpackBands(r.bands) } : {}) };
 }

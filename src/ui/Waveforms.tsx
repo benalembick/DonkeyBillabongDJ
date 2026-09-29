@@ -13,7 +13,7 @@ import { deckLetter } from "../core/actions";
 import { useApp, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS, setLayout, useLayout, zoom } from "./layout";
-import { column, drawColumn, newColumn, waveData, type WaveData, type WaveStyle } from "./waveStyle";
+import { column, deckEq, drawColumn, EqSmoother, newColumn, PixelSink, waveData, type EqGains, type WaveData, type WaveStyle } from "./waveStyle";
 import type { StemEnvelopes } from "../stems/StemService";
 import { transitionRegion } from "../autodj/transition";
 
@@ -46,10 +46,22 @@ function useOverview(deck: number): Overview | null {
 const TILE_PX = 1024;
 
 /** Render one waveform tile (TILE_PX along the time axis) starting at `startSec`, in the chosen style. */
-function renderTile(wd: WaveData, style: WaveStyle, startSec: number, secPerPx: number, cross: number, vertical: boolean): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.width = vertical ? cross : TILE_PX;
-  c.height = vertical ? TILE_PX : cross;
+interface Tile {
+  canvas: HTMLCanvasElement;
+  /** Pixel buffer kept with the tile so EQ changes redraw in place (no new canvas per frame). */
+  sink?: PixelSink;
+  eqKey: string;
+}
+
+function renderTile(wd: WaveData, style: WaveStyle, startSec: number, secPerPx: number, cross: number, vertical: boolean, eq: EqGains, reuse?: Tile): Tile {
+  let c = reuse?.canvas;
+  let sink = reuse?.sink;
+  if (!c || !sink) {
+    c = document.createElement("canvas");
+    c.width = vertical ? cross : TILE_PX;
+    c.height = vertical ? TILE_PX : cross;
+    sink = new PixelSink(c.width, c.height);
+  } else sink.clear();
   const g = c.getContext("2d")!;
   const col = newColumn();
   const mid = cross / 2;
@@ -58,9 +70,10 @@ function renderTile(wd: WaveData, style: WaveStyle, startSec: number, secPerPx: 
     const i0 = Math.floor(ta * wd.fps);
     const i1 = Math.max(i0 + 1, Math.floor((ta + secPerPx) * wd.fps));
     if (i1 <= 0 || i0 >= wd.n) continue;
-    drawColumn(g, style, column(wd, i0, i1, col), wd, p, mid, mid, vertical);
+    drawColumn(sink, style, column(wd, i0, i1, col), wd, p, mid, mid, vertical, eq);
   }
-  return c;
+  g.putImageData(sink.img, 0, 0);
+  return { canvas: c, sink, eqKey: "" };
 }
 
 const STEM_KEYS = ["vocals", "drums", "bass", "instruments"] as const;
@@ -124,13 +137,15 @@ function fitCanvas(c: HTMLCanvasElement): { w: number; h: number; dpr: number } 
 }
 
 export function ScrollingWaveform({ deck, orientation }: { deck: number; orientation: "horizontal" | "vertical" }) {
+  const eqSmooth = useRef(new EqSmoother());
+  const tileEq = useRef<EqGains>([1, 1, 1]);
   const { engine, stems, autoDJ } = useApp();
   const ov = useOverview(deck);
   const { zoomSeconds, waveMode, waveStyle } = useLayout();
   const stemNorm = useRef<{ env: StemEnvelopes | null; version: number; norms: number[] }>({ env: null, version: -1, norms: [1, 1, 1, 1] });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ start: number; pos: number } | null>(null);
-  const tiles = useRef<{ key: string; ov: Overview | null; env: StemEnvelopes | null; map: Map<number, HTMLCanvasElement> }>({ key: "", ov: null, env: null, map: new Map() });
+  const tiles = useRef<{ key: string; ov: Overview | null; env: StemEnvelopes | null; map: Map<number, Tile> }>({ key: "", ov: null, env: null, map: new Map() });
   const send = useSend();
 
   useAnimationFrame(() => {
@@ -181,7 +196,11 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     const muted = d.stems.muted.map((m, k) => d.stems.enabled && (m || d.stems.volume[k] === 0));
     if (ov || env) {
       const trackKey = d.track?.trackId ?? d.track?.ref ?? `deck-${deck}`;
+      const eq = eqSmooth.current.step(deckEq(engine.getState(), deck), performance.now());
+      // EQ is not part of the cache key: tiles are redrawn in place when it changes (see below).
       const cacheKey = `${trackKey}|${orientation}|${secPerPx.toFixed(7)}|${cross}|${ov?.low.length ?? 0}|${ov?.bands ? "b" : "m"}|${env ? `stems:${env.version}:${muted.join()}` : waveStyle}`;
+      const eqKey = env ? "" : eq.key;
+      tileEq.current = eq.gains;
       if (tiles.current.key !== cacheKey || tiles.current.ov !== ov || tiles.current.env !== env) tiles.current = { key: cacheKey, ov, env, map: new Map() };
       const tileSec = TILE_PX * secPerPx;
       const first = Math.floor(t0 / tileSec);
@@ -189,14 +208,16 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
       for (let ti = first; ti <= last; ti++) {
         if (ti < 0 || ti * tileSec > d.duration) continue;
         let tile = tiles.current.map.get(ti);
-        if (!tile) {
-          tile = env ? renderStemTile(env, stemNorm.current.norms, muted, ti * tileSec, secPerPx, cross, vertical) : renderTile(waveData(ov!), waveStyle, ti * tileSec, secPerPx, cross, vertical);
+        if (!tile || tile.eqKey !== eqKey) {
+          tile = env
+            ? { canvas: renderStemTile(env, stemNorm.current.norms, muted, ti * tileSec, secPerPx, cross, vertical), eqKey }
+            : { ...renderTile(waveData(ov!), waveStyle, ti * tileSec, secPerPx, cross, vertical, tileEq.current, tile), eqKey };
           tiles.current.map.set(ti, tile);
           if (tiles.current.map.size > 24) tiles.current.map.delete(tiles.current.map.keys().next().value!);
         }
         const at = Math.round((ti * tileSec - t0) / secPerPx);
-        if (vertical) g.drawImage(tile, 0, at);
-        else g.drawImage(tile, at, 0);
+        if (vertical) g.drawImage(tile.canvas, 0, at);
+        else g.drawImage(tile.canvas, at, 0);
       }
     }
 
@@ -300,6 +321,8 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
 }
 
 export function OverviewWaveform({ deck }: { deck: number }) {
+  const eqSmooth = useRef(new EqSmoother());
+  const baseSink = useRef<PixelSink | null>(null);
   const { engine, autoDJ } = useApp();
   const { waveStyle } = useLayout();
   const ov = useOverview(deck);
@@ -335,23 +358,33 @@ export function OverviewWaveform({ deck }: { deck: number }) {
     const trackKey = d?.track?.trackId ?? d?.track?.ref ?? "empty";
     // Static colour waveform is cached per track, analysis and size. Array
     // length alone is not unique: similarly sized songs often have equal frames.
-    const key = `${deck}:${trackKey}:${w}x${h}:${ov ? `${ov.low.length}:${ov.fps}:${ov.bands ? "b" : "m"}` : "none"}:${waveStyle}`;
+    const eq = eqSmooth.current.step(deckEq(engine.getState(), deck), performance.now());
+    const key = `${deck}:${trackKey}:${w}x${h}:${ov ? `${ov.low.length}:${ov.fps}:${ov.bands ? "b" : "m"}` : "none"}:${waveStyle}:${eq.key}`;
     if (baseKey.current !== key) {
       baseKey.current = key;
-      const off = document.createElement("canvas");
-      off.width = w;
-      off.height = h;
+      let off = baseRef.current;
+      if (!off || off.width !== w || off.height !== h) {
+        off = document.createElement("canvas");
+        off.width = w;
+        off.height = h;
+        baseSink.current = null;
+      }
       const og = off.getContext("2d")!;
+      og.clearRect(0, 0, w, h);
       if (ov) {
         // Same style renderer as the scrolling waveform, so both always match.
         const wd = waveData(ov);
         const col = newColumn();
+        const sink = baseSink.current ?? new PixelSink(w, h);
+        baseSink.current = sink;
+        sink.clear();
         const centre = h * 0.5;
         for (let x = 0; x < w; x++) {
           const i0 = Math.floor((x / w) * wd.n);
           const i1 = Math.max(i0 + 1, Math.floor(((x + 1) / w) * wd.n));
-          drawColumn(og, waveStyle, column(wd, i0, i1, col), wd, x, centre, centre, false);
+          drawColumn(sink, waveStyle, column(wd, i0, i1, col), wd, x, centre, centre, false, eq.gains);
         }
+        og.putImageData(sink.img, 0, 0);
       }
       baseRef.current = off;
     }

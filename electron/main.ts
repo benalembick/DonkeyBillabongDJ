@@ -498,6 +498,35 @@ function runSmokeTest(win: BrowserWindow): void {
             document.querySelectorAll(".view-popover .layout-switch:not(.wave-style-picker) > button").forEach((b) => b.textContent.trim().toUpperCase() === wantLayout.toUpperCase() && b.click());
             await sleep(400);
           }
+          // EQ-reactive waveform (DBDJ_SMOKE_EQ=1): sweep deck A's LOW/MID through the DDJ-SB mapping while
+          // playing, measure frame times + playback speed, then kill LOW on deck A only for the screenshot.
+          if (${JSON.stringify(!!process.env.DBDJ_SMOKE_EQ)} && a.engine.getState().decks[0].status === "ready") {
+            const midi = (...b) => a.controllers.simulate("pioneer-ddj-sb", b);
+            a.bus.send("mixer.channel1.volume", 0.3);
+            if (!a.engine.getState().decks[0].playing) a.bus.send("deck1.play");
+            await sleep(300);
+            const p0 = a.engine.getPosition(0), t0 = performance.now();
+            let frames = 0, worst = 0, last = performance.now(), running = true;
+            const tick = () => { const now = performance.now(); worst = Math.max(worst, now - last); last = now; frames++; if (running) requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+            for (let i = 0; i < 150; i++) {
+              const v = Math.round(64 + 63 * Math.sin(i / 5));
+              if (${JSON.stringify(process.env.DBDJ_SMOKE_EQ ?? "")} === "filter") { midi(0xb6, 0x17, v); midi(0xb6, 0x37, 0); midi(0xb6, 0x17, 127 - v); midi(0xb6, 0x37, 0); } // baseline: FILTER A (no waveform change)
+              else {
+              midi(0xb0, 0x0f, v); midi(0xb0, 0x2f, 0);         // LOW knob A (14-bit MSB/LSB)
+              midi(0xb0, 0x0b, 127 - v); midi(0xb0, 0x2b, 0);   // MID knob A
+              }
+              await sleep(16);
+            }
+            running = false;
+            const secs = (performance.now() - t0) / 1000;
+            checks.eqSweep = { midiMessages: 600, fps: Math.round(frames / secs), worstFrameMs: Math.round(worst), playbackSpeed: +((a.engine.getPosition(0) - p0) / secs).toFixed(3), waveDrawMs: window.__waveStats ? +window.__waveStats.avg().toFixed(2) : null };
+            midi(0xb0, 0x0b, 0x40); midi(0xb0, 0x2b, 0);         // MID centre
+            midi(0xb0, 0x0f, 0x00); midi(0xb0, 0x2f, 0);         // LOW fully down = kill
+            await sleep(400);
+            const c = a.engine.getState().mixer.channels;
+            checks.eqState = { deckA: { low: c[0].eqLow, mid: c[0].eqMid }, deckB: { low: c[1].eqLow, mid: c[1].eqMid } };
+          }
           // Waveform style (DBDJ_SMOKE_WAVESTYLE=Simple|Filtered|RGB|RGB L/R|HSV), picked in the VIEW menu like a user would.
           const wantStyle = ${JSON.stringify(process.env.DBDJ_SMOKE_WAVESTYLE ?? "")};
           if (wantStyle) {

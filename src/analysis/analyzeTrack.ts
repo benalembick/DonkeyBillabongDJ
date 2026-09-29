@@ -8,10 +8,12 @@
  *    estimated beat grid (first beat + BPM); downbeats are assumed every 4 beats.
  */
 
+import { EQ_HIGH_HZ, EQ_LOW_HZ } from "../core/engine/mixerMath";
+
 export const WAVE_FPS = 150;
-/** Display crossovers for the waveform styles (Hz). */
-export const DISPLAY_LOW_HZ = 250;
-export const DISPLAY_HIGH_HZ = 4000;
+/** Display crossovers for the waveform styles = the channel EQ's low-shelf / high-shelf corners. */
+export const DISPLAY_LOW_HZ = EQ_LOW_HZ;
+export const DISPLAY_HIGH_HZ = EQ_HIGH_HZ;
 
 /** Per-channel display bands (peaks per frame at `fps`): full-band, low, mid, high for L and R. */
 export interface DisplayBands {

@@ -21,6 +21,7 @@ import type {
 } from "../core/engine/types";
 import { DEFAULT_AUDIO_CONFIG } from "../core/engine/types";
 import { FxSlot, INSERT_TYPES } from "./fx";
+import { EQ_HIGH_HZ, EQ_LOW_HZ, EQ_MID_HZ } from "../core/engine/mixerMath";
 
 const PARAM_SMOOTH_S = 0.008;
 
@@ -247,14 +248,14 @@ export class WebAudioEngine implements AudioEngine {
       const trim = ctx.createGain();
       const eqLow = ctx.createBiquadFilter();
       eqLow.type = "lowshelf";
-      eqLow.frequency.value = 220;
+      eqLow.frequency.value = EQ_LOW_HZ;
       const eqMid = ctx.createBiquadFilter();
       eqMid.type = "peaking";
-      eqMid.frequency.value = 1000;
+      eqMid.frequency.value = EQ_MID_HZ;
       eqMid.Q.value = 0.7;
       const eqHigh = ctx.createBiquadFilter();
       eqHigh.type = "highshelf";
-      eqHigh.frequency.value = 3500;
+      eqHigh.frequency.value = EQ_HIGH_HZ;
       const hpf = ctx.createBiquadFilter();
       hpf.type = "highpass";
       hpf.frequency.value = 10;

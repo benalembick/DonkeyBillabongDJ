@@ -4,6 +4,10 @@
  */
 
 export const EQ_KILL_DB = -40;
+/** Channel EQ corner frequencies (low shelf, mid peak, high shelf) — shared by the audio EQ and the waveform bands. */
+export const EQ_LOW_HZ = 220;
+export const EQ_MID_HZ = 1000;
+export const EQ_HIGH_HZ = 3500;
 export const EQ_MAX_DB = 6;
 const CENTER_DEADZONE = 0.02;
 
@@ -85,4 +89,17 @@ export function headMixGains(x: number): [number, number] {
 
 export function dbToGain(db: number): number {
   return Math.pow(10, db / 20);
+}
+
+/**
+ * How strongly a band should show in the waveform for an EQ knob (+ kill): the same
+ * knob → dB curve as the audio EQ, so the picture follows what is heard. Kill / full
+ * cut = 0, centre = 1; boosts are compressed (+6 dB → 1.5) so colours don't blow out.
+ */
+export function eqVisualGain(knob: number, kill: boolean): number {
+  if (kill) return 0;
+  const db = eqKnobToDb(knob);
+  if (db <= EQ_KILL_DB) return 0;
+  const g = dbToGain(db);
+  return g <= 1 ? g : 1 + (Math.min(g, 2) - 1) * 0.5;
 }
