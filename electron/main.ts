@@ -661,7 +661,11 @@ app.whenReady().then(() => {
   ses.on("select-serial-port", (event, portList, _wc, callback) => {
     event.preventDefault();
     const text = (p: (typeof portList)[number]) => `${p.displayName ?? ""} ${p.portName ?? ""}`;
-    const pick = portList.find((p) => /dmx|enttec|ultradmx/i.test(text(p))) ?? portList.find((p) => (p.vendorId ?? "").toLowerCase() === "0403");
+    // Electron reports vendorId in decimal ("1027" = 0x0403, FTDI); accept hex too, and the Windows device id.
+    const isFtdi = (p: (typeof portList)[number]) =>
+      Number(p.vendorId) === 0x0403 || (p.vendorId ?? "").toLowerCase() === "0403" || /VID_0403/i.test((p as { deviceInstanceId?: string }).deviceInstanceId ?? "");
+    const pick = portList.find((p) => /dmx|enttec|ultradmx/i.test(text(p))) ?? portList.find(isFtdi);
+    if (process.env.DBDJ_SMOKE_TEST) process.stderr.write(`[serial] ports: ${JSON.stringify(portList)} → ${pick?.portId ?? "none"}\n`);
     callback(pick ? pick.portId : "");
   });
   ses.setDevicePermissionHandler((details) => details.deviceType === "serial");

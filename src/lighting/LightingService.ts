@@ -116,7 +116,7 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
 
   /** Safe output on exit: zero the lights unless the user chose "hold". (Network outputs are also zeroed by the main process.) */
   shutdown(): void {
-    if (this.cfg.exitBehaviour === "blackout") this.usb.send(new Uint8Array(DMX_SLOTS));
+    if (this.cfg.exitBehaviour === "blackout") void this.usb.zero();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }

@@ -34,7 +34,8 @@ Fixture patch (fixtures.ts)            Output providers (one per universe)
 |---|---|---|
 | Art-Net | UDP from the desktop app to a node IP or broadcast, port 6454. ArtPoll every 3 s | **Connected** only when a node answers ArtPoll; otherwise **Disconnected** ("no node answered") |
 | sACN / E1.31 | UDP multicast 239.255.x.y:5568, or unicast to a host. Per-universe priority | **Sending**. sACN has no acknowledgement, so it never claims a connection |
-| USB DMX (Enttec Pro protocol) | Web Serial, "send DMX" label-6 messages: Enttec DMX USB Pro / Mk2, DMXking ultraDMX Pro and compatibles | **Connected** only after the port opened and writes succeed; **Error** on write failure (e.g. unplugged) |
+| USB DMX: Enttec Pro protocol | Web Serial, "send DMX" label-6 messages: Enttec DMX USB Pro / Mk2, DMXking ultraDMX Pro and compatibles. Detected by asking the interface for its serial number | **Connected** (the interface answered); **Error** on write failure (e.g. unplugged) |
+| USB DMX: Open DMX | Bare FTDI FT232 + RS-485 cables (Enttec Open DMX, most cheap "USB to DMX" cables). The app generates DMX: BREAK via Web Serial `setSignals`, then start code + 512 slots at 250 kbaud 8N2, ~35 frames/s | **Sending**: the cable can't report back, so it never claims a connection |
 | None | — | Disabled |
 
 - **Input:** Art-Net. Received ArtDmx for a chosen port-address feeds the universe's input layer.
@@ -43,7 +44,7 @@ Fixture patch (fixtures.ts)            Output providers (one per universe)
 - **Browser version:** browsers can't send UDP, so Art-Net and sACN show as unavailable there and need the desktop app.
 - **USB port choice:** the app picks the interface automatically, and only FTDI-based or DMX-named USB serial ports; it never opens an arbitrary COM port. There's no port-picker yet if several interfaces are connected.
 
-**Not yet supported: raw FTDI "Open DMX" dongles.** These need the host to generate precise DMX break/mark-after-break timing. That's unreliable through Web Serial, so it needs a small **companion service**, a native helper that owns the serial timing. The interface for it is the same `send(universe, frame)` provider contract as the others: implement it in the main process, like `dmxNet.ts`, and add `"open-dmx"` to `OutputKind`.
+**Detection:** on **Connect** the app first asks for a Pro serial number (label 10, 57,600 baud). If a valid reply arrives within 500 ms it uses the Pro protocol; otherwise it reopens the port at 250 kbaud 8N2 in Open DMX mode. Break length is set by the `setSignals` round trip (about 1 ms, well above the 88 µs minimum), and the next break waits for the previous frame to leave the adapter. USB-DMX chips other than FTDI, or interfaces with their own vendor protocol (e.g. uDMX), would need a **companion service** behind the same `send(universe, frame)` provider contract.
 
 ## Fixtures
 

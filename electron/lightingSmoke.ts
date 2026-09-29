@@ -26,7 +26,31 @@ function listen(port: number, host: string, parse: (b: Uint8Array) => { u: numbe
   });
 }
 
+/** DBDJ_SMOKE_LIGHTING=usb: connect the real USB DMX adapter (dark frames only) and report what was detected. */
+async function runUsbSmoke(win: BrowserWindow): Promise<unknown> {
+  return win.webContents.executeJavaScript(
+    `(async () => {
+      const L = window.dbdj.lighting, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      L.deskClear();
+      L.setIo(1, { output: "usb-pro" });
+      await L.usb.connect(); // runs as a user gesture (executeJavaScript userGesture = true)
+      const out = { state: L.usb.state, mode: L.usb.mode, detail: L.usb.detail, status: L.statusOf(1) };
+      const f0 = L.usb.framesWritten;
+      await sleep(2000);
+      out.framesPerSecond = (L.usb.framesWritten - f0) / 2;
+      out.stillOk = L.usb.state;
+      out.allChannelsZero = Math.max(...L.engine.compute(1)) === 0;
+      await L.usb.zero();
+      await L.usb.disconnect();
+      out.afterDisconnect = L.usb.state;
+      return out;
+    })()`,
+    true,
+  );
+}
+
 export async function runLightingSmoke(win: BrowserWindow, mode: string, track: string): Promise<unknown> {
+  if (mode === "usb") return runUsbSmoke(win);
   const sacn = await listen(5568, "127.0.0.1", (b) => {
     const p = parseE131(b);
     return p ? { u: p.universe, data: p.data } : null;

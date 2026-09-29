@@ -752,9 +752,15 @@ function InputsOutputs({ l }: { l: LightingService }) {
                   {io.output === "usb-pro" && (
                     <>
                       <button onClick={() => void l.usb.connect()} disabled={l.usb.state === "unavailable"}>
-                        {l.usb.state === "connected" ? "Reconnect USB DMX" : "Connect USB DMX interface"}
+                        {l.usb.state === "connected" || l.usb.state === "sending" ? "Reconnect USB DMX" : "Connect USB DMX interface"}
                       </button>
-                      <span className="hint">Enttec DMX USB Pro protocol (Enttec Pro, DMXking ultraDMX Pro and compatibles).</span>
+                      <span className="hint">
+                        {l.usb.mode === "pro"
+                          ? "Mode: Enttec Pro protocol (the interface confirmed it)."
+                          : l.usb.mode === "open"
+                            ? "Mode: Open DMX — the app generates the DMX signal (~35 frames/s)."
+                            : "Detects the type automatically: Enttec DMX USB Pro-compatible, or Open DMX (bare FTDI cable)."}
+                      </span>
                     </>
                   )}
                 </td>
@@ -791,7 +797,7 @@ function InputsOutputs({ l }: { l: LightingService }) {
       </div>
       <p className="hint">
         Art-Net and sACN are sent by the desktop app over your network (Art-Net port 6454, sACN multicast 239.255.x.x:5568). “Connected” for Art-Net means a node answered
-        ArtPoll; sACN has no acknowledgement, so it shows “Sending”. USB DMX uses the Enttec Pro protocol over USB serial; plain FTDI “Open DMX” dongles need a companion
+        ArtPoll; sACN has no acknowledgement, so it shows “Sending”. USB DMX works with Enttec Pro-compatible interfaces (they confirm, so “Connected”) and bare FTDI “Open DMX” cables (output only, so “Sending”); other USB chipsets need a companion
         service and aren't supported yet (see docs/LIGHTING.md).
       </p>
     </div>

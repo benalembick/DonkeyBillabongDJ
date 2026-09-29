@@ -242,3 +242,23 @@ describe("network output (real UDP on localhost)", () => {
     expect(net.getStatus(3).output).toBe("sending");
   });
 });
+
+describe("USB DMX detection", () => {
+  it("finds a real Enttec Pro reply, even inside receive noise, and nothing in noise alone", async () => {
+    const { findProReply } = await import("../src/lighting/usbPro");
+    // The noise pattern the Open DMX-style FTDI adapter on the dev PC produces on its receive side.
+    const noise = [0x00, 0xf0, 0xaa, 0x55, 0xa5, 0x00, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    const junk = new Uint8Array(Array.from({ length: 30 }, () => noise).flat());
+    expect(findProReply(junk, 10)).toBeNull();
+    const reply = [0x7e, 10, 4, 0, 0x78, 0x56, 0x34, 0x12, 0xe7];
+    const mixed = new Uint8Array([...junk.slice(0, 50), ...reply, ...junk.slice(0, 20)]);
+    expect(Array.from(findProReply(mixed, 10)!)).toEqual([0x78, 0x56, 0x34, 0x12]);
+  });
+
+  it("Open DMX frame = start code 0 + 512 slots", async () => {
+    const { openDmxFrame } = await import("../src/lighting/usbPro");
+    const f = openDmxFrame(frame([[1, 9], [512, 7]]));
+    expect(f.length).toBe(513);
+    expect([f[0], f[1], f[512]]).toEqual([0, 9, 7]);
+  });
+});

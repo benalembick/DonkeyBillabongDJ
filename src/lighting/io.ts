@@ -11,7 +11,7 @@ export const OUTPUT_LABELS: Record<OutputKind, string> = {
   none: "None",
   artnet: "Art-Net",
   sacn: "sACN / E1.31",
-  "usb-pro": "USB DMX (Enttec Pro compatible)",
+  "usb-pro": "USB DMX (Enttec Pro / Open DMX)",
 };
 export const INPUT_LABELS: Record<InputKind, string> = { none: "None", artnet: "Art-Net" };
 
