@@ -8,7 +8,7 @@
  */
 import os from "node:os";
 import type { MessagePortMain } from "electron";
-import * as ort from "onnxruntime-node";
+import type * as Ort from "onnxruntime-node";
 import type { FromWorker, StemDevice, ToWorker, WorkerStatus } from "../../src/stems/protocol";
 import { SEGMENT, SeparationJob, makePlan, type RegionOutput } from "../../src/stems/separator";
 import { StemCache, type CacheMeta } from "./cache";
@@ -22,10 +22,49 @@ interface InitMsg {
 }
 
 let retryGpu = false;
+/** Set after the GPU failed during this worker's life: stay on the CPU. */
+let forceCpu = false;
+
+let ort: typeof Ort | null = null;
+/** Load ONNX Runtime on first use so a missing/blocked native library is reported instead of killing the worker. */
+function loadOrt(): typeof Ort {
+  if (ort) return ort;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    ort = require("onnxruntime-node") as typeof Ort;
+    return ort;
+  } catch (err) {
+    const msg = `ONNX Runtime could not be loaded on this computer: ${String(err).slice(0, 300)}`;
+    log(msg);
+    setStatus({ state: "error", message: msg });
+    throw new Error(msg);
+  }
+}
+
+function log(msg: string): void {
+  process.stderr.write(`${new Date().toISOString()} ${msg}\n`);
+}
+
+/** Tell the main process which execution provider is in use (so a native GPU crash can be recognised). */
+function tellMain(m: { type: "trying" | "session"; ep: string } | { type: "gpuFailed"; failed: boolean }): void {
+  try {
+    process.parentPort.postMessage(m);
+  } catch {
+    /* parent gone */
+  }
+}
+
+/** HT-Demucs output must be finite; some GPU back-ends silently produce NaN/Inf in fp16. */
+function outputLooksValid(data: Float32Array): boolean {
+  const step = Math.max(1, Math.floor(data.length / 20000));
+  for (let i = 0; i < data.length; i += step) if (!Number.isFinite(data[i])) return false;
+  return true;
+}
 
 let port: MessagePortMain | null = null;
 let init: InitMsg | null = null;
-let session: ort.InferenceSession | null = null;
+let session: Ort.InferenceSession | null = null;
+let sessionEp = "";
 let sessionDevice = "";
 let status: WorkerStatus = { state: "idle" };
 let cache: StemCache | null = null;
@@ -57,41 +96,51 @@ function setStatus(s: Partial<WorkerStatus>): void {
 
 const threads = () => Math.max(2, Math.floor(os.cpus().length * 0.6)); // leave headroom for audio + UI
 
-async function createSession(provider: string): Promise<ort.InferenceSession> {
-  return ort.InferenceSession.create(init!.modelPath, {
-    executionProviders: [provider],
+async function createSession(provider: string): Promise<Ort.InferenceSession> {
+  return loadOrt().InferenceSession.create(init!.modelPath, {
+    executionProviders: [provider === "sim-gpu" ? "cpu" : provider],
     graphOptimizationLevel: "all",
-    ...(provider === "cpu" ? { intraOpNumThreads: threads() } : {}),
+    ...(provider === "cpu" || provider === "sim-gpu" ? { intraOpNumThreads: threads() } : {}),
   });
 }
 
-async function timedRun(s: ort.InferenceSession): Promise<number> {
+async function timedRun(s: Ort.InferenceSession): Promise<number> {
   const mix = new Float32Array(2 * SEGMENT);
-  for (let i = 0; i < SEGMENT; i++) mix[i] = mix[SEGMENT + i] = Math.sin(i * 0.02) * 0.2;
+  // Music-like test signal (tone + noise bursts) rather than a pure sine, so the validation exercises real paths.
+  for (let i = 0; i < SEGMENT; i++) mix[i] = mix[SEGMENT + i] = Math.sin(i * 0.02) * 0.2 + (i % 22050 < 2000 ? (Math.random() - 0.5) * 0.3 : 0);
   const t = Date.now();
-  await s.run({ mix: new ort.Tensor("float32", mix, [1, 2, SEGMENT]) });
+  const out = await s.run({ mix: new (loadOrt().Tensor)("float32", mix, [1, 2, SEGMENT]) });
+  const data = out[s.outputNames[0]].data as Float32Array;
+  if (!outputLooksValid(data)) throw new Error("model produced invalid (NaN/Inf) output on this device");
   return (Date.now() - t) / 1000 / (SEGMENT / 44100);
 }
 
 /** Load the model on the best working device (validated with a real run). */
-async function ensureSession(): Promise<ort.InferenceSession> {
+async function ensureSession(): Promise<Ort.InferenceSession> {
   if (session) return session;
   if (!init) throw new Error("stem worker not initialised");
   setStatus({ state: "loading-model", message: "Loading separation model…" });
-  const gpu = process.platform === "darwin" ? "coreml" : process.platform === "win32" ? "dml" : null;
+  // Test hook (smoke tests only): a CPU session posing as a GPU that later fails or crashes.
+  const simulate = process.env.DBDJ_STEMS_SIMULATE_GPU;
+  const gpu = simulate ? "sim-gpu" : process.platform === "darwin" ? "coreml" : process.platform === "win32" ? "dml" : null;
   // Auto skips a GPU that already failed on this machine (remembered by main) unless re-measuring.
   const skipGpu = init.device === "auto" && init.gpuFailed && !retryGpu;
   retryGpu = false;
-  const candidates = init.device === "cpu" || !gpu || skipGpu ? ["cpu"] : [gpu, "cpu"];
+  const candidates = init.device === "cpu" || !gpu || skipGpu || forceCpu ? ["cpu"] : [gpu, "cpu"];
   let lastErr = "";
   for (const ep of candidates) {
     try {
+      tellMain({ type: "trying", ep });
+      log(`creating session on ${ep}`);
       const s = await createSession(ep);
       const rtf = await timedRun(s);
+      log(`session on ${ep} ok, rtf ${rtf.toFixed(2)}`);
       session = s;
+      sessionEp = ep;
+      tellMain({ type: "session", ep });
       sessionDevice = ep === "cpu" ? `CPU (${threads()} threads)` : ep === "dml" ? "GPU (DirectML)" : "GPU/Neural Engine (CoreML)";
       const gpuFailed = ep === "cpu" && candidates[0] !== "cpu";
-      if (gpuFailed || (ep !== "cpu" && init.gpuFailed)) process.parentPort.postMessage({ type: "gpuFailed", failed: gpuFailed });
+      if (gpuFailed || (ep !== "cpu" && init.gpuFailed)) tellMain({ type: "gpuFailed", failed: gpuFailed });
       setStatus({
         state: "ready",
         device: sessionDevice,
@@ -101,16 +150,45 @@ async function ensureSession(): Promise<ort.InferenceSession> {
       return s;
     } catch (err) {
       lastErr = String(err);
+      log(`session on ${ep} failed: ${lastErr}`);
     }
   }
   setStatus({ state: "error", message: `Could not load the separation model: ${lastErr.slice(0, 200)}` });
   throw new Error(lastErr);
 }
 
+let simRuns = 0;
+
+async function runOn(s: Ort.InferenceSession, planar: Float32Array): Promise<Float32Array> {
+  if (sessionEp === "sim-gpu" && ++simRuns >= 2) {
+    if (process.env.DBDJ_STEMS_SIMULATE_GPU === "crash") process.exit(3);
+    throw new Error("simulated GPU failure");
+  }
+  const out = await s.run({ mix: new (loadOrt().Tensor)("float32", planar, [1, 2, SEGMENT]) });
+  const data = out[s.outputNames[0]].data as Float32Array;
+  if (!outputLooksValid(data)) throw new Error("invalid (NaN/Inf) model output");
+  return data;
+}
+
+/**
+ * One segment. If the GPU fails on real audio (it passed validation but a later
+ * segment errors or returns garbage), switch to the CPU for good and redo the
+ * segment — the job carries on instead of ending in an error.
+ */
 async function modelRun(planar: Float32Array): Promise<Float32Array> {
   const s = await ensureSession();
-  const out = await s.run({ mix: new ort.Tensor("float32", planar, [1, 2, SEGMENT]) });
-  return out[s.outputNames[0]].data as Float32Array;
+  try {
+    return await runOn(s, planar);
+  } catch (err) {
+    if (sessionEp === "cpu") throw err;
+    log(`GPU (${sessionEp}) failed during separation: ${String(err)} — switching to CPU`);
+    forceCpu = true;
+    session = null;
+    tellMain({ type: "gpuFailed", failed: true });
+    const cpu = await ensureSession();
+    setStatus({ message: `GPU failed during separation (${String(err).slice(0, 100)}); continuing on CPU` });
+    return runOn(cpu, planar);
+  }
 }
 
 function regionMsg(jobId: number, total: number, stride: number, r: RegionOutput): FromWorker {
@@ -194,6 +272,7 @@ async function pump(): Promise<void> {
       } catch (err) {
         runQueue.shift();
         jobs.delete(id);
+        log(`job ${id} failed: ${String((err as Error)?.stack ?? err)}`);
         send({ type: "error", jobId: id, message: String(err).slice(0, 300) });
       }
       await new Promise((r) => setImmediate(r));
@@ -240,13 +319,11 @@ function onPortMessage(m: ToWorker): void {
 
 // Report, don't die: a failed segment must never take separation (or anything else) down silently.
 process.on("uncaughtException", (err) => {
-  process.stderr.write(`uncaught: ${err?.stack ?? err}
-`);
+  log(`uncaught: ${err?.stack ?? err}`);
   setStatus({ state: "error", message: String(err).slice(0, 200) });
 });
 process.on("unhandledRejection", (err) => {
-  process.stderr.write(`unhandled rejection: ${(err as Error)?.stack ?? err}
-`);
+  log(`unhandled rejection: ${(err as Error)?.stack ?? err}`);
 });
 
 process.parentPort.on("message", (e: Electron.MessageEvent) => {

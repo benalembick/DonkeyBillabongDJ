@@ -3,7 +3,7 @@
  * the model download, settings (cache folder / size / device) and the cache
  * index. Audio data flows renderer ⇄ worker over a direct MessagePort.
  */
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, utilityProcess, type UtilityProcess } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, shell, utilityProcess, type UtilityProcess } from "electron";
 import { createHash } from "node:crypto";
 import { createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
@@ -40,6 +40,19 @@ export function platformSupport(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
+/** Worker diagnostics (errors, device choice), readable from Settings → STEMS → Show log. */
+export const logFile = () => path.join(app.getPath("userData"), "logs", "stems.log");
+let logReady: Promise<void> | null = null;
+function appendLog(text: string): void {
+  logReady ??= (async () => {
+    await fs.mkdir(path.dirname(logFile()), { recursive: true });
+    // Keep the log small: start over once it passes 1 MB.
+    const st = await fs.stat(logFile()).catch(() => null);
+    if (st && st.size > 1024 * 1024) await fs.writeFile(logFile(), "");
+  })().catch(() => undefined);
+  void logReady.then(() => fs.appendFile(logFile(), text)).catch(() => undefined);
+}
+
 const configFile = () => path.join(app.getPath("userData"), "stems-config.json");
 const modelPath = () => process.env.DBDJ_STEMS_MODEL_PATH || path.join(app.getPath("userData"), "models", MODEL.file);
 
@@ -64,19 +77,31 @@ async function modelInstalled(): Promise<boolean> {
 function ensureWorker(): UtilityProcess {
   if (worker) return worker;
   const w = utilityProcess.fork(path.join(__dirname, "stems-worker.cjs"), [], { serviceName: "Donkey Billabong DJ — stems", stdio: "pipe" });
-  w.stdout?.on("data", (d: Buffer) => process.stdout.write(`[stems] ${d}`));
-  w.stderr?.on("data", (d: Buffer) => process.stderr.write(`[stems] ${d}`));
+  w.stdout?.on("data", (d: Buffer) => {
+    process.stdout.write(`[stems] ${d}`);
+    appendLog(String(d));
+  });
+  w.stderr?.on("data", (d: Buffer) => {
+    process.stderr.write(`[stems] ${d}`);
+    appendLog(String(d));
+  });
+  appendLog(`${new Date().toISOString()} worker start (${process.platform}/${process.arch}, app ${app.getVersion()}, device ${config.device}${config.gpuFailed ? ", GPU marked failed" : ""})\n`);
+  let epInUse = "";
   w.postMessage({ type: "init", modelPath: modelPath(), cacheDir: config.cacheDir, device: config.device, gpuFailed: !!config.gpuFailed });
-  w.on("message", (m: { type?: string; failed?: boolean }) => {
-    if (m?.type === "gpuFailed") {
-      config = { ...config, gpuFailed: !!m.failed };
-      void fs.writeFile(configFile(), JSON.stringify(config)).catch(() => undefined);
-    }
+  const markGpu = (failed: boolean) => {
+    config = { ...config, gpuFailed: failed };
+    void fs.writeFile(configFile(), JSON.stringify(config)).catch(() => undefined);
+  };
+  w.on("message", (m: { type?: string; failed?: boolean; ep?: string }) => {
+    if (m?.type === "gpuFailed") markGpu(!!m.failed);
+    if (m?.type === "trying" || m?.type === "session") epInUse = String(m.ep ?? "");
   });
   w.postMessage({ type: "config", maxCacheBytes: config.maxCacheGB * 1024 ** 3, cacheDir: config.cacheDir, device: config.device });
   w.on("exit", (code) => {
-    process.stderr.write(`[stems] worker exited (code ${code})
-`);
+    process.stderr.write(`[stems] worker exited (code ${code})\n`);
+    appendLog(`${new Date().toISOString()} worker exited (code ${code}) while using ${epInUse || "no device"}\n`);
+    // Died on the GPU (e.g. a native CoreML/DirectML crash): never try it automatically again.
+    if (code !== 0 && epInUse && epInUse !== "cpu") markGpu(true);
     // A crash only ends separation; decks keep playing the original audio. Respawned on next use.
     worker = null;
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send("dbdj:stems:workerExit");
@@ -116,7 +141,12 @@ export async function registerStemIpc(): Promise<void> {
   config = { cacheDir: path.join(app.getPath("userData"), "stems"), maxCacheGB: 20, device: "auto" };
   void loadConfig().then((c) => (config = { ...c, ...(configPatched ? config : {}) }));
 
-  ipcMain.handle("dbdj:stems:status", async () => ({ model: { ...MODEL, installed: await modelInstalled(), path: modelPath() }, config, platform: platformSupport() }));
+  ipcMain.handle("dbdj:stems:status", async () => ({ model: { ...MODEL, installed: await modelInstalled(), path: modelPath() }, config, platform: platformSupport(), logPath: logFile() }));
+  ipcMain.handle("dbdj:stems:revealLog", async () => {
+    await fs.mkdir(path.dirname(logFile()), { recursive: true });
+    await fs.appendFile(logFile(), "");
+    shell.showItemInFolder(logFile());
+  });
 
   ipcMain.handle("dbdj:stems:downloadModel", async (e) => {
     if (!downloading) {

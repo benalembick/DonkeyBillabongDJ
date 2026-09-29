@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
     clearCache: () => ipcRenderer.invoke("dbdj:stems:clearCache"),
     setConfig: (patch: unknown) => ipcRenderer.invoke("dbdj:stems:setConfig", patch),
     pickCacheDir: () => ipcRenderer.invoke("dbdj:stems:pickCacheDir"),
+    revealLog: () => ipcRenderer.invoke("dbdj:stems:revealLog"),
     renderData: (ref: string) => ipcRenderer.invoke("dbdj:stems:renderData", ref),
   },
   streaming: {

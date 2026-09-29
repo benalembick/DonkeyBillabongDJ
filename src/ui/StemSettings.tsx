@@ -128,6 +128,12 @@ export function StemSettings() {
         {st.libraryQueue ? ` · library queue: ${st.libraryQueue}` : ""}
       </p>
       <p className={verdict.cls}>Processing speed: {verdict.text}</p>
+      {bridge.revealLog && (
+        <div className="row">
+          <button onClick={() => void bridge.revealLog!()}>Show log</button>
+          <span className="hint">Separation log (device choice and any errors) — useful when reporting a STEMS problem.</span>
+        </div>
+      )}
       {st.modelInstalled && (
         <div className="row">
           <button onClick={() => void stems.benchmark()}>Measure speed</button>

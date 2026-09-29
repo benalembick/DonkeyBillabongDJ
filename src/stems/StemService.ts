@@ -31,7 +31,7 @@ export interface StemSettings {
 }
 
 export interface StemBridge {
-  status(): Promise<{ model: { name: string; installed: boolean; bytes: number; path: string }; config: { cacheDir: string; maxCacheGB: number; device: StemDevice }; platform?: { ok: boolean; reason?: string } }>;
+  status(): Promise<{ model: { name: string; installed: boolean; bytes: number; path: string }; config: { cacheDir: string; maxCacheGB: number; device: StemDevice }; platform?: { ok: boolean; reason?: string }; logPath?: string }>;
   downloadModel(): Promise<boolean>;
   onDownloadProgress(cb: (p: { received: number; total: number }) => void): () => void;
   onWorkerExit(cb: () => void): () => void;
@@ -44,6 +44,7 @@ export interface StemBridge {
   clearCache(): Promise<void>;
   setConfig(patch: Partial<{ cacheDir: string; maxCacheGB: number; device: StemDevice }>): Promise<unknown>;
   pickCacheDir(): Promise<string | null>;
+  revealLog?(): Promise<void>;
   renderData(ref: string): Promise<{ rate: number; total: number; pcm: ArrayBuffer }>;
 }
 
@@ -142,9 +143,26 @@ export class StemService extends Emitter<Events> {
     bridge.onWorkerExit(() => {
       this.port = null;
       this.connecting = null;
-      this.patchStatus({ worker: { state: "error", message: "The stem worker stopped; it restarts automatically on next use. Decks keep playing the original audio." } });
-      for (const j of this.deckJobs) if (j) this.engine.setStemStatus(j.deck, { status: "error", message: "Stem worker stopped" });
+      this.patchStatus({ worker: { state: "error", message: "The stem worker stopped and was restarted. Decks keep playing the original audio." } });
+      // Retry each interrupted deck once or twice: the restarted worker skips a GPU that crashed it.
+      const retry: DeckJob[] = [];
+      for (const j of this.deckJobs) {
+        if (!j) continue;
+        const n = (this.crashRetries.get(j.track.ref) ?? 0) + 1;
+        this.crashRetries.set(j.track.ref, n);
+        if (n <= 2) {
+          retry.push(j);
+          this.engine.setStemStatus(j.deck, { status: "analysing", message: "Stem worker restarted — retrying…" });
+        } else {
+          this.engine.setStemStatus(j.deck, { status: "error", message: "The stem worker keeps stopping on this track — see Settings → STEMS → Show log" });
+        }
+      }
       this.deckJobs = [];
+      if (retry.length) {
+        setTimeout(() => {
+          for (const j of retry) if (this.loadedBuffers[j.deck] === j.buffer) void this.onDeckLoaded(j.deck, j.track, j.buffer);
+        }, 1500);
+      }
       for (const lj of this.libJobs.values()) lj.reject(new Error("stem worker stopped"));
       this.libJobs.clear();
     });
@@ -349,7 +367,7 @@ export class StemService extends Emitter<Events> {
         if (job.persist) void this.bridge?.setIndex(job.track.ref, job.key).then(() => this.refreshIndex());
         break;
       case "error":
-        this.engine.setStemStatus(job.deck, { status: "error", message: m.message });
+        this.engine.setStemStatus(job.deck, { status: "error", message: `${m.message} — details: Settings → STEMS → Show log` });
         this.log.error("stems", `Deck ${deckLetter(job.deck)}: separation failed — ${m.message}. The original audio keeps playing.`);
         break;
     }
@@ -358,6 +376,7 @@ export class StemService extends Emitter<Events> {
   // ─────────────────────────── decks ───────────────────────────
 
   private loadedBuffers: (AudioBuffer | null)[] = [];
+  private crashRetries = new Map<string, number>();
   private platformReason: string | null = null;
 
   private shouldAutoRun(job: DeckJob): boolean {
