@@ -25,6 +25,8 @@ export type ChannelType =
   | "colorWheel"
   | "gobo"
   | "macro"
+  | "laser" // laser on/pattern/colour — never driven automatically
+  | "unknown" // function not known yet (no fixture definition imported) — never driven automatically
   | "generic";
 
 /** Channel types scaled by the grand master (light output). Position/effect channels are not. */
@@ -47,12 +49,22 @@ export const CHANNEL_LABELS: Record<ChannelType, string> = {
   colorWheel: "COLOUR",
   gobo: "GOBO",
   macro: "MACRO",
+  laser: "LASER",
+  unknown: "CH",
   generic: "LEVEL",
 };
+
+/** A value range of a channel, e.g. 135–239 "Strobe slow → fast" (from QLC+ / OFL definitions). */
+export interface ChannelCapability {
+  min: number;
+  max: number;
+  name: string;
+}
 
 export interface FixtureChannelDef {
   name: string;
   type: ChannelType;
+  capabilities?: ChannelCapability[];
 }
 
 export interface FixtureModeDef {
@@ -65,8 +77,14 @@ export interface FixtureDef {
   id: string;
   manufacturer: string;
   model: string;
-  category: "par" | "bar" | "moving-head" | "strobe" | "dimmer" | "other";
+  category: "par" | "bar" | "moving-head" | "strobe" | "dimmer" | "laser" | "other";
   modes: FixtureModeDef[];
+  /** Contains a laser: excluded from sound-to-light and FULL ON unless explicitly allowed. */
+  laser?: boolean;
+  /** Stand-in for a fixture whose definition hasn't been imported (all channels "unknown"). */
+  placeholder?: boolean;
+  /** Where the definition came from, e.g. "Built-in", "QLC+ file Betopper-LM30A.qxf". */
+  source?: string;
 }
 
 const ch = (type: ChannelType, name = CHANNEL_LABELS[type]): FixtureChannelDef => ({ name, type });
@@ -164,6 +182,13 @@ export interface PatchedFixture {
   address: number;
   /** Channel count of the chosen mode (kept for display and custom fixtures). */
   channelCount: number;
+  /** Output curves per channel (0-based within the fixture), e.g. inverted pan on a mirrored head. */
+  modifiers?: { channel: number; curve: "invert" | "linear" }[];
+}
+
+/** Capability name for a channel value (e.g. "Strobe slow → fast"), if the definition has one. */
+export function capabilityAt(ch: FixtureChannelDef | undefined, value: number): string | undefined {
+  return ch?.capabilities?.find((c) => value >= c.min && value <= c.max)?.name;
 }
 
 export function findDef(defs: FixtureDef[], id: string): FixtureDef | undefined {

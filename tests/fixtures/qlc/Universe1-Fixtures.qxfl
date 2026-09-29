@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE FixtureList>
+<FixtureList xmlns="http://www.qlcplus.org/FixtureList">
+ <Creator>
+  <Name>Q Light Controller Plus</Name>
+  <Version>4.13.1</Version>
+  <Author>Ben ALEMBICK</Author>
+ </Creator>
+ <Fixture>
+  <Manufacturer>BeTopper</Manufacturer>
+  <Model>LM30A</Model>
+  <Mode>13</Mode>
+  <ID>0</ID>
+  <Name>Spider Light - LM30A</Name>
+  <Universe>0</Universe>
+  <Address>0</Address>
+  <Channels>13</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Baisun</Manufacturer>
+  <Model>MP001</Model>
+  <Mode>7</Mode>
+  <ID>1</ID>
+  <Name>MP001 #1</Name>
+  <Universe>0</Universe>
+  <Address>13</Address>
+  <Channels>7</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Baisun</Manufacturer>
+  <Model>MP001</Model>
+  <Mode>7</Mode>
+  <ID>2</ID>
+  <Name>MP001 #2</Name>
+  <Universe>0</Universe>
+  <Address>20</Address>
+  <Channels>7</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Baisun</Manufacturer>
+  <Model>MP001</Model>
+  <Mode>7</Mode>
+  <ID>3</ID>
+  <Name>MP001 #3</Name>
+  <Universe>0</Universe>
+  <Address>27</Address>
+  <Channels>7</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Baisun</Manufacturer>
+  <Model>MP001</Model>
+  <Mode>7</Mode>
+  <ID>4</ID>
+  <Name>MP001 #4</Name>
+  <Universe>0</Universe>
+  <Address>34</Address>
+  <Channels>7</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>King Kong</Manufacturer>
+  <Model>Bee Eye Six Arms Small + Laser</Model>
+  <Mode>24</Mode>
+  <ID>5</ID>
+  <Name>Bee Eye Six Arms Small + Laser</Name>
+  <Universe>0</Universe>
+  <Address>41</Address>
+  <Channels>24</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>PES Intelligence Tech</Manufacturer>
+  <Model>PES000-RG</Model>
+  <Mode>9</Mode>
+  <ID>6</ID>
+  <Name>Laser - PES000-RG</Name>
+  <Universe>0</Universe>
+  <Address>65</Address>
+  <Channels>9</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Mini Gobo Moving head</Manufacturer>
+  <Model>Mini Gobo Moving head</Model>
+  <Mode>11</Mode>
+  <ID>7</ID>
+  <Name>Mini Gobo Moving head #1</Name>
+  <Universe>0</Universe>
+  <Address>74</Address>
+  <Channels>11</Channels>
+  <Modifier Channel="0" Name="Exponential Deep"/>
+  <Modifier Channel="2" Name="Exponential Deep"/>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Mini Gobo Moving head</Manufacturer>
+  <Model>Mini Gobo Moving head</Model>
+  <Mode>11</Mode>
+  <ID>8</ID>
+  <Name>Mini Gobo Moving head #2</Name>
+  <Universe>0</Universe>
+  <Address>85</Address>
+  <Channels>11</Channels>
+  <Modifier Channel="0" Name="Invert"/>
+  <Modifier Channel="2" Name="Linear"/>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Novation</Manufacturer>
+  <Model>Launchpad Pro</Model>
+  <Mode>Live</Mode>
+  <ID>9</ID>
+  <Name>Launchpad Pro</Name>
+  <Universe>1</Universe>
+  <Address>0</Address>
+  <Channels>99</Channels>
+ </Fixture>
+ <Fixture>
+  <Manufacturer>Mini Gobo Moving head</Manufacturer>
+  <Model>Mini Gobo Moving head</Model>
+  <Mode>11</Mode>
+  <ID>10</ID>
+  <Name>Mini Gobo Moving head #3 (!!!HOLD!!)</Name>
+  <Universe>0</Universe>
+  <Address>96</Address>
+  <Channels>11</Channels>
+ </Fixture>
+</FixtureList>

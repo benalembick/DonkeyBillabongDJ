@@ -6,10 +6,10 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useApp } from "../context";
 import { useAnimationFrame } from "../hooks";
-import type { LightingConfig, LightingService, VcWidget } from "../../lighting/LightingService";
+import type { LightingConfig, LightingService, QlcImportReport, VcWidget } from "../../lighting/LightingService";
 import { VC_WIDGET_TYPES } from "../../lighting/LightingService";
 import { LAYER_DESK } from "../../lighting/DmxEngine";
-import { CHANNEL_LABELS, addressRange, channelMap, type ChannelType, type PatchedFixture } from "../../lighting/fixtures";
+import { CHANNEL_LABELS, addressRange, capabilityAt, channelMap, findDef, type ChannelType, type PatchedFixture } from "../../lighting/fixtures";
 import { INPUT_LABELS, OUTPUT_LABELS, type InputKind, type LinkState, type OutputKind, type UniverseIo } from "../../lighting/io";
 import { DEFAULT_MAPPINGS, type SoundInput, type SoundMapping, type SoundSettings, type SoundSource } from "../../lighting/SoundToLight";
 
@@ -283,17 +283,38 @@ function SoundWidget({ l }: { l: LightingService }) {
             </button>
           </div>
           {fixtures.length === 0 && <p className="hint">Add fixtures on the Fixtures page first.</p>}
-          {fixtures.map((f) => (
-            <label key={f.id} className="lx-check">
+          {fixtures.map((f) => {
+            const def = findDef(l.defs, f.defId);
+            const laser = !!def?.laser;
+            const blocked = laser && !s.allowLasers;
+            return (
+              <label key={f.id} className={`lx-check ${blocked ? "blocked" : ""}`} title={blocked ? "Laser — excluded from sound control unless “Allow lasers” is on" : def?.placeholder ? "No fixture definition imported yet: its channels are unknown, so sound can't drive it" : ""}>
+                <input
+                  type="checkbox"
+                  disabled={blocked}
+                  checked={selected.has(f.id) && !blocked}
+                  onChange={(e) => set({ fixtures: e.target.checked ? [...s.fixtures, f.id] : s.fixtures.filter((x) => x !== f.id) })}
+                />
+                <span className="lx-swatch" style={{ background: fixtureColour(f.id) }} />
+                {f.name} <small className="hint">U{f.universe} · {addressRange(f).join("–")}</small>
+                {laser && <span className="lx-badge laser">LASER</span>}
+                {def?.placeholder && <span className="lx-badge todo">NEEDS DEFINITION</span>}
+              </label>
+            );
+          })}
+          {fixtures.some((f) => findDef(l.defs, f.defId)?.laser) && (
+            <label className="lx-check lx-laser-optin">
               <input
                 type="checkbox"
-                checked={selected.has(f.id)}
-                onChange={(e) => set({ fixtures: e.target.checked ? [...s.fixtures, f.id] : s.fixtures.filter((x) => x !== f.id) })}
+                checked={s.allowLasers}
+                onChange={(e) => {
+                  if (e.target.checked && !confirm("Allow sound-to-light to control lasers?\n\nOnly do this if your lasers are aimed safely (above head height, never at the audience) and you understand the risks.")) return;
+                  set({ allowLasers: e.target.checked, fixtures: e.target.checked ? s.fixtures : s.fixtures.filter((id) => !findDef(l.defs, fixtures.find((x) => x.id === id)?.defId ?? "")?.laser) });
+                }}
               />
-              <span className="lx-swatch" style={{ background: fixtureColour(f.id) }} />
-              {f.name} <small className="hint">U{f.universe} · {addressRange(f).join("–")}</small>
+              Allow lasers <small className="hint">(off by default — safety)</small>
             </label>
-          ))}
+          )}
         </div>
       </div>
       <MappingEditor value={s.mappings} onChange={(mappings) => set({ mappings })} />
@@ -436,7 +457,11 @@ function DmxDesk({ l }: { l: LightingService }) {
           const live = out[ch - 1];
           return (
             <div key={ch} className={`lx-fader ${sel.has(ch) ? "selected" : ""} ${info ? "patched" : ""}`} style={info ? { ["--fx" as string]: fixtureColour(info.fixture.id) } : undefined}>
-              <button className="lx-ch" onClick={(e) => toggleSel(ch, e)} title={info ? `${info.fixture.name} — ${info.channel.name}` : "Unpatched"}>
+              <button
+                className="lx-ch"
+                onClick={(e) => toggleSel(ch, e)}
+                title={info ? `${info.fixture.name} — ${info.channel.name}${capabilityAt(info.channel, live) ? `\nNow: ${capabilityAt(info.channel, live)}` : ""}` : "Unpatched"}
+              >
                 {String(ch).padStart(3, "0")}
               </button>
               <span className="lx-fix">{info?.fixture.name ?? ""}</span>
@@ -515,6 +540,7 @@ function Fixtures({ l }: { l: LightingService }) {
 
   return (
     <div className="lx-fixtures">
+      <QlcImport l={l} />
       <section className="lx-panel">
         <h4>{editing ? "Edit fixture" : "Add fixture"}</h4>
         <div className="lx-form">
@@ -610,7 +636,12 @@ function Fixtures({ l }: { l: LightingService }) {
                   <td>
                     <span className="lx-swatch" style={{ background: fixtureColour(f.id) }} />
                   </td>
-                  <td>{f.name}</td>
+                  <td>
+                    {f.name}
+                    {d?.laser && <span className="lx-badge laser">LASER</span>}
+                    {d?.placeholder && <span className="lx-badge todo" title="Import this fixture's QLC+ definition (.qxf) to give its channels their real functions">NEEDS DEFINITION</span>}
+                    {f.modifiers?.some((m) => m.curve === "invert") && <span className="lx-badge" title="Inverted channel(s), as in QLC+">INV</span>}
+                  </td>
                   <td>{d?.manufacturer ?? "?"}</td>
                   <td>{d?.model ?? f.defId}</td>
                   <td className="hint">{f.mode}</td>
@@ -668,6 +699,69 @@ function Fixtures({ l }: { l: LightingService }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/** Import a QLC+ fixture list / workspace and fixture definitions (several files at once). */
+function QlcImport({ l }: { l: LightingService }) {
+  const cfg = useLightingConfig(l);
+  const [replace, setReplace] = useState(true);
+  const [report, setReport] = useState<QlcImportReport | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const need = cfg.fixtures.filter((f) => findDef(l.defs, f.defId)?.placeholder);
+  const run = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const list = await Promise.all([...files].map(async (f) => ({ name: f.name, text: await f.text() })));
+    setReport(l.importQlc(list, { replaceFixtures: replace && list.some((f) => /<FixtureList|<Workspace/.test(f.text.slice(0, 600))) }));
+    if (input.current) input.current.value = "";
+  };
+  return (
+    <section className="lx-panel lx-qlc">
+      <h4>Import from QLC+</h4>
+      <div className="lx-row">
+        <button className="primary" onClick={() => input.current?.click()}>
+          Choose QLC+ files…
+        </button>
+        <input ref={input} type="file" multiple accept=".qxfl,.qxw,.qxf,.xml,.txt" hidden onChange={(e) => void run(e.target.files)} />
+        <label className="lx-check">
+          <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> Replace my current fixtures with the imported list
+        </label>
+      </div>
+      <p className="hint">
+        Select your fixture list (<b>.qxfl</b>) or workspace (<b>.qxw</b>) <i>and</i> the fixture definitions (<b>.qxf</b>) together. On the computer with QLC+ your own
+        definitions are in <code>%USERPROFILE%\QLC+\Fixtures</code> (Windows), <code>~/Library/Application Support/QLC+/Fixtures</code> (Mac) or{" "}
+        <code>~/.qlcplus/fixtures</code> (Linux). Addresses and universes are converted from QLC+'s 0-based numbers.
+      </p>
+      {need.length > 0 && (
+        <div className="lx-warn">
+          ⚠ {need.length} fixture(s) still need their definition, so their channels are “unknown” and nothing automatic drives them:{" "}
+          {[...new Set(need.map((f) => { const d = findDef(l.defs, f.defId); return `${d?.manufacturer} ${d?.model}`; }))].join(", ")}
+        </div>
+      )}
+      {report && (
+        <div className="lx-report">
+          <b>
+            Imported {report.fixtures} fixture(s){report.definitions.length ? `, ${report.definitions.length} definition(s)` : ""}.
+          </b>
+          {report.definitions.length > 0 && <div>Definitions: {report.definitions.join(" · ")}</div>}
+          {report.skipped.map((s) => (
+            <div key={s} className="hint">
+              Skipped — {s}
+            </div>
+          ))}
+          {report.notes.map((n) => (
+            <div key={n} className="hint">
+              Note — {n}
+            </div>
+          ))}
+          {report.errors.map((e) => (
+            <div key={e} className="lx-warn">
+              ✖ {e}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

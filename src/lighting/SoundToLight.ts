@@ -13,7 +13,7 @@
 import { Emitter } from "../core/events";
 import { DmxEngine, LAYER_SOUND } from "./DmxEngine";
 import { DMX_SLOTS } from "./protocol";
-import { modeOf, type ChannelType, type FixtureDef, type PatchedFixture } from "./fixtures";
+import { findDef, modeOf, type ChannelType, type FixtureDef, type PatchedFixture } from "./fixtures";
 
 export type SoundSource = "master" | "deckA" | "deckB" | "mic";
 export type SoundInput = "low" | "mid" | "high" | "amplitude" | "beat";
@@ -53,6 +53,8 @@ export interface SoundSettings {
   /** Patched fixture ids under sound control. */
   fixtures: string[];
   mappings: SoundMapping[];
+  /** Lasers are never driven by sound unless this is switched on deliberately. */
+  allowLasers: boolean;
 }
 
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
@@ -68,6 +70,7 @@ export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   downbeatAccent: true,
   fixtures: [],
   mappings: DEFAULT_MAPPINGS,
+  allowLasers: false,
 };
 
 /** Raw band magnitudes from the audio graph (any scale; normalised here). */
@@ -266,6 +269,7 @@ export class SoundToLight extends Emitter<SoundEvents> {
     const selected = new Set(s.fixtures);
     for (const fx of fixtures) {
       if (!selected.has(fx.id)) continue;
+      if (findDef(defs, fx.defId)?.laser && !s.allowLasers) continue; // laser safety
       const mode = modeOf(defs, fx);
       if (!mode) continue;
       let frame = this.frames.get(fx.universe);

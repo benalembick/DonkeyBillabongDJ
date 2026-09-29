@@ -64,6 +64,23 @@ Fixture patch (fixtures.ts)            Output providers (one per universe)
   - **Overlaps are refused** and the clashing fixtures are named, unless you press **Overlap anyway**.
   - The **address map** shows all 512 channels of a universe, coloured per fixture, with overlaps hatched red.
 
+## Importing from QLC+
+
+**Fixtures → Import from QLC+** accepts several files at once:
+
+- **Fixture list (`.qxfl`) or workspace (`.qxw`):**
+  - Recreates the patch: names, universes and start addresses, converted from QLC+'s 0-based numbers.
+  - Imports **Invert**/**Linear** channel modifiers (e.g. a mirrored head's pan). Other QLC+ curves, such as "Exponential Deep", are listed in the report and output linearly.
+  - Skips MIDI controllers that QLC+ lists as fixtures for button feedback (e.g. a Novation Launchpad).
+- **Fixture definitions (`.qxf`):**
+  - Give every channel its real function, from QLC+ presets (`IntensityRed`, `PositionPan`…) or groups (Intensity + colour, Pan, Tilt, Speed, Shutter, Colour, Gobo, Effect, Maintenance…), plus value ranges shown on the desk ("Now: Strobe slow → fast").
+  - Can be imported before, with, or after the list; patched fixtures link to them by manufacturer and model.
+- **Where your own QLC+ definitions live:** `%USERPROFILE%QLC+Fixtures` (Windows), `~/Library/Application Support/QLC+/Fixtures` (Mac), `~/.qlcplus/fixtures` (Linux). Definitions that ship with QLC+ are in its install folder under `Fixtures`.
+
+**Safety:**
+- **Fixtures without a definition** are patched with **unknown** channels ("CH 1…n", with a NEEDS DEFINITION badge). The desk can set them, but sound-to-light, FULL ON and the grand master never touch them.
+- **Lasers** (a definition of type Laser, or "laser" in the model or channel names) are **never driven by sound-to-light** unless **Allow lasers** is switched on with a confirmation, and are always excluded from FULL ON.
+
 ## DMX Desk
 
 - **Faders:** 32 channel faders per page, labelled with channel number, fixture and function (e.g. `001 Front PAR Left RED`).

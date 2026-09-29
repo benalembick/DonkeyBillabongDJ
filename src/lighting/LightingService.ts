@@ -15,7 +15,8 @@ import type { DJEngine } from "../core/engine/DJEngine";
 import type { EventLog } from "../core/log";
 import { DmxEngine, LAYER_DESK, LAYER_INPUT } from "./DmxEngine";
 import { DMX_SLOTS } from "./protocol";
-import { GENERIC_FIXTURES, INTENSITY_TYPES, fitsUniverse, modeOf, nextFreeAddress, overlaps, type FixtureDef, type PatchedFixture } from "./fixtures";
+import { GENERIC_FIXTURES, INTENSITY_TYPES, findDef, fitsUniverse, modeOf, nextFreeAddress, overlaps, type FixtureDef, type PatchedFixture } from "./fixtures";
+import { addPlaceholderMode, parseQlcDefinition, parseQlcFixtureList, placeholderDef, qlcDefId, qlcFileKind } from "./qlcImport";
 import { defaultIo, type ExitBehaviour, type IoStatus, type UniverseIo } from "./io";
 import { DEFAULT_SOUND_SETTINGS, SoundToLight, type SoundSettings } from "./SoundToLight";
 import { makeBeatSource, makeProbe, MicInput, type AnalysisTapProvider } from "./audioInputs";
@@ -40,6 +41,18 @@ export interface LightingConfig {
   console: { widgets: VcWidget[] };
   exitBehaviour: ExitBehaviour;
   master: number;
+  /** Imported fixture definitions (QLC+ .qxf) and stand-ins for ones not imported yet. */
+  customDefs: FixtureDef[];
+}
+
+export interface QlcImportReport {
+  fixtures: number;
+  withDefinition: string[];
+  needDefinition: string[];
+  definitions: string[];
+  skipped: string[];
+  notes: string[];
+  errors: string[];
 }
 
 export function defaultLightingConfig(): LightingConfig {
@@ -51,6 +64,7 @@ export function defaultLightingConfig(): LightingConfig {
     console: { widgets: [{ id: "vc-stl-1", type: "soundToLight", title: "Sound Activated Light Control" }] },
     exitBehaviour: "blackout",
     master: 1,
+    customDefs: [],
   };
 }
 
@@ -69,7 +83,13 @@ const TICK_MS = 25; // 40 Hz — the usual DMX refresh
 
 export class LightingService extends Emitter<{ config: LightingConfig; status: void }> {
   readonly engine = new DmxEngine();
-  readonly defs: FixtureDef[] = GENERIC_FIXTURES;
+  private defsCache: { custom: FixtureDef[]; all: FixtureDef[] } | null = null;
+  /** Built-in generic fixtures + imported definitions. */
+  get defs(): FixtureDef[] {
+    const custom = this.cfg?.customDefs ?? [];
+    if (this.defsCache?.custom !== custom) this.defsCache = { custom, all: [...GENERIC_FIXTURES, ...custom] };
+    return this.defsCache.all;
+  }
   readonly sound: SoundToLight;
   readonly mic = new MicInput();
   readonly usb: UsbProOutput;
@@ -139,6 +159,7 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
       ...c,
       universes: Array.isArray(c.universes) && c.universes.length ? c.universes.map((u) => ({ ...defaultIo(u.universe), ...u, artnet: { ...defaultIo(u.universe).artnet, ...u.artnet }, sacn: { ...defaultIo(u.universe).sacn, ...u.sacn } })) : base.universes,
       fixtures: Array.isArray(c.fixtures) ? c.fixtures : [],
+      customDefs: Array.isArray(c.customDefs) ? c.customDefs : [],
       sound: { ...base.sound, ...c.sound, enabled: false }, // sound control never starts by itself
       console: c.console?.widgets ? c.console : base.console,
     };
@@ -179,6 +200,10 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
         });
       }
       this.engine.setMasterMask(u, mask);
+      // QLC+-style output modifiers (e.g. inverted pan on a mirrored moving head).
+      const inv: number[] = [];
+      for (const f of this.cfg.fixtures) if (f.universe === u) for (const m of f.modifiers ?? []) if (m.curve === "invert") inv.push(f.address + m.channel);
+      this.engine.setInvertedChannels(u, inv);
     }
     this.engine.setMaster(this.cfg.master);
     this.sound.settings = this.cfg.sound;
@@ -290,9 +315,13 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
     const mask = new Uint8Array(DMX_SLOTS).fill(1);
     for (const f of this.cfg.fixtures) {
       if (f.universe !== u) continue;
-      modeOf(this.defs, f)?.channels.forEach((c, i) => {
-        if (!INTENSITY_TYPES.has(c.type) && f.address + i <= DMX_SLOTS) mask[f.address + i - 1] = 0;
-      });
+      const laser = !!findDef(this.defs, f.defId)?.laser;
+      const mode = modeOf(this.defs, f);
+      for (let i = 0; i < f.channelCount && f.address + i <= DMX_SLOTS; i++) {
+        const c = mode?.channels[i];
+        // Never switch on lasers, unknown channels, position or effect channels.
+        if (laser || !c || !INTENSITY_TYPES.has(c.type)) mask[f.address + i - 1] = 0;
+      }
     }
     const vals: [number, number][] = [];
     for (let c = 1; c <= DMX_SLOTS; c++) if (mask[c - 1]) vals.push([c, 255]);
@@ -316,6 +345,82 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
 
   setSound(patch: Partial<SoundSettings>): void {
     this.update({ sound: { ...this.cfg.sound, ...patch } });
+  }
+
+  /**
+   * Import QLC+ files: fixture lists (.qxfl) / workspaces (.qxw) recreate the patch;
+   * fixture definitions (.qxf) give each channel its real function. Files can come in any
+   * order or separately — patched fixtures pick up definitions imported later.
+   */
+  importQlc(files: { name: string; text: string }[], opts: { replaceFixtures: boolean }): QlcImportReport {
+    const report: QlcImportReport = { fixtures: 0, withDefinition: [], needDefinition: [], definitions: [], skipped: [], notes: [], errors: [] };
+    const defs = new Map(this.cfg.customDefs.map((d) => [d.id, d]));
+    // Definitions first, so a list imported together with them links straight away.
+    for (const f of files) {
+      if (qlcFileKind(f.text) !== "definition") continue;
+      try {
+        const d = parseQlcDefinition(f.text, f.name);
+        defs.set(d.id, d);
+        report.definitions.push(`${d.manufacturer} ${d.model} (${d.modes.map((m) => m.name).join(", ")})${d.laser ? " — laser" : ""}`);
+      } catch (err) {
+        report.errors.push(`${f.name}: ${String(err)}`);
+      }
+    }
+    let fixtures = this.cfg.fixtures;
+    let universes = this.cfg.universes;
+    const lists = files.filter((f) => {
+      const k = qlcFileKind(f.text);
+      if (!k) report.errors.push(`${f.name}: not a QLC+ fixture list, workspace or fixture definition`);
+      return k === "fixtureList" || k === "workspace";
+    });
+    if (lists.length && opts.replaceFixtures) fixtures = [];
+    let n = 0;
+    for (const f of lists) {
+      try {
+        const list = parseQlcFixtureList(f.text);
+        report.skipped.push(...list.skipped.map((s) => `${s.name}: ${s.reason}`));
+        for (const e of list.fixtures) {
+          const id = qlcDefId(e.manufacturer, e.model);
+          const existing = defs.get(id);
+          if (!existing) defs.set(id, placeholderDef(e));
+          else if (existing.placeholder) defs.set(id, addPlaceholderMode(existing, e));
+          const def = defs.get(id)!;
+          const mode = def.modes.find((m) => m.name === e.mode) ?? def.modes.find((m) => m.channels.length === e.channels);
+          if (!mode) report.notes.push(`${e.name}: definition has no "${e.mode}" mode — using its channel count (${e.channels})`);
+          const pf: PatchedFixture = {
+            id: `qlc-${Date.now().toString(36)}-${n++}`,
+            name: e.name,
+            defId: id,
+            mode: mode?.name ?? e.mode,
+            universe: e.universe,
+            address: e.address,
+            channelCount: e.channels,
+            ...(e.modifiers.length ? { modifiers: e.modifiers } : {}),
+          };
+          if (e.unsupportedModifiers.length) report.notes.push(`${e.name}: QLC+ curve(s) not reproduced yet — ${e.unsupportedModifiers.join("; ")} (output is linear)`);
+          const clash = overlaps(fixtures, pf);
+          if (clash.length) report.notes.push(`${e.name} (DMX ${pf.address}–${pf.address + pf.channelCount - 1}) overlaps ${clash.map((c) => c.name).join(", ")}`);
+          fixtures = [...fixtures.filter((x) => !(opts.replaceFixtures === false && x.name === pf.name && x.universe === pf.universe)), pf];
+          if (!universes.some((u) => u.universe === pf.universe)) universes = [...universes, defaultIo(pf.universe)].sort((a, b) => a.universe - b.universe);
+          report.fixtures++;
+        }
+      } catch (err) {
+        report.errors.push(`${f.name}: ${String(err)}`);
+      }
+    }
+    // Report which patched fixtures have a real definition.
+    for (const pf of fixtures) {
+      const d = defs.get(pf.defId) ?? findDef(GENERIC_FIXTURES, pf.defId);
+      const label = `${pf.name} — ${d?.manufacturer ?? "?"} ${d?.model ?? ""}`.trim();
+      if (!d || d.placeholder) report.needDefinition.push(label);
+      else report.withDefinition.push(label);
+    }
+    // Lasers stay out of sound control unless allowed.
+    const customDefs = [...defs.values()];
+    const all = [...GENERIC_FIXTURES, ...customDefs];
+    const soundFixtures = this.cfg.sound.fixtures.filter((id) => fixtures.some((f) => f.id === id && (!findDef(all, f.defId)?.laser || this.cfg.sound.allowLasers)));
+    this.update({ customDefs, fixtures, universes, sound: { ...this.cfg.sound, fixtures: soundFixtures } }, true);
+    return report;
   }
 
   setWidgets(widgets: VcWidget[]): void {

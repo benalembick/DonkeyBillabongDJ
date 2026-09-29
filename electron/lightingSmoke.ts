@@ -49,8 +49,41 @@ async function runUsbSmoke(win: BrowserWindow): Promise<unknown> {
   );
 }
 
+/** DBDJ_SMOKE_LIGHTING=qlc: import QLC+ files through the Fixtures page file picker (DBDJ_SMOKE_QLC_FILES = paths separated by "|"). */
+async function runQlcSmoke(win: BrowserWindow): Promise<unknown> {
+  const { readFileSync } = await import("node:fs");
+  const path = await import("node:path");
+  const files = (process.env.DBDJ_SMOKE_QLC_FILES ?? "").split("|").filter(Boolean).map((p) => ({ name: path.basename(p), text: readFileSync(p, "utf8") }));
+  const tab = process.env.DBDJ_SMOKE_LIGHTING_TAB ?? "Fixtures";
+  return win.webContents.executeJavaScript(`(async () => {
+    const L = window.dbdj.lighting, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const tabBtn = (t) => [...document.querySelectorAll(".lx-tabs button")].find((b) => b.textContent === t);
+    [...document.querySelectorAll(".main-navigation button")].find((b) => (b.title || b.textContent).includes("Lighting"))?.click();
+    await sleep(300);
+    tabBtn("Fixtures")?.click();
+    await sleep(200);
+    const input = document.querySelector('.lx-qlc input[type="file"]');
+    const dt = new DataTransfer();
+    for (const f of ${JSON.stringify(files)}) dt.items.add(new File([f.text], f.name));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await sleep(800);
+    const out = {
+      report: document.querySelector(".lx-report")?.innerText,
+      warning: document.querySelector(".lx-qlc .lx-warn")?.innerText,
+      patch: L.getConfig().fixtures.map((f) => f.name + " @" + f.universe + ":" + f.address + "-" + (f.address + f.channelCount - 1)),
+      universes: L.getConfig().universes.map((u) => u.universe),
+    };
+    tabBtn(${JSON.stringify(tab)})?.click();
+    await sleep(400);
+    if (${JSON.stringify(tab)} === "DMX Desk") out.deskLabels = [...document.querySelectorAll(".lx-fader")].slice(0, 16).map((f) => [f.querySelector(".lx-ch")?.textContent, f.querySelector(".lx-fix")?.textContent, f.querySelector(".lx-fn")?.textContent].join(" "));
+    return out;
+  })()`);
+}
+
 export async function runLightingSmoke(win: BrowserWindow, mode: string, track: string): Promise<unknown> {
   if (mode === "usb") return runUsbSmoke(win);
+  if (mode === "qlc") return runQlcSmoke(win);
   const sacn = await listen(5568, "127.0.0.1", (b) => {
     const p = parseE131(b);
     return p ? { u: p.universe, data: p.data } : null;

@@ -686,3 +686,12 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
   .lx-sound-grid { grid-template-columns: 1fr; }
   .lx-fixtures { grid-template-columns: 1fr; }
 }
+
+.lx-badge { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; font-size: 9px; font-weight: 900; letter-spacing: 0.05em; background: #333a46; color: #cfd6e2; vertical-align: middle; }
+.lx-badge.laser { background: #ff2d2d; color: #fff; }
+.lx-badge.todo { background: #ffb020; color: #000; }
+.lx-check.blocked { opacity: 0.6; }
+.lx-laser-optin { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+.lx-qlc { grid-column: 1 / -1; }
+.lx-qlc code { font-size: 11px; background: #0b0d11; padding: 0 3px; border-radius: 3px; }
+.lx-report { display: flex; flex-direction: column; gap: 3px; font-size: 12px; margin-top: 6px; }

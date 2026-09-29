@@ -26,6 +26,8 @@ export class DmxEngine extends Emitter<{ change: void }> {
   private masterMask = new Map<number, Uint8Array>();
   private master = 1;
   private blackout = false;
+  /** universe → channel indexes (0-based) whose output is inverted (255 − v). */
+  private inverted = new Map<number, Set<number>>();
   /** Bumped on every change: cheap "did anything change" check for UIs and outputs. */
   version = 0;
 
@@ -122,6 +124,12 @@ export class DmxEngine extends Emitter<{ change: void }> {
     this.touch();
   }
 
+  /** Output curves for a universe (replaces previous ones). Channel numbers are 1-based. */
+  setInvertedChannels(u: number, channels: number[]): void {
+    this.inverted.set(u, new Set(channels.filter((c) => c >= 1 && c <= DMX_SLOTS).map((c) => c - 1)));
+    this.touch();
+  }
+
   getMaster(): number {
     return this.master;
   }
@@ -158,6 +166,8 @@ export class DmxEngine extends Emitter<{ change: void }> {
       const mask = this.masterMask.get(u);
       for (let i = 0; i < DMX_SLOTS; i++) if (!mask || mask[i]) out[i] = Math.round(out[i] * this.master);
     }
+    const inv = this.inverted.get(u);
+    if (inv) for (const i of inv) out[i] = 255 - out[i];
     return out;
   }
 
