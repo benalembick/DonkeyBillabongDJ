@@ -251,7 +251,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     // Beat grid: full-span high-contrast lines so both decks can be aligned by
     // eye. Bar/downbeat boundaries are brighter and thicker than other beats.
     const grid = d.beatGrid;
-    if (grid) {
+    if (grid && !document.documentElement.classList.contains("practice-hide-grid")) {
       const period = 60 / grid.bpm;
       let k = Math.ceil((t0 - grid.firstBeat) / period);
       for (let t = grid.firstBeat + k * period; t < t0 + len * secPerPx; t += period, k++) {

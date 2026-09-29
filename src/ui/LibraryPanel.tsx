@@ -18,8 +18,9 @@ import { AutoDJQueue, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, 
 import { compatibility } from "../analysis/discovery";
 import { DiscoveryDialog, type DiscoveryMode } from "./DiscoveryDialog";
 import { MashipsView } from "./MashipsPanel";
+import { PracticePanel } from "./PracticePanel";
 
-type Source = "local" | "audius" | "playlist" | "auto-mashups" | "manual-mashups" | "queue" | StreamingProviderId;
+type Source = "local" | "audius" | "playlist" | "practice" | "auto-mashups" | "manual-mashups" | "queue" | StreamingProviderId;
 
 function fmtDuration(ms?: number): string {
   if (!ms) return "—";
@@ -85,6 +86,7 @@ export function LibraryPanel() {
         {item("local", <>♫ All Tracks <span className="count">{lib.tracks.length}</span></>, "all")}
         {item("local", <>⏱ Recently Added <span className="count">{recent}</span></>, "recent")}
         {item("local", <>★ Top Rated <span className="count">{rated}</span></>, "rated")}
+        {item("practice", <>◆ Practice Mode</>)}
         <PlaylistNav selected={source === "playlist" ? playlistId : null} mashipsSelected={source === "manual-mashups" ? "manual" : source === "auto-mashups" ? "auto" : null} onOpen={openPlaylist} onMaships={openMaships} onQueue={openQueue} />
         <div className="browser-heading">STREAMING</div>
         {item("spotify", <>{dot(streams.spotify)}Spotify</>)}
@@ -92,7 +94,7 @@ export function LibraryPanel() {
         {item("audius", <>{audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span></>)}
       </nav>
       <div className="browser-body">
-        {source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
+        {source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "practice" ? <PracticePanel /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
       </div>
     </div>
   );

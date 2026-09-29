@@ -32,6 +32,7 @@ import { AutoDJ } from "../autodj/AutoDJ";
 import { DEFAULT_AUTO_DJ } from "../autodj/transition";
 import { PreparationStore } from "../preparation/PreparationStore";
 import { LiveMashupService } from "../mashup/LiveMashupService";
+import { PracticeService } from "../practice/PracticeService";
 
 export interface App {
   bus: CommandBus;
@@ -45,6 +46,7 @@ export interface App {
   analysis: AnalysisService;
   preparation: PreparationStore;
   liveMashup: LiveMashupService;
+  practice: PracticeService;
   /** STEM separation (desktop only; local ONNX model). */
   stems: StemService;
   keyboard: KeyboardShortcuts;
@@ -126,6 +128,7 @@ export function createApp(): App {
     library.addFiles([file]); library.patchTracks([track]); await platform.library?.save([track]);
     let mashups = playlists.getState().playlists.find((p) => p.name === "Mashups"); if (!mashups) mashups = playlists.create("Mashups"); playlists.addTracks(mashups.id,[file.ref]); analysis.queueTracks([track]);
   } });
+  const practice = new PracticeService({ engine, bus, audio, library, playlists, preparation });
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
@@ -219,7 +222,7 @@ export function createApp(): App {
   void controllers.init();
   keyboard.attach(window);
   // Sync phase lock (and other time-based engine work) runs off the UI frame loop.
-  setInterval(() => { engine.tick(); autoDJ.tick(); liveMashup.tick(); }, 40);
+  setInterval(() => { engine.tick(); autoDJ.tick(); liveMashup.tick(); practice.tick(); }, 40);
 
   return {
     bus,
@@ -233,6 +236,7 @@ export function createApp(): App {
     analysis,
     preparation,
     liveMashup,
+    practice,
     stems,
     keyboard,
     platform,
