@@ -15,6 +15,7 @@ import { FxBar } from "./FxBar";
 import { getLayout, setLayout, useLayout, zoom, type LayoutMode } from "./layout";
 import { WaveformStack } from "./Waveforms";
 import brandLogo from "../assets/donkey-billabong-dj-logo.png";
+import { About } from "./About";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -71,7 +72,7 @@ function AudioStatusBadge() {
   );
 }
 
-const TOOL_TABS = ["Controller events", "Controller test", "MIDI monitor", "Diagnostics", "Settings"] as const;
+const TOOL_TABS = ["Controller events", "Controller test", "MIDI monitor", "Diagnostics", "Settings", "About"] as const;
 type ToolTab = (typeof TOOL_TABS)[number];
 
 /** Transient notices for warnings/errors (e.g. "deck is playing", "Spotify audio can't be mixed"). */
@@ -175,6 +176,7 @@ function ToolsOverlay({ tab, setTab, onClose }: { tab: ToolTab; setTab: (t: Tool
           {tab === "MIDI monitor" && <MidiMonitor />}
           {tab === "Diagnostics" && <Diagnostics />}
           {tab === "Settings" && <Settings />}
+          {tab === "About" && <About />}
         </Boundary>
       </div>
     </div>
@@ -277,6 +279,7 @@ function Shell() {
           <button className="status open-tools utility-button" onClick={() => setTool("Controller events")} title="Controller events, test and MIDI monitor"><span aria-hidden="true">🎛</span> Controller</button>
           <button className="status utility-button" onClick={() => setTool("Diagnostics")}><span aria-hidden="true">◫</span> Diagnostics</button>
           <button className="status utility-button" onClick={() => setTool("Settings")}><span aria-hidden="true">⚙</span> Settings</button>
+          <button className="status utility-button" onClick={() => setTool("About")}><span aria-hidden="true">ⓘ</span> About</button>
         </div>
       </header>
       <Boundary name="FX"><FxBar /></Boundary>

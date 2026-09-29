@@ -76,3 +76,11 @@
 ## Scaling to 4 decks
 
 `DJEngine` and `WebAudioEngine` take `deckCount`, and actions exist for decks 1–4. The UI currently renders 2 decks. Crossfader assignment per deck is in `EngineSettings.crossfaderAssign`.
+
+## Feature catalogue
+
+The user-facing About screen is backed by `src/about/features.ts`. This file is the canonical catalogue of capabilities that are currently developed and features explicitly marked as coming soon.
+
+Every change that adds, removes, renames, substantially changes, or completes a product feature **must update `src/about/features.ts` in the same change set**. When a planned feature ships, move it from `COMING_SOON` into the appropriate `DEVELOPED_FEATURES` group rather than leaving duplicate or stale entries. Keep descriptions factual and avoid listing speculative work that has not been accepted into the roadmap.
+
+The About UI (`src/ui/About.tsx`) only renders this catalogue. Feature descriptions must not be hard-coded elsewhere in that component, which keeps catalogue maintenance reviewable and prevents the displayed status from drifting away from the application architecture.
