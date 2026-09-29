@@ -196,13 +196,16 @@ describe("Auto DJ", () => {
     expect([...auto.getState().upcoming].sort()).toEqual(["a", "c"]);
   });
 
-  it("continues after manual playback changes without requiring resume", async () => {
+  it("stays armed without overriding a manual pause", async () => {
     const { auto, playlist, bus, engine } = await setup();
     await auto.start(playlist.id);
     bus.send("deck1.play"); auto.tick();
-    expect(auto.getState().status).toBe("TRANSITIONING");
+    expect(auto.getState()).toMatchObject({ status: "ACTIVE", message: "Deck paused; Auto DJ remains armed", nextSeconds: null });
     expect(engine.getState().decks[0].playing).toBe(false);
-    expect(engine.getState().decks[1].playing).toBe(true);
+    expect(engine.getState().decks[1].playing).toBe(false);
+    bus.send("deck1.play"); auto.tick();
+    expect(engine.getState().decks[0].playing).toBe(true);
+    expect(auto.getState().status).toBe("ACTIVE");
   });
   it("finishes a one-track playlist and leaves the queue off", async () => {
     const { auto, playlist, audio } = await setup();

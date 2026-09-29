@@ -257,8 +257,12 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     if (!this.prepared) { void this.prepare(); return; }
     const plan = planTransition(decks[deck], decks[incoming], this.state.settings, this.o.analysis.get(deck), this.o.analysis.get(incoming));
     const position = this.o.audio.getPosition(deck);
+    if (!decks[deck].playing) {
+      if (this.state.nextSeconds !== null || this.state.message !== "Deck paused; Auto DJ remains armed") this.set({ nextSeconds: null, message: "Deck paused; Auto DJ remains armed" });
+      return;
+    }
     const nextSeconds = Math.max(0, (plan.mixOut - position) / decks[deck].rate);
     this.set({ plan, nextSeconds });
-    if (position >= plan.mixOut || !decks[deck].playing) this.begin();
+    if (position >= plan.mixOut) this.begin();
   }
 }

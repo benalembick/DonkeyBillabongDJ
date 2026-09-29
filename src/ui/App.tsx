@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useRef, useState, type ReactNode } f
 import type { App as AppServices } from "../app/createApp";
 import type { ControllerInfo } from "../controllers/ControllerManager";
 import type { LogEntry } from "../core/log";
-import { AppContext, useApp } from "./context";
+import { AppContext, useApp, useEngineState } from "./context";
 import { ControllerTest, LiveEvents, MidiMonitor } from "./ControllerPanels";
 import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
@@ -81,7 +81,7 @@ function Toasts() {
   useEffect(
     () =>
       log.on("entry", (e) => {
-        const notable = e.level === "warn" || e.level === "error" || (e.source === "library" && e.message.startsWith("Added")) || e.source === "streaming" || (e.source === "matching" && !e.message.startsWith("Resolving")) || (e.source === "library" && e.message.startsWith("Read tags"));
+        const notable = e.level === "warn" || e.level === "error" || e.source === "mashup" || (e.source === "library" && e.message.startsWith("Added")) || e.source === "streaming" || (e.source === "matching" && !e.message.startsWith("Resolving")) || (e.source === "library" && e.message.startsWith("Read tags"));
         if (!notable || e.source === "controllers") return;
         setItems((xs) => [...xs.slice(-3), e]);
         setTimeout(() => setItems((xs) => xs.filter((x) => x.id !== e.id)), e.level === "info" ? 3500 : 7000);
@@ -107,7 +107,20 @@ const MODES: { id: LayoutMode; label: string; title: string }[] = [
 ];
 
 function LayoutSwitch() {
+  const { liveMashup, log } = useApp();
+  const engine = useEngineState();
+  const [saving, setSaving] = useState(false);
   const { mode, zoomSeconds } = useLayout();
+  const canSave = engine.decks.slice(0, 2).every((d) => d.status === "ready" && d.track);
+  const saveManual = async () => {
+    setSaving(true);
+    try {
+      const recipe = await liveMashup.saveManualMashup();
+      if (recipe) log.info("mashup", `${recipe.name} saved to Mashup Projects`);
+      else log.warn("mashup", "Load a track into both decks before saving a Manual Mashup");
+    } catch (e) { log.error("mashup", `Could not save Manual Mashup: ${String(e)}`); }
+    finally { setSaving(false); }
+  };
   return (
     <div className="layout-switch" role="group" aria-label="Layout">
       {MODES.map((m) => (
@@ -120,6 +133,9 @@ function LayoutSwitch() {
         <span>{zoomSeconds}s</span>
         <button className="tiny" onClick={() => zoom(1)} aria-label="Zoom out">－</button>
       </span>
+      <button className="manual-mashup-save" disabled={!canSave || saving} title="Save the current tracks, positions, tempo, STEMS, mixer, filters and effects as an editable Mashup Project" onClick={() => void saveManual()}>
+        {saving ? "SAVING…" : "SAVE MANUAL MASHUP"}
+      </button>
     </div>
   );
 }

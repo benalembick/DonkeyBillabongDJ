@@ -17,8 +17,9 @@ import { ArtTile } from "./ArtTile";
 import { AutoDJQueue, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
 import { compatibility } from "../analysis/discovery";
 import { DiscoveryDialog, type DiscoveryMode } from "./DiscoveryDialog";
+import { MashipsView } from "./MashipsPanel";
 
-type Source = "local" | "audius" | "playlist" | "queue" | StreamingProviderId;
+type Source = "local" | "audius" | "playlist" | "auto-mashups" | "manual-mashups" | "queue" | StreamingProviderId;
 
 function fmtDuration(ms?: number): string {
   if (!ms) return "—";
@@ -46,7 +47,8 @@ type LocalCollection = "all" | "recent" | "rated";
 export function LibraryPanel() {
   const [source, setSource] = useState<Source>(() => {
     try {
-      return (localStorage.getItem("dbdj.ui.librarySource") as Source) || "local";
+      const saved = localStorage.getItem("dbdj.ui.librarySource");
+      return (saved === "maships" ? "auto-mashups" : saved as Source) || "local";
     } catch {
       return "local";
     }
@@ -55,6 +57,7 @@ export function LibraryPanel() {
   const [playlistId, setPlaylistId] = useState<string | null>(null);
   const openPlaylist = (id: string) => { setPlaylistId(id); setSource("playlist"); };
   const openQueue = () => setSource("queue");
+  const openMaships = (kind: "auto" | "manual") => setSource(kind === "manual" ? "manual-mashups" : "auto-mashups");
   const lib = useLibraryState();
   const streams = useStreamingState();
   const audiusState = useAudiusState();
@@ -82,14 +85,14 @@ export function LibraryPanel() {
         {item("local", <>♫ All Tracks <span className="count">{lib.tracks.length}</span></>, "all")}
         {item("local", <>⏱ Recently Added <span className="count">{recent}</span></>, "recent")}
         {item("local", <>★ Top Rated <span className="count">{rated}</span></>, "rated")}
-        <PlaylistNav selected={source === "playlist" ? playlistId : null} onOpen={openPlaylist} onQueue={openQueue} />
+        <PlaylistNav selected={source === "playlist" ? playlistId : null} mashipsSelected={source === "manual-mashups" ? "manual" : source === "auto-mashups" ? "auto" : null} onOpen={openPlaylist} onMaships={openMaships} onQueue={openQueue} />
         <div className="browser-heading">STREAMING</div>
         {item("spotify", <>{dot(streams.spotify)}Spotify</>)}
         {item("apple-music", <>{dot(streams["apple-music"])}Apple Music</>)}
         {item("audius", <>{audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span></>)}
       </nav>
       <div className="browser-body">
-        {source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
+        {source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
       </div>
     </div>
   );

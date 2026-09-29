@@ -2,7 +2,7 @@ import { Emitter } from "../core/events";
 import type { DeckState, PreparationPort } from "../core/engine/DJEngine";
 import type { TrackInfo } from "../core/engine/types";
 import type { TrackAnalysis } from "../analysis/analyzeTrack";
-import { ANALYSIS_VERSION, PREPARATION_SCHEMA, CUE_COLOURS, contentTrackId, makeGrid, packWaveform, unpackWaveform, type PreparationPersistence, type TrackPreparation, type PreparedCue, type WaveformRecord } from "./types";
+import { ANALYSIS_VERSION, PREPARATION_SCHEMA, CUE_COLOURS, contentTrackId, EMPTY_CONTENT_ID, makeGrid, packWaveform, unpackWaveform, type PreparationPersistence, type TrackPreparation, type PreparedCue, type WaveformRecord } from "./types";
 import { camelotKey } from "../analysis/discovery";
 
 export interface PreparationStatus { revision: number; pending: number; error: string | null }
@@ -22,7 +22,10 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
       for (const r of rows.sort((a, b) => a.updatedAt - b.updatedAt)) {
         if (r.schemaVersion !== PREPARATION_SCHEMA) throw new Error("Preparation database uses an unsupported schema; existing data was left intact.");
         this.records.set(r.trackId, r);
-        r.refs.forEach((ref) => this.refs.set(ref, r.trackId));
+        // Older builds hashed AudioBuffers after decodeAudioData detached them,
+        // producing the empty-file hash and attaching many songs to one waveform.
+        // Keep the row for non-destructive compatibility but never restore it.
+        if (r.trackId !== EMPTY_CONTENT_ID) r.refs.forEach((ref) => this.refs.set(ref, r.trackId));
       }
       this.notify();
     });
@@ -62,10 +65,17 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
     await this.ready;
     // Always hash the bytes actually loaded; a reused path cannot attach cues to changed audio.
     const trackId = await contentTrackId(bytes);
+    if (trackId === EMPTY_CONTENT_ID) throw new Error(`Cannot prepare empty audio data for ${track.title}`);
+    let reassigned = false;
+    for (const [id, record] of this.records) {
+      if (id === trackId || !record.refs.includes(track.ref)) continue;
+      this.commit({ ...record, refs: record.refs.filter((ref) => ref !== track.ref) });
+      reassigned = true;
+    }
     const old = this.records.get(trackId);
     if (old) {
       this.refs.set(track.ref, trackId);
-      if (!old.refs.includes(track.ref) || (duration > 0 && old.duration !== duration)) {
+      if (reassigned || !old.refs.includes(track.ref) || (duration > 0 && old.duration !== duration)) {
         return this.commit({ ...old, refs: [...new Set([...old.refs, track.ref])], duration: duration || old.duration });
       }
       return old;

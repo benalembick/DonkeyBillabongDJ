@@ -6,6 +6,7 @@ import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 import { ArtTile } from "./ArtTile";
 import { compatibility } from "../analysis/discovery";
+import { useMashipProjects } from "./MashipsPanel";
 
 export const TRACK_REFS = "application/x-dbdj-track-refs";
 const PLAYLIST_MOVE = "application/x-dbdj-playlist-move";
@@ -35,10 +36,11 @@ export function useAutoDJ() {
   return useFrameStore(useCallback((cb) => autoDJ.on("change", cb), [autoDJ]), () => autoDJ.getState());
 }
 
-export function PlaylistNav({ selected, onOpen, onQueue }: { selected: string | null; onOpen: (id: string) => void; onQueue: () => void }) {
+export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQueue }: { selected: string | null; mashipsSelected: "auto" | "manual" | null; onOpen: (id: string) => void; onMaships: (kind: "auto" | "manual") => void; onQueue: () => void }) {
   const app = useApp();
   const state = usePlaylists();
   const auto = useAutoDJ();
+  const maships = useMashipProjects();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   return <>
@@ -58,6 +60,9 @@ export function PlaylistNav({ selected, onOpen, onQueue }: { selected: string | 
         if (files.length) void app.platform.refsFromDrop(files).then(async (rows) => { await app.addFiles(rows); app.playlists.addTracks(p.id, rows.map((r) => r.ref)); }).catch((err) => app.log.warn("library", String(err)));
       }}>{p.name}<span className="count">{p.refs.length}</span></button>)}
     <button data-source="auto-dj" onClick={onQueue}>Auto DJ Queue <span className={`auto-status ${auto.status.toLowerCase()}`}>{auto.status}</span></button>
+    <div className="browser-heading">MASHUP PROJECTS</div>
+    <button data-source="auto-mashups" className={mashipsSelected === "auto" ? "active" : ""} onClick={() => onMaships("auto")}>Auto Mashups <span className="count">{maships.recipes.filter((r) => !r.manual).length}</span></button>
+    <button data-source="manual-mashups" className={mashipsSelected === "manual" ? "active" : ""} onClick={() => onMaships("manual")}>Manual Mashups <span className="count">{maships.recipes.filter((r) => !!r.manual).length}</span></button>
   </>;
 }
 

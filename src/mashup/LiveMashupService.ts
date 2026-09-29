@@ -125,20 +125,52 @@ export class LiveMashupService extends Emitter<{ change: LiveMashupState }> {
     const now = Date.now(), old = this.state.recipes.find((r) => r.id === this.state.recipeId);
     return { version: 2, id: old?.id ?? crypto.randomUUID(), name: `${a.track.title} × ${b.track.title}`, createdAt: old?.createdAt ?? now, updatedAt: now,
       aRef: a.track.ref, bRef: b.track.ref, aEntry: a.entry, bEntry: b.entry, aSelected: a.selected, bSelected: b.selected, aLevels: a.levels, bLevels: b.levels,
-      targetBpm, targetKey, phraseBars, vocalSemitones: this.state.vocalSemitones, blocks };
+      targetBpm, targetKey, phraseBars, vocalSemitones: this.state.vocalSemitones, blocks,
+      manual: old?.manual ? this.o.engine.captureManualMashupSetup() : undefined };
   }
   async saveRecipe(): Promise<void> {
     if (!this.state.a || !this.state.b) return;
     try { const recipe = this.recipeFrom(this.state.a, this.state.b); await this.o.persistence.save(recipe); const recipes = [...this.state.recipes.filter((r) => r.id !== recipe.id), recipe]; this.set({ recipeId: recipe.id, recipes, message: "Editable mashup project saved" }); }
     catch (e) { this.set({ message: `Could not save recipe: ${String(e)}` }); }
   }
-  async openRecipe(id: string): Promise<void> {
-    const r = this.state.recipes.find((x) => x.id === id); if (!r) return;
-    const a = this.o.lookup(r.aRef), b = this.o.lookup(r.bRef); if (!a || !b) { this.set({ message: "A source track is missing from the library" }); return; }
-    await this.create(a, b); const sa = this.state.a, sb = this.state.b; if (!sa || !sb) return;
+  /** Save the live controls from the normal performance view without interrupting playback. */
+  async saveManualMashup(): Promise<MashupRecipe | null> {
+    await this.ready;
+    const engine = this.o.engine.getState(), da = engine.decks[0], db = engine.decks[1];
+    if (da?.status !== "ready" || db?.status !== "ready" || !da.track || !db.track) return null;
+    const selected = (d: typeof da) => d.stems.enabled ? d.stems.muted.map((muted) => !muted) : [true, true, true, true];
+    const bpmA = (this.prep(da.track)?.bpm ?? da.track.bpm ?? 0) * da.rate;
+    const bpmB = (this.prep(db.track)?.bpm ?? db.track.bpm ?? 0) * db.rate;
+    const now = Date.now(), phraseBars = this.state.phraseBars;
+    const recipe: MashupRecipe = {
+      version: 2, id: crypto.randomUUID(), name: `Manual Mashup — ${da.track.title} × ${db.track.title}`,
+      createdAt: now, updatedAt: now, aRef: da.track.ref, bRef: db.track.ref,
+      aEntry: this.o.engine.getPosition(0), bEntry: this.o.engine.getPosition(1),
+      aSelected: selected(da), bSelected: selected(db), aLevels: da.stems.volume.slice(), bLevels: db.stems.volume.slice(),
+      targetBpm: bpmA && bpmB ? Math.round(((bpmA + bpmB) / 2) * 100) / 100 : bpmA || bpmB || null,
+      targetKey: camelotKey(this.prep(da.track)?.key ?? da.track.key) ?? this.prep(da.track)?.key ?? da.track.key ?? null,
+      phraseBars, vocalSemitones: 0, blocks: [], manual: this.o.engine.captureManualMashupSetup(),
+    };
+    try {
+      await this.o.persistence.save(recipe);
+      this.set({ recipes: [...this.state.recipes, recipe], message: `Saved ${recipe.name}` });
+      return recipe;
+    } catch (e) {
+      this.set({ message: `Could not save manual mashup: ${String(e)}` });
+      throw e;
+    }
+  }
+  async openRecipe(id: string): Promise<boolean> {
+    const r = this.state.recipes.find((x) => x.id === id); if (!r) return false;
+    const a = this.o.lookup(r.aRef), b = this.o.lookup(r.bRef); if (!a || !b) { this.set({ message: "A source track is missing from the library" }); return false; }
+    await this.create(a, b); const sa = this.state.a, sb = this.state.b; if (!sa || !sb) return false;
     const na = { ...sa, entry: r.aEntry, selected: r.aSelected, levels: r.aLevels }, nb = { ...sb, entry: r.bEntry, selected: r.bSelected, levels: r.bLevels };
+    const ba=this.prep(a)?.bpm??a.bpm,bb=this.prep(b)?.bpm??b.bpm;
+    if(!r.manual){if(r.targetBpm&&ba)this.o.engine.setRateDirect(0,r.targetBpm/ba);if(r.targetBpm&&bb)this.o.engine.setRateDirect(1,r.targetBpm/bb);}
     this.o.engine.seekTo(0, na.entry); this.o.engine.seekTo(1, nb.entry); this.o.engine.setStemMix(0, na.selected, na.levels); this.o.engine.setStemMix(1, nb.selected, nb.levels);
-    this.set({ a: na, b: nb, recipeId: r.id, targetBpm: r.targetBpm, targetKey: r.targetKey, phraseBars: r.phraseBars, vocalSemitones: r.vocalSemitones, blocks: r.blocks, message: `Opened ${r.name}` });
+    if(r.manual)this.o.engine.restoreManualMashupSetup(r.manual);
+    this.set({ a: na, b: nb, recipeId: r.id, targetBpm: r.targetBpm, targetKey: r.targetKey, phraseBars: r.phraseBars, vocalSemitones: r.vocalSemitones, blocks: r.blocks, message: `Loaded ${r.name} to Deck A and Deck B` });
+    return true;
   }
   async deleteRecipe(id: string): Promise<void> { await this.o.persistence.remove(id); this.set({ recipes: this.state.recipes.filter((r) => r.id !== id), recipeId: this.state.recipeId === id ? null : this.state.recipeId }); }
   async renderMashup(): Promise<void> {

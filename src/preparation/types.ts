@@ -75,6 +75,8 @@ export async function contentTrackId(bytes: ArrayBuffer): Promise<string> {
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   return `sha256:${Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
+/** SHA-256 of zero bytes. A decodable audio file can never legitimately use it. */
+export const EMPTY_CONTENT_ID = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 function encode(array: Float32Array): string {
   const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
   let text = "";

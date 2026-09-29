@@ -423,7 +423,16 @@ export class WebAudioEngine implements AudioEngine {
     const m = this.models[deck];
     this.freeze(deck);
     m.playing = playing;
-    if (playing && !m.scratching) m.speed = m.rate;
+    if (playing) {
+      // A user gesture is the safest opportunity to recover a browser/Electron
+      // AudioContext suspended by the OS or an output-device change.
+      void this.start().catch((error) => this.fail(`Could not resume audio output: ${String(error)}`));
+      if (!m.scratching) m.speed = m.rate;
+    } else if (!m.scratching) {
+      // Stop UI/playhead extrapolation immediately. The worklet performs its
+      // short click-free fade independently before reporting its final frame.
+      m.speed = 0;
+    }
     this.post(deck, { type: "play", playing, seq: ++m.seq });
   }
 

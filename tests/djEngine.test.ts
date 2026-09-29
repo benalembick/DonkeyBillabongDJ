@@ -93,6 +93,34 @@ describe("transport", () => {
   });
 });
 
+describe("manual mashup setup", () => {
+  it("captures and restores deck, STEM, mixer and FX controls", async () => {
+    await loaded(0); await loaded(1);
+    engine.setStemsSupport(true);
+    engine.setRateDirect(0, 1.06);
+    engine.setStemMix(0, [true, false, true, false], [0.9, 0.8, 0.7, 0.6]);
+    bus.send("mixer.channel1.filter", 0.72);
+    bus.send("mixer.channel1.volume", 0.61);
+    bus.send("mixer.crossfader", 0.27);
+    const saved = engine.captureManualMashupSetup();
+
+    engine.setRateDirect(0, 0.9);
+    engine.setStemMix(0, [false, true, false, true], [0.1, 0.2, 0.3, 0.4]);
+    bus.send("mixer.channel1.filter", 0.1);
+    bus.send("mixer.crossfader", 0.9);
+    engine.restoreManualMashupSetup(saved);
+
+    expect(engine.getState().decks[0].rate).toBeCloseTo(1.06);
+    expect(engine.getState().decks[0].stems.muted).toEqual([false, true, false, true]);
+    expect(engine.getState().decks[0].stems.volume).toEqual([0.9, 0.8, 0.7, 0.6]);
+    expect(engine.getState().mixer.channels[0].filter).toBeCloseTo(0.72);
+    expect(engine.getState().mixer.channels[0].volume).toBeCloseTo(0.61);
+    expect(engine.getState().mixer.crossfader).toBeCloseTo(0.27);
+    expect(audio.rates[0]).toBeCloseTo(1.06);
+    expect(audio.stems[0].mix).toEqual({ enabled: true, gains: [0.9, 0, 0.7, 0] });
+  });
+});
+
 describe("hot cues", () => {
   it("sets, jumps and clears", async () => {
     await loaded();

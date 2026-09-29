@@ -22,6 +22,7 @@ import {
 } from "./mixerMath";
 import type { AudioEngine, FxType, TrackInfo } from "./types";
 import type { PreparedCue, SavedLoop } from "../../preparation/types";
+import type { ManualMashupSetup } from "../../mashup/types";
 
 export const TEMPO_RANGES = [0.06, 0.1, 0.16, 1.0] as const;
 export const FX_TYPES: FxType[] = ["echo", "delay", "reverb", "flanger", "phaser", "filter", "bitcrusher", "distortion", "gate", "roll"];
@@ -386,6 +387,31 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
 
   getState(): EngineState {
     return this.state;
+  }
+
+  /** Serializable snapshot of all controls which shape a two-deck performance. */
+  captureManualMashupSetup(): ManualMashupSetup {
+    const s = this.state;
+    return {
+      decks: s.decks.slice(0, 2).map((d) => ({ rate: d.rate, tempoRange: d.tempoRange, keylock: d.keylock, vinyl: d.vinyl, sync: d.sync, stems: { enabled: d.stems.enabled, muted: d.stems.muted.slice(), volume: d.stems.volume.slice() } })),
+      channels: s.mixer.channels.slice(0, 2).map((c) => ({ ...c })),
+      mixer: { crossfader: s.mixer.crossfader, masterLevel: s.mixer.masterLevel, headMix: s.mixer.headMix, headLevel: s.mixer.headLevel },
+      fx: s.fx.map((f) => ({ ...f, slots: f.slots.map((slot) => ({ ...slot })), decks: f.decks.slice() })),
+      masterDeck: s.masterDeck,
+    };
+  }
+
+  /** Restore a manual mashup after its source tracks have been loaded. */
+  restoreManualMashupSetup(setup: ManualMashupSetup): void {
+    setup.decks.slice(0, this.deckCount).forEach((saved, deck) => {
+      this.setRateDirect(deck, saved.rate);
+      this.patchDeck(deck, { tempoRange: saved.tempoRange, keylock: saved.keylock, vinyl: saved.vinyl, sync: saved.sync });
+      this.patchStems(deck, { enabled: saved.stems.enabled, muted: saved.stems.muted.slice(), volume: saved.stems.volume.slice() });
+    });
+    setup.channels.slice(0, this.deckCount).forEach((channel, i) => this.patchChannel(i, { ...channel }));
+    this.patchMixer({ ...setup.mixer });
+    setup.fx.slice(0, this.state.fx.length).forEach((fx, i) => this.patchFx(i, { ...fx, slots: fx.slots.map((slot) => ({ ...slot })), decks: fx.decks.slice() }));
+    this.patchState({ masterDeck: setup.masterDeck });
   }
 
   refreshTrackMetadata(tracks: TrackInfo[]): void {
@@ -899,7 +925,9 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     try {
       const bytes = await this.loadBytes(track, { onProgress, signal: abort.signal });
       if (token !== this.loadTokens[deck]) return;
-      const decoded = await this.audio.decode(bytes);
+      // decodeAudioData is allowed to detach its input ArrayBuffer. Preserve the
+      // original bytes because preparation hashes them after decoding.
+      const decoded = await this.audio.decode(bytes.slice(0));
       if (token !== this.loadTokens[deck]) return;
       const prepared = await this.preparation?.restore(track, bytes, decoded.duration) ?? {};
       if (token !== this.loadTokens[deck]) return;

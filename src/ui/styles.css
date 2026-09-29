@@ -80,6 +80,10 @@ select { padding: 2px 4px; }
 .playlist-track-info { background: var(--panel-2); border-top: 1px solid var(--line); }
 .playlist-track-info p { margin: 4px 0; }
 .playlist-view .table-wrap, .auto-queue .table-wrap { min-height: 100px; }
+.maships-view .table-wrap { min-height: 100px; }
+.mashup-projects { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.mashup-projects label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mashup-projects select { width: min(620px, 55vw); max-width: 100%; padding: 5px 7px; }
 .ctx-menu { max-height: min(360px, 80vh); overflow-y: auto; }
 .browser-sources { overflow-y: auto; }
 .layout-switch { display: flex; align-items: center; gap: 2px; }
@@ -272,7 +276,7 @@ td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.selected td { background: #2d8cff2e; }
 tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
-tbody tr:hover td { background: #ffffff08; }
+tbody tr:not(.selected):hover td { background: #ffffff08; }
 .title-cell { font-weight: 600; }
 .col-art { width: 28px; padding-right: 0; }
 .art-tile { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 3px; font-size: 10px; font-weight: 800; color: #fff; }
