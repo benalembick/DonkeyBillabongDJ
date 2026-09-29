@@ -108,7 +108,9 @@ export function StemSettings() {
             Device{" "}
             <select value={cfg.device} onChange={(e) => void setConfig({ device: e.target.value as StemDevice })}>
               <option value="auto">Auto</option>
-              <option value="gpu">GPU ({platform.os === "darwin" ? "CoreML / Apple Silicon" : "DirectML"})</option>
+              <option value="gpu" disabled={platform.os === "darwin"}>
+                {platform.os === "darwin" ? "GPU unavailable for this model (uses CPU)" : "GPU (DirectML)"}
+              </option>
               <option value="cpu">CPU</option>
             </select>
           </label>
@@ -119,7 +121,7 @@ export function StemSettings() {
         {st.settings.mode === "automatic" && "Automatic: each loaded track is separated from the playhead. "}
         {st.settings.mode === "preanalyse" && "Pre-analyse: separation starts when you switch STEMS on, or from the library (right-click → Analyse STEMS). "}
         {st.settings.mode === "realtime" && "Real-time: each loaded track is separated just ahead of the playhead. "}
-        Quality sets segment overlap (10 / 25 / 50%). Device Auto uses the GPU only if it passes a test run.
+        Quality sets segment overlap (10 / 25 / 50%). {platform.os === "darwin" ? "This model uses CPU on Apple Silicon; CoreML is incompatible." : "Device Auto uses the GPU only if it passes a test run."}
       </p>
       <p className="hint">
         Worker: {st.worker.state}

@@ -3,10 +3,11 @@
  *
  * Runs HT-Demucs through ONNX Runtime off the UI and audio threads, in its own
  * OS process: a crash or a slow GPU driver can never stall playback. Picks the
- * best execution provider (CoreML on macOS, DirectML on Windows GPUs) and falls
+ * supported execution provider (CPU on macOS, DirectML on Windows GPUs) and falls
  * back to the CPU if the GPU fails its validation run.
  */
 import os from "node:os";
+import { gpuProvider, sessionOptions } from "./runtime";
 import type { MessagePortMain } from "electron";
 import type * as Ort from "onnxruntime-node";
 import type { FromWorker, StemDevice, ToWorker, WorkerStatus } from "../../src/stems/protocol";
@@ -97,11 +98,7 @@ function setStatus(s: Partial<WorkerStatus>): void {
 const threads = () => Math.max(2, Math.floor(os.cpus().length * 0.6)); // leave headroom for audio + UI
 
 async function createSession(provider: string): Promise<Ort.InferenceSession> {
-  return loadOrt().InferenceSession.create(init!.modelPath, {
-    executionProviders: [provider === "sim-gpu" ? "cpu" : provider],
-    graphOptimizationLevel: "all",
-    ...(provider === "cpu" || provider === "sim-gpu" ? { intraOpNumThreads: threads() } : {}),
-  });
+  return loadOrt().InferenceSession.create(init!.modelPath, sessionOptions(process.platform, provider, threads()));
 }
 
 async function timedRun(s: Ort.InferenceSession): Promise<number> {
@@ -122,7 +119,7 @@ async function ensureSession(): Promise<Ort.InferenceSession> {
   setStatus({ state: "loading-model", message: "Loading separation model…" });
   // Test hook (smoke tests only): a CPU session posing as a GPU that later fails or crashes.
   const simulate = process.env.DBDJ_STEMS_SIMULATE_GPU;
-  const gpu = simulate ? "sim-gpu" : process.platform === "darwin" ? "coreml" : process.platform === "win32" ? "dml" : null;
+  const gpu = simulate ? "sim-gpu" : gpuProvider(process.platform);
   // Auto skips a GPU that already failed on this machine (remembered by main) unless re-measuring.
   const skipGpu = init.device === "auto" && init.gpuFailed && !retryGpu;
   retryGpu = false;
@@ -145,7 +142,7 @@ async function ensureSession(): Promise<Ort.InferenceSession> {
         state: "ready",
         device: sessionDevice,
         rtf: Math.round(rtf * 100) / 100,
-        message: gpuFailed ? `GPU unavailable (${lastErr.slice(0, 120)}); using CPU` : skipGpu ? "GPU failed on an earlier run; using CPU (Measure speed retries the GPU)" : undefined,
+        message: process.platform === "darwin" && !simulate ? "Using CPU: CoreML is incompatible with this separation model" : gpuFailed ? `GPU unavailable (${lastErr.slice(0, 120)}); using CPU` : skipGpu ? "GPU failed on an earlier run; using CPU (Measure speed retries the GPU)" : undefined,
       });
       return s;
     } catch (err) {

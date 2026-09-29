@@ -30,8 +30,8 @@ Each deck can split its track into **Vocals, Drums, Bass and Instruments** and m
 | Size | 166 MB, downloaded once from Settings → STEMS, checksum-verified, stored in the app's user-data folder |
 | Runtime | ONNX Runtime 1.30 (`onnxruntime-node`) |
 | Windows | DirectML (any DirectX 12 GPU: NVIDIA, AMD, Intel), falling back to CPU |
-| macOS | CoreML (Apple Silicon GPU / Neural Engine), falling back to CPU. **Intel Macs are not supported**: ONNX Runtime ships no x64 macOS build. The app says so and plays normally. |
-| Device choice | *Auto* tries the GPU with a real validation run and uses it only if it works. A GPU that fails is remembered, and *Measure speed* retries it. *CPU* / *GPU* force a device. |
+| macOS | CPU on Apple Silicon. CoreML is disabled because this model fails its Slice compilation. CPU arena and memory-pattern pooling are disabled on macOS to avoid large allocations that crash the Electron worker. **Intel Macs are not supported**: ONNX Runtime ships no x64 macOS build. The app says so and plays normally. |
+| Device choice | On Windows, *Auto* tries the GPU with a real validation run and uses it only if it works. A GPU that fails is remembered, and *Measure speed* retries it. *CPU* selects CPU; *GPU* tries GPU with CPU fallback. On macOS all saved device choices use CPU. |
 
 ### Is it real-time?
 
@@ -50,7 +50,7 @@ Measured on the development PC (Windows 11, Intel CPU with integrated GPU, 8 inf
 | Reloading a cached track | 0.3 s |
 | Deck speed during separation | 1.00× (no effect on playback) |
 
-A discrete NVIDIA/AMD GPU or Apple Silicon should be several times faster. On slow machines, **Pre-analyse** tracks from the library before a set; cached stems load instantly.
+Speed varies with the CPU and GPU; use the measured result on your computer. On slow machines, **Pre-analyse** tracks from the library before a set; cached stems load instantly.
 
 ## Modes (Settings → STEMS)
 
