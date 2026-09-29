@@ -376,6 +376,9 @@ export function Settings() {
   const selectedDevice = devices.find((d) => d.id === cfg.outputDeviceId);
   const ddjConnected = controllers.getControllers().some((c) => c.connected && /ddj[- ]?sb/i.test(c.portName));
   const usingDdjAudio = !!selectedDevice && /ddj[- ]?sb/i.test(selectedDevice.label);
+  const liveStatus = audio.getStatus();
+  const cueActive = liveStatus.routing === "quad";
+  const quadFellBack = cfg.routing === "quad" && !cueActive && liveStatus.state === "running";
 
   return (
     <div className="settings">
@@ -425,7 +428,25 @@ export function Settings() {
         <button disabled={busy} onClick={() => void applyAudio()}>
           {busy ? "Applying…" : "Apply audio settings"}
         </button>
-        {ddjConnected && !usingDdjAudio && <div className="hardware-audio-notice"><b>DDJ-SB hardware level knobs</b><span>MASTER LEVEL and HEADPHONES LEVEL do not send MIDI. They control the DDJ-SB sound card directly, so they only affect audio routed to that device.</span>{ddjAudio?<button disabled={busy} onClick={()=>void applyAudio({...cfg,outputDeviceId:ddjAudio.id,routing:"quad"})}>Use DDJ-SB audio + headphone cue</button>:<span className="hint">The DDJ-SB audio output is not currently exposed by Windows. Connect it, install or enable its audio driver, then reopen Settings.</span>}</div>}
+        <p className={cueActive ? "ok-text" : "hint"}>
+          Headphone cue: {cueActive ? "active — master on outputs 1/2, headphones on 3/4" : `off — audio is stereo (${liveStatus.maxOutputChannels || 2} output channels)`}
+          {quadFellBack && " · the selected device doesn't expose 4 channels, so 4-channel routing fell back to stereo"}
+        </p>
+        {ddjConnected && (!usingDdjAudio || !cueActive) && (
+          <div className="hardware-audio-notice">
+            <b>DDJ-SB headphones &amp; level knobs</b>
+            <span>
+              To hear CUE in headphones plugged into the DDJ-SB, send audio to the DDJ-SB with 4-channel routing (master 1/2, headphones 3/4). Its MASTER LEVEL and HEADPHONES LEVEL knobs don't send MIDI — they work on the DDJ-SB sound card directly, so they only affect audio routed to it.
+            </span>
+            {ddjAudio ? (
+              <button disabled={busy} onClick={() => void applyAudio({ ...cfg, outputDeviceId: ddjAudio.id, routing: "quad" })}>
+                Use DDJ-SB audio + headphone cue
+              </button>
+            ) : (
+              <span className="hint">The DDJ-SB audio output is not currently exposed by Windows. Connect it, install or enable its audio driver, then reopen Settings.</span>
+            )}
+          </div>
+        )}
         <p className="hint">Changing sample rate, latency or routing restarts the audio engine (loaded tracks are kept).</p>
       </fieldset>
 

@@ -200,6 +200,20 @@ export function createApp(): App {
   });
 
   bus.on("failed", ({ cmd, error }) => log.error("engine", `Action ${cmd.action} failed: ${String(error)}`));
+  // Headphone CUE only reaches headphones with 4-channel routing (e.g. the DDJ-SB sound card: master 1/2, phones 3/4).
+  let warnedNoCue = false;
+  bus.on("dispatched", (cmd) => {
+    if (warnedNoCue || cmd.value <= 0 || !/^mixer\.channel\d+\.cue$/.test(cmd.action)) return;
+    const st = audio.getStatus();
+    if (st.routing === "quad") return;
+    warnedNoCue = true;
+    log.warn(
+      "audio",
+      st.maxOutputChannels >= 4
+        ? "Headphone CUE is on, but audio is routed as stereo — set Settings → Audio → Routing to “4 channels” (DDJ-SB: master 1/2, headphones 3/4) and Apply."
+        : `Headphone CUE needs a 4-channel output such as the DDJ-SB sound card. The current output has ${st.maxOutputChannels || 2} channels — choose the DDJ-SB in Settings → Audio, set Routing to “4 channels” and Apply.`,
+    );
+  });
   audio.on((e) => {
     if (e.type === "error") log.error("audio", e.message);
   });

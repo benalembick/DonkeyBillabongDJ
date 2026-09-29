@@ -527,6 +527,32 @@ function runSmokeTest(win: BrowserWindow): void {
             const c = a.engine.getState().mixer.channels;
             checks.eqState = { deckA: { low: c[0].eqLow, mid: c[0].eqMid }, deckB: { low: c[1].eqLow, mid: c[1].eqMid } };
           }
+          // Headphone routing (DBDJ_SMOKE_HEADPHONES=1, no track loaded — nothing plays): 4-channel routing
+          // on a 2-channel device falls back to stereo; switching only the device to the DDJ-SB must enable it.
+          if (${JSON.stringify(!!process.env.DBDJ_SMOKE_HEADPHONES)}) {
+            const outs = await a.audio.listOutputDevices();
+            const ddj = outs.find((d) => /ddj[- ]?sb/i.test(d.label) && d.id !== "default" && !/^communications/i.test(d.id));
+            const other = outs.find((d) => !/ddj[- ]?sb/i.test(d.label) && d.id !== "default" && !/^communications/i.test(d.id));
+            const st = () => { const s = a.audio.getStatus(); return { routing: s.routing, channels: s.maxOutputChannels, state: s.state }; };
+            const base = a.audio.getConfig();
+            const hp = { devices: outs.map((d) => d.label) };
+            if (ddj && other) {
+              await a.audio.reconfigure({ ...base, outputDeviceId: other.id, routing: "quad" });
+              hp.quadOnTwoChannelDevice = { device: other.label, ...st() };
+              await a.audio.reconfigure({ ...a.audio.getConfig(), outputDeviceId: ddj.id }); // device-only change
+              hp.thenDeviceOnlySwitchToDdj = { device: ddj.label, ...st() };
+              await a.audio.reconfigure({ ...base, routing: "stereo" });
+              hp.stereo = st();
+              await a.audio.reconfigure({ ...a.audio.getConfig(), outputDeviceId: ddj.id, routing: "quad" }); // the Settings one-click button
+              hp.oneClickDdjHeadphoneCue = st();
+              a.bus.send("mixer.channel1.cue", 1); a.bus.send("mixer.channel1.cue", 0);
+              await a.audio.reconfigure({ ...base, routing: "stereo" });
+              a.bus.send("mixer.channel2.cue", 1); a.bus.send("mixer.channel2.cue", 0);
+              hp.cueWarningWhenStereo = a.log.all().filter((e) => e.source === "audio" && /Headphone CUE/.test(e.message)).map((e) => e.message);
+              await a.audio.reconfigure(base);
+            }
+            checks.headphones = hp;
+          }
           // Waveform style (DBDJ_SMOKE_WAVESTYLE=Simple|Filtered|RGB|RGB L/R|HSV), picked in the VIEW menu like a user would.
           const wantStyle = ${JSON.stringify(process.env.DBDJ_SMOKE_WAVESTYLE ?? "")};
           if (wantStyle) {

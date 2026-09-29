@@ -127,8 +127,12 @@ export class WebAudioEngine implements AudioEngine {
   }
 
   async reconfigure(config: AudioConfig): Promise<void> {
+    // A device-only change can just redirect a stereo graph. With 4-channel routing the graph
+    // depends on the device's channel count, so it is rebuilt (a graph that fell back to stereo
+    // on a 2-channel device would otherwise stay stereo on the DDJ-SB and the cue would be silent).
     const deviceOnly =
       this.ctx &&
+      config.routing === "stereo" &&
       config.sampleRate === this.config.sampleRate &&
       config.latencyHint === this.config.latencyHint &&
       config.routing === this.config.routing;
