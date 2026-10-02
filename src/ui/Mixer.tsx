@@ -1,31 +1,97 @@
 /** Mixer console (between the decks): per-channel TRIM / EQ / FILTER / CUE / fader + meters, master, crossfader. */
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { deckLetter } from "../core/actions";
 import { useApp, useEngineState, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
+import { clampRaw, dragDelta, FINE_FACTOR, KEY_STEP, rawToValue, stepValue, valueToRaw, wheelDelta } from "./knobMath";
 
+/**
+ * Rotary knob: drag up/down (or left/right) or scroll the wheel over it; hold Shift for fine
+ * control. Bipolar knobs catch at the centre and double-click back to it. Response: knobMath.ts.
+ */
 export function Knob(props: { label: string; value: number; action: string; kill?: boolean; killAction?: string; bipolar?: boolean; size?: number }) {
   const send = useSend();
   const size = props.size ?? 30;
+  const bipolar = !!props.bipolar;
+  const dial = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ id: number; x: number; y: number; raw: number } | null>(null);
+  // Latest props for the native wheel listener, which is attached once.
+  const live = useRef({ value: props.value, action: props.action, bipolar, send });
+  live.current = { value: props.value, action: props.action, bipolar, send };
   const deg = (props.value - 0.5) * 270;
+  const fine = (e: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean }) => e.shiftKey || e.ctrlKey || e.altKey;
+
+  // React's onWheel is passive and can't stop the page scrolling, so listen natively.
+  useEffect(() => {
+    const el = dial.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const k = live.current;
+      const next = stepValue(k.value, wheelDelta(e, fine(e)), k.bipolar);
+      if (next !== k.value) k.send(k.action, next);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.focus();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, raw: valueToRaw(props.value, bipolar) };
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    // Incremental, so pressing Shift mid-drag changes the speed without a jump.
+    d.raw = clampRaw(d.raw + dragDelta(e.clientX - d.x, e.clientY - d.y, fine(e)), bipolar);
+    d.x = e.clientX;
+    d.y = e.clientY;
+    const next = rawToValue(d.raw, bipolar);
+    if (next !== props.value) send(props.action, next);
+  };
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (drag.current?.id === e.pointerId) drag.current = null;
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = KEY_STEP * (fine(e) ? FINE_FACTOR : 1);
+    const delta = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step, PageUp: 0.1, PageDown: -0.1 }[e.key];
+    let next: number | undefined;
+    if (delta !== undefined) next = stepValue(props.value, delta, bipolar);
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = 1;
+    else if ((e.key === "Enter" || e.key === " ") && bipolar) next = 0.5;
+    if (next === undefined) return;
+    e.preventDefault();
+    if (next !== props.value) send(props.action, next);
+  };
+
   return (
     <div className={`knob ${props.kill ? "killed" : ""}`}>
-      <div className="knob-dial" style={{ width: size, height: size, ["--deg" as string]: `${deg}deg` }}>
+      <div
+        ref={dial}
+        className="knob-dial"
+        style={{ width: size, height: size, ["--deg" as string]: `${deg}deg` }}
+        role="slider"
+        tabIndex={0}
+        aria-label={props.label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(props.value * 100)}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onKeyDown={onKeyDown}
+        onDoubleClick={() => bipolar && send(props.action, 0.5)}
+        title={`${props.label} ${Math.round(props.value * 100)}% · drag or scroll · Shift for fine${bipolar ? " · double-click centres" : ""}`}
+      >
         <svg viewBox="0 0 40 40">
           <circle cx="20" cy="20" r="17" className="knob-track" />
-          <path d={arcPath(props.bipolar ? 0.5 : 0, props.value)} className="knob-arc" />
+          <path d={arcPath(bipolar ? 0.5 : 0, props.value)} className="knob-arc" />
         </svg>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.001}
-          value={props.value}
-          aria-label={props.label}
-          onChange={(e) => send(props.action, Number(e.target.value))}
-          onDoubleClick={() => props.bipolar !== false && send(props.action, 0.5)}
-          title={props.bipolar !== false ? `${props.label} (drag · double-click centres)` : props.label}
-        />
       </div>
       <span className="knob-label">
         {props.label}
