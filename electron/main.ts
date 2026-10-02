@@ -13,6 +13,7 @@ import path from "node:path";
 import { registerStreamingIpc } from "./streaming/ipc";
 import { registerStemIpc } from "./stems/host";
 import { registerLightingIpc } from "./lighting/ipc";
+import { registerUpdater } from "./updater";
 import { handleArtProtocol, registerArtScheme } from "./library/artwork";
 
 registerArtScheme();
@@ -569,6 +570,20 @@ function runSmokeTest(win: BrowserWindow): void {
             await sleep(500);
             checks.waveStyle = JSON.parse(localStorage.getItem("dbdj.ui.layout.v1") || "{}").waveStyle;
           }
+          // App updates (DBDJ_SMOKE_UPDATES=1): a real check against GitHub Releases, then the About page
+          // (an installed Windows build downloads the update; set DBDJ_SMOKE_UPDATES_WAIT_MS to wait for it).
+          if (${JSON.stringify(!!process.env.DBDJ_SMOKE_UPDATES)} && window.dbdjDesktop?.updates) {
+            const u = window.dbdjDesktop.updates;
+            const seen = [];
+            const off = u.onStatus((s) => seen.push(s.state + (s.percent != null ? " " + s.percent + "%" : "")));
+            await u.check();
+            const until = performance.now() + ${Number(process.env.DBDJ_SMOKE_UPDATES_WAIT_MS ?? 0)};
+            while (performance.now() < until && (await u.status()).state === "downloading") await sleep(250);
+            off();
+            checks.updates = { final: await u.status(), seen: [...new Set(seen)] };
+            document.querySelector(".statuses .utility-button:last-child")?.click();
+            await sleep(400);
+          }
           // Simulate what an OS file drop does by default: navigate to the file. Must be blocked.
           if (ref) location.href = "file:///" + ref.replace(/\\\\/g, "/");
           await sleep(800);
@@ -672,6 +687,7 @@ app.whenReady().then(() => {
   registerIpc();
   registerStreamingIpc();
   registerLightingIpc();
+  registerUpdater();
   void registerStemIpc();
   createWindow();
   app.on("activate", () => {

@@ -422,6 +422,11 @@ tr.stream-only td { color: var(--muted); }
 
 /* ── desktop download ── */
 .status.download { color: #000; background: var(--deck-a); border-color: var(--deck-a); }
+.status.update-badge { color: var(--deck-a); border-color: var(--deck-a); }
+.update-panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 14px 0 0; padding: 12px 14px; background: linear-gradient(145deg,#151c26,#0e1218); border: 1px solid #283647; border-radius: 7px; }
+.update-panel h3 { margin: 0 0 4px; color: #e3effc; font-size: 13px; }
+.update-panel .hint { margin: 0; font-size: 12px; }
+.update-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .modal-backdrop { position: fixed; inset: 0; background: #000a; display: grid; place-items: center; z-index: 100; }
 .modal { position: relative; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; box-shadow: 0 20px 60px #000c; user-select: text; }
 .modal h2 { margin: 0 0 6px; }

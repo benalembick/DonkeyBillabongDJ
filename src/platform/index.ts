@@ -10,6 +10,7 @@ import type { TrackInfo } from "../core/engine/types";
 import type { TagResult } from "../library/tags";
 import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackResolver";
 import type { SourceId } from "../matching/sources";
+import type { UpdateStatus } from "./updates";
 import { LocalStorageStore } from "../providers/web";
 import type { StemBridge } from "../stems/StemService";
 import type { LightingBridge } from "../lighting/LightingService";
@@ -75,6 +76,19 @@ export interface DesktopBridge {
   streaming: StreamingBridge;
   stems: StemBridge;
   lighting?: LightingBridge;
+  updates?: UpdateBridge;
+}
+
+/** App updates (electron/updater.ts). */
+export interface UpdateBridge {
+  status(): Promise<UpdateStatus>;
+  check(): Promise<UpdateStatus>;
+  /** macOS / dev: opens the new installer's download in the browser. */
+  download(): Promise<void>;
+  openNotes(): Promise<void>;
+  /** Windows: quits and installs the downloaded update, then relaunches. */
+  install(): Promise<void>;
+  onStatus(cb: (s: UpdateStatus) => void): () => void;
 }
 
 /** Row shapes of the desktop SQLite database (electron/library/db.ts). */

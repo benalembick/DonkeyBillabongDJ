@@ -103,4 +103,5 @@ jobs:
           body: |
             **Windows:** download `DonkeyBillabongDJ-Setup.exe`, run it — if SmartScreen appears choose *More info → Run anyway* (the app isn't code-signed yet).
             **macOS:** download `DonkeyBillabongDJ-macOS.dmg`, drag the app to Applications, then right-click → *Open* the first time (not notarised yet).
+            **Already installed (0.1.9 or later)?** The app finds new versions itself (About → *Check for updates*). On Windows it downloads in the background and installs when you restart; on macOS it downloads the new `.dmg` for you.
             Close Serato / rekordbox / Mixxx before connecting a DDJ-SB.

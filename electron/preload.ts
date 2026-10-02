@@ -80,6 +80,18 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
       return () => ipcRenderer.removeListener("dbdj:dmx:input", h);
     },
   },
+  updates: {
+    status: () => ipcRenderer.invoke("dbdj:update:status"),
+    check: () => ipcRenderer.invoke("dbdj:update:check"),
+    download: () => ipcRenderer.invoke("dbdj:update:download"),
+    openNotes: () => ipcRenderer.invoke("dbdj:update:notes"),
+    install: () => ipcRenderer.invoke("dbdj:update:install"),
+    onStatus: (cb: (s: unknown) => void) => {
+      const h = (_e: unknown, s: unknown) => cb(s);
+      ipcRenderer.on("dbdj:update:status", h);
+      return () => ipcRenderer.removeListener("dbdj:update:status", h);
+    },
+  },
   streaming: {
     status: (id: string) => ipcRenderer.invoke("dbdj:stream:status", id),
     configure: (id: string, cfg: unknown) => ipcRenderer.invoke("dbdj:stream:configure", id, cfg),

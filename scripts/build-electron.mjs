@@ -7,8 +7,9 @@ const common = {
   target: "node22",
   format: "cjs",
   sourcemap: true,
-  // Native addon: loaded from node_modules at runtime (unpacked from the asar in packaged builds).
-  external: ["electron", "onnxruntime-node"],
+  // Loaded from node_modules at runtime: the native addon (unpacked from the asar in packaged
+  // builds) and electron-updater, which lazy-loads its per-platform updaters.
+  external: ["electron", "electron-updater", "onnxruntime-node"],
   logLevel: "info",
 };
 

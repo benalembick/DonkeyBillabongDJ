@@ -23,6 +23,7 @@
     "smoke": "npm run build && cross-env DBDJ_SMOKE_TEST=1 node scripts/run-electron.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "fast-xml-parser": "^5.11.1",
     "music-metadata": "^11.16.1",
     "onnxruntime-node": "^1.30.0",

@@ -6,6 +6,7 @@ import { AppContext, useApp, useEngineState } from "./context";
 import { ControllerTest, LiveEvents, MidiMonitor } from "./ControllerPanels";
 import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
+import { UpdateBadge } from "./Updates";
 import { useFrameStore, useTick } from "./hooks";
 import { LibraryPanel, type MainBrowserArea } from "./LibraryPanel";
 import { MatchDialogHost } from "./MatchDialog";
@@ -281,7 +282,7 @@ function Shell() {
         <LayoutSwitch />
         <div className="statuses">
           <div className="system-status-stack"><AudioStatusBadge /><ControllerStatus /></div>
-          {platform.kind === "desktop" ? null : <DownloadDesktopButton />}
+          {platform.kind === "desktop" ? <UpdateBadge onOpen={() => setTool("About")} /> : <DownloadDesktopButton />}
           <button className="status open-tools utility-button" onClick={() => setTool("Controller events")} title="Controller events, test and MIDI monitor"><span aria-hidden="true">🎛</span> Controller</button>
           <button className="status utility-button" onClick={() => setTool("Diagnostics")}><span aria-hidden="true">◫</span> Diagnostics</button>
           <button className="status utility-button" onClick={() => setTool("Settings")}><span aria-hidden="true">⚙</span> Settings</button>
