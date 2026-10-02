@@ -18,7 +18,7 @@ import { DMX_SLOTS } from "./protocol";
 import { GENERIC_FIXTURES, INTENSITY_TYPES, findDef, fitsUniverse, modeOf, nextFreeAddress, overlaps, type FixtureDef, type PatchedFixture } from "./fixtures";
 import { addPlaceholderMode, parseQlcDefinition, parseQlcFixtureList, placeholderDef, qlcDefId, qlcFileKind } from "./qlcImport";
 import { defaultIo, type ExitBehaviour, type IoStatus, type UniverseIo } from "./io";
-import { DEFAULT_SOUND_SETTINGS, SoundToLight, type MovementSettings, type SoundSettings } from "./SoundToLight";
+import { DEFAULT_SOUND_SETTINGS, SoundToLight, type ChannelLink, type MovementSettings, type SoundSettings } from "./SoundToLight";
 import { makeBeatSource, makeProbe, MicInput, type AnalysisTapProvider } from "./audioInputs";
 import { UsbProOutput } from "./usbPro";
 
@@ -161,7 +161,7 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
       fixtures: Array.isArray(c.fixtures) ? c.fixtures : [],
       customDefs: Array.isArray(c.customDefs) ? c.customDefs : [],
       // Sound control never starts by itself; movement settings merged so older setups get the new fields.
-      sound: { ...base.sound, ...c.sound, enabled: false, movement: { ...base.sound.movement, ...c.sound?.movement } },
+      sound: { ...base.sound, ...c.sound, enabled: false, movement: { ...base.sound.movement, ...c.sound?.movement }, channelLinks: Array.isArray(c.sound?.channelLinks) ? c.sound.channelLinks : [] },
       console: c.console?.widgets ? c.console : base.console,
     };
     if (raw) this.log.info("lighting", `Lighting setup restored: ${this.cfg.fixtures.length} fixture(s), ${this.cfg.universes.length} universe(s)`);
@@ -350,6 +350,16 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
 
   setMovement(patch: Partial<MovementSettings>): void {
     this.setSound({ movement: { ...this.cfg.sound.movement, ...patch } });
+  }
+
+  /** Allocate a DMX Desk channel to part of the music (null removes the link). */
+  setChannelLink(universe: number, channel: number, link: Omit<ChannelLink, "universe" | "channel"> | null): void {
+    const others = this.cfg.sound.channelLinks.filter((x) => x.universe !== universe || x.channel !== channel);
+    this.setSound({ channelLinks: link ? [...others, { ...link, universe, channel }] : others });
+  }
+
+  channelLink(universe: number, channel: number): ChannelLink | undefined {
+    return this.cfg.sound.channelLinks.find((x) => x.universe === universe && x.channel === channel);
   }
 
   /**

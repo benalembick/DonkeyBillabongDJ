@@ -5,7 +5,7 @@ import { DmxEngine, LAYER_DESK, LAYER_SOUND } from "../src/lighting/DmxEngine";
 import { addressRange, channelMap, GENERIC_FIXTURES, nextFreeAddress, overlaps, type PatchedFixture } from "../src/lighting/fixtures";
 import { defaultIo, type IoStatus } from "../src/lighting/io";
 import { artDmx, artPoll, e131Data, enttecProDmx, parseArtDmx, parseArtPollReply, parseE131, sacnMulticast } from "../src/lighting/protocol";
-import { movementOffset, SoundToLight, type BandReading } from "../src/lighting/SoundToLight";
+import { linkSteps, movementOffset, SoundToLight, type BandReading } from "../src/lighting/SoundToLight";
 
 const frame = (pairs: [number, number][]) => {
   const d = new Uint8Array(512);
@@ -383,5 +383,87 @@ describe("sound-to-light movement (moving heads)", () => {
     const { engine, advance } = setup({ extra: [laser] });
     advance(3);
     expect(Math.max(...engine.compute(1).subarray(40, 51))).toBe(0);
+  });
+});
+
+describe("DMX Desk channels linked to sound", () => {
+  // A laser with a pattern channel whose ranges come from its definition (as a QLC+ import gives).
+  const laserDef = {
+    id: "test/laser", manufacturer: "Test", model: "Laser", category: "laser" as const, laser: true,
+    modes: [{ name: "3ch", channels: [
+      { name: "Mode", type: "laser" as const },
+      { name: "Pattern", type: "laser" as const, capabilities: [{ min: 0, max: 9, name: "Circle" }, { min: 10, max: 19, name: "Line" }, { min: 20, max: 29, name: "Wave" }, { min: 30, max: 39, name: "Star" }] },
+      { name: "Zoom", type: "laser" as const },
+    ] }],
+  };
+  const rig = () => ({
+    defs: [...GENERIC_FIXTURES, laserDef],
+    fixtures: [
+      { id: "lz", name: "Laser", defId: "test/laser", mode: "3ch", universe: 1, address: 10, channelCount: 3 },
+    ] as PatchedFixture[],
+  });
+  function setup(reading: () => BandReading) {
+    const engine = new DmxEngine();
+    let beats = 0;
+    const stl = new SoundToLight({ engine, probe: { read: reading }, beats: { beatPosition: () => ({ beats, bpm: 120 }) }, rig });
+    stl.settings = { ...stl.settings, enabled: true, fixtures: [] };
+    const beat = () => { for (let i = 0; i < 20; i++) { beats += 1 / 20; stl.update(0.5 / 20); } };
+    return { engine, stl, beat };
+  }
+
+  it("linkSteps: the channel's named ranges (midpoints) within min–max, else evenly spaced steps", () => {
+    const caps = laserDef.modes[0].channels[1].capabilities!;
+    expect(linkSteps({ min: 0, max: 255, steps: 8, useRanges: true }, caps)).toEqual([5, 15, 25, 35]); // midpoints
+    expect(linkSteps({ min: 10, max: 29, steps: 8, useRanges: true }, caps)).toEqual([15, 25]);
+    expect(linkSteps({ min: 0, max: 255, steps: 4, useRanges: false }, caps)).toEqual([0, 85, 170, 255]);
+    expect(linkSteps({ min: 255, max: 0, steps: 2, useRanges: true })).toEqual([0, 255]); // no ranges → even
+  });
+
+  it("Follow: a channel follows the highs between min and max and wins over the desk fader", () => {
+    let high = 0.05;
+    const { engine, stl, beat } = setup(() => ({ low: 0.2, mid: 0.2, high, amplitude: 0.5 }));
+    engine.setChannel(LAYER_DESK, 1, 100, 255);
+    stl.settings = { ...stl.settings, channelLinks: [{ universe: 1, channel: 100, source: "high", mode: "follow", min: 40, max: 200, steps: 8, useRanges: false }] };
+    beat();
+    const quiet = engine.compute(1)[99];
+    high = 1;
+    beat();
+    const bright = engine.compute(1)[99];
+    expect(quiet).toBeGreaterThanOrEqual(40);
+    expect(quiet).toBeLessThan(120); // desk's 255 doesn't win
+    expect(bright).toBeGreaterThan(quiet + 40);
+    expect(bright).toBeLessThanOrEqual(200);
+    stl.settings = { ...stl.settings, enabled: false };
+    stl.update(0.02);
+    expect(engine.compute(1)[99]).toBe(255); // sound off → the fader again
+  });
+
+  it("Step: a laser's pattern channel steps through its named shapes on every beat — only with lasers allowed", () => {
+    const { engine, stl, beat } = setup(() => ({ low: 1, mid: 0.5, high: 0.5, amplitude: 1 }));
+    stl.settings = { ...stl.settings, channelLinks: [{ universe: 1, channel: 11, source: "beat", mode: "step", min: 0, max: 255, steps: 8, useRanges: true }] };
+    beat();
+    beat();
+    expect(engine.compute(1)[10]).toBe(0); // laser safety: nothing yet
+    stl.settings = { ...stl.settings, allowLasers: true };
+    const seen: number[] = [];
+    for (let i = 0; i < 6; i++) { beat(); seen.push(engine.compute(1)[10]); }
+    expect(new Set(seen)).toEqual(new Set([5, 15, 25, 35]));
+    for (let i = 1; i < seen.length; i++) expect(seen[i]).toBe([5, 15, 25, 35][([5, 15, 25, 35].indexOf(seen[i - 1]) + 1) % 4]); // in order, wrapping
+  });
+
+  it("Random: a different step on every downbeat, holding between bars", () => {
+    const engine = new DmxEngine();
+    let beats = 0;
+    const stl = new SoundToLight({ engine, probe: { read: () => ({ low: 1, mid: 0.5, high: 0.5, amplitude: 1 }) }, beats: { beatPosition: () => ({ beats, bpm: 120 }) }, rig });
+    stl.settings = { ...stl.settings, enabled: true, channelLinks: [{ universe: 1, channel: 300, source: "downbeat", mode: "random", min: 0, max: 255, steps: 6, useRanges: false }] };
+    const values: number[] = [];
+    for (let bar = 0; bar < 12; bar++) {
+      const atBarStart: number[] = [];
+      for (let i = 0; i < 80; i++) { beats += 4 / 80; stl.update(2 / 80); atBarStart.push(engine.compute(1)[299]); }
+      values.push(atBarStart[atBarStart.length - 1]);
+      expect(new Set(atBarStart.slice(5)).size).toBeLessThanOrEqual(2); // holds within the bar
+    }
+    for (let i = 1; i < values.length; i++) expect(values[i]).not.toBe(values[i - 1]);
+    expect(values.every((v) => [0, 51, 102, 153, 204, 255].includes(v))).toBe(true);
   });
 });

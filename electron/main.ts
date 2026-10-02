@@ -27,6 +27,7 @@ import { runScratchSmoke } from "./scratchSmoke";
 import { runKeylockSmoke } from "./keylockSmoke";
 import { runBigLibrarySmoke } from "./libSmoke";
 import { runMovementSmoke } from "./movementSmoke";
+import { runDeskLinkSmoke } from "./deskLinkSmoke";
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".flac", ".ogg", ".opus", ".aif", ".aiff"]);
 const ALLOWED_PERMISSIONS = new Set(["midi", "midiSysex", "media", "speaker-selection", "clipboard-sanitized-write", "serial"]);
@@ -192,6 +193,7 @@ function runSmokeTest(win: BrowserWindow): void {
   let smokeKeylock: unknown = null;
   let smokeBigLib: unknown = null;
   let smokeMovement: unknown = null;
+  let smokeDeskLink: unknown = null;
   // Peak renderer memory (MB) while the smoke test runs, for the analysis memory check.
   let peakRendererMb = 0;
   const rendererMbTimeline: number[] = []; // once a second
@@ -220,6 +222,7 @@ function runSmokeTest(win: BrowserWindow): void {
         if (process.env.DBDJ_SMOKE_KEYLOCK) smokeKeylock = await runKeylockSmoke(win, process.env.DBDJ_SMOKE_KEYLOCK).catch((e) => ({ error: String(e) }));
         if (process.env.DBDJ_SMOKE_BIGLIB) smokeBigLib = await runBigLibrarySmoke(win, Number(process.env.DBDJ_SMOKE_BIGLIB)).catch((e) => ({ error: String(e) }));
         if (process.env.DBDJ_SMOKE_MOVEMENT) smokeMovement = await runMovementSmoke(win, process.env.DBDJ_SMOKE_MOVEMENT).catch((e) => ({ error: String(e) }));
+        if (process.env.DBDJ_SMOKE_DESKLINK) smokeDeskLink = await runDeskLinkSmoke(win, process.env.DBDJ_SMOKE_DESKLINK).catch((e) => ({ error: String(e) }));
         smokeLighting = process.env.DBDJ_SMOKE_LIGHTING ? await runLightingSmoke(win, process.env.DBDJ_SMOKE_LIGHTING, process.env.DBDJ_SMOKE_LIGHTING_TRACK ?? "").catch((e) => ({ error: String(e) })) : null;
         report = await win.webContents.executeJavaScript(`(async () => {
           const a = window.dbdj;
@@ -665,7 +668,7 @@ function runSmokeTest(win: BrowserWindow): void {
       }
       const gpuStatus = app.getGPUFeatureStatus() as unknown as Record<string, string>;
       const gpu = { canvas: gpuStatus["2d_canvas"], compositing: gpuStatus.gpu_compositing, rasterization: gpuStatus.rasterization };
-      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu, lighting: smokeLighting, knobs: smokeKnobs, scratch: smokeScratch, keylock: smokeKeylock, bigLibrary: smokeBigLib, movement: smokeMovement, peakRendererMb, rendererMbTimeline }, null, 2)}\n`);
+      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu, lighting: smokeLighting, knobs: smokeKnobs, scratch: smokeScratch, keylock: smokeKeylock, bigLibrary: smokeBigLib, movement: smokeMovement, deskLink: smokeDeskLink, peakRendererMb, rendererMbTimeline }, null, 2)}\n`);
       clearInterval(memTimer);
       app.exit(errors.length ? 1 : 0);
     }, Number(process.env.DBDJ_SMOKE_WAIT_MS ?? 8000));

@@ -132,6 +132,12 @@ The Virtual Console is a list of widgets (`VcWidget`, with a type registry). The
 - Lasers are never moved unless **Allow lasers** is on.
 - MIDI-mappable: `lighting.sound.movement` (on/off) and `lighting.sound.movement.size`.
 
+**Desk channels linked to sound.** On the DMX Desk, any channel's **♪** button allocates it to part of the music (`SoundSettings.channelLinks`) — e.g. a laser's pattern channel changing shape on every beat, or a gobo following the highs:
+- **Follows:** Bass, Mids, Highs, Overall level, Beat, or Downbeat (each bar).
+- **Follow the level:** the value moves between Min and Max with that level (Beat/Downbeat: their flash).
+- **Next step / Random step on each hit:** on each bass/mid/high hit, beat or bar, the channel moves to the next (or a random, never the same) value. The values are the channel's **named ranges** from its fixture definition (e.g. a QLC+ laser's pattern list, midpoint of each range within Min–Max), or N evenly spaced steps.
+- Linked channels are owned by sound control (LTP claim) while it's on; the desk fader takes over again when it's off. Laser fixtures only follow once **Allow lasers** is on.
+
 ## Persistence
 
 The whole setup is saved to `<userData>/lighting.json` (desktop) or localStorage (browser) and restored at start:

@@ -11,7 +11,7 @@ import { VC_WIDGET_TYPES } from "../../lighting/LightingService";
 import { LAYER_DESK } from "../../lighting/DmxEngine";
 import { CHANNEL_LABELS, addressRange, capabilityAt, channelMap, findDef, type ChannelType, type PatchedFixture } from "../../lighting/fixtures";
 import { INPUT_LABELS, OUTPUT_LABELS, type InputKind, type LinkState, type OutputKind, type UniverseIo } from "../../lighting/io";
-import { DEFAULT_MAPPINGS, MOVEMENT_PATTERNS, type MovementPattern, type MovementSettings, type SoundInput, type SoundMapping, type SoundSettings, type SoundSource } from "../../lighting/SoundToLight";
+import { DEFAULT_MAPPINGS, LINK_MODES, LINK_SOURCES, linkSteps, MOVEMENT_PATTERNS, type ChannelLink, type LinkMode, type LinkSource, type MovementPattern, type MovementSettings, type SoundInput, type SoundMapping, type SoundSettings, type SoundSource } from "../../lighting/SoundToLight";
 
 type Tab = "console" | "desk" | "fixtures" | "io";
 const TABS: [Tab, string][] = [
@@ -470,6 +470,7 @@ function DmxDesk({ l }: { l: LightingService }) {
   const [u, setU] = useState(universes[0] ?? 1);
   const [page, setPage] = useState(0);
   const [sel, setSel] = useState<Set<number>>(new Set());
+  const [linking, setLinking] = useState<number | null>(null);
   const universe = universes.includes(u) ? u : universes[0];
   const map = useMemo(() => channelMap(l.defs, cfg.fixtures, universe), [l, cfg.fixtures, universe]);
   const out = l.engine.compute(universe);
@@ -518,13 +519,15 @@ function DmxDesk({ l }: { l: LightingService }) {
         </button>
         <button onClick={() => l.deskClear(universe)}>RESET</button>
       </div>
+      {linking !== null && <SoundLinkEditor l={l} universe={universe} channel={linking} info={map[linking]} onClose={() => setLinking(null)} />}
       <div className="lx-faders">
         {channels.map((ch) => {
           const info = map[ch];
           const desk = l.engine.getLayerValue(LAYER_DESK, universe, ch);
           const live = out[ch - 1];
+          const link = cfg.sound.channelLinks.find((x) => x.universe === universe && x.channel === ch);
           return (
-            <div key={ch} className={`lx-fader ${sel.has(ch) ? "selected" : ""} ${info ? "patched" : ""}`} style={info ? { ["--fx" as string]: fixtureColour(info.fixture.id) } : undefined}>
+            <div key={ch} className={`lx-fader ${sel.has(ch) ? "selected" : ""} ${info ? "patched" : ""} ${link ? "linked" : ""}`} style={info ? { ["--fx" as string]: fixtureColour(info.fixture.id) } : undefined}>
               <button
                 className="lx-ch"
                 onClick={(e) => toggleSel(ch, e)}
@@ -540,10 +543,112 @@ function DmxDesk({ l }: { l: LightingService }) {
               </div>
               <output title="Desk value (bar behind the fader = actual output)">{desk}</output>
               <small className="lx-out">{live}</small>
+              <button
+                className={`lx-link ${link ? "on" : ""} ${linking === ch ? "editing" : ""}`}
+                onClick={() => setLinking(linking === ch ? null : ch)}
+                title={link ? `Driven by sound: ${LINK_SOURCES.find(([v]) => v === link.source)?.[1]} · ${LINK_MODES.find(([v]) => v === link.mode)?.[1]}` : "Allocate this channel to part of the music"}
+              >
+                ♪{link ? ` ${LINK_SHORT[link.source]}` : ""}
+              </button>
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+const LINK_SHORT: Record<LinkSource, string> = { low: "BASS", mid: "MID", high: "HIGH", amplitude: "LVL", beat: "BEAT", downbeat: "BAR" };
+
+/** Allocate one desk channel to part of the music (Sound Activated Light Control). */
+function SoundLinkEditor({ l, universe, channel, info, onClose }: { l: LightingService; universe: number; channel: number; info: ReturnType<typeof channelMap>[number]; onClose: () => void }) {
+  const cfg = useLightingConfig(l);
+  const existing = cfg.sound.channelLinks.find((x) => x.universe === universe && x.channel === channel);
+  const caps = info?.channel.capabilities;
+  const laser = !!(info && findDef(l.defs, info.fixture.defId)?.laser);
+  const fresh: Omit<ChannelLink, "universe" | "channel"> = {
+    source: info?.channel.type === "laser" || caps?.length ? "beat" : "high",
+    mode: caps?.length ? "step" : "follow",
+    min: 0,
+    max: 255,
+    steps: 8,
+    useRanges: !!caps?.length,
+  };
+  const link = existing ?? null;
+  const v = link ?? fresh;
+  const save = (patch: Partial<ChannelLink>) => l.setChannelLink(universe, channel, { ...v, ...patch });
+  const steps = v.mode === "follow" ? [] : linkSteps(v, caps);
+  return (
+    <div className="lx-link-editor">
+      <div className="lx-row">
+        <b>
+          ♪ CH {String(channel).padStart(3, "0")}
+          {info ? ` · ${info.fixture.name} — ${info.channel.name}` : " · unpatched"}
+        </b>
+        <span className="lx-spacer" />
+        <button className="tiny" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      {!link ? (
+        <div className="lx-row">
+          <span className="hint">Drive this channel from the music instead of its fader, e.g. a laser's pattern changing on every beat, or a gobo following the highs.</span>
+          <button className="primary" onClick={() => l.setChannelLink(universe, channel, fresh)}>
+            Link to sound
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="lx-row">
+            <label>
+              Follows{" "}
+              <select value={link.source} onChange={(e) => save({ source: e.target.value as LinkSource })}>
+                {LINK_SOURCES.map(([x, t]) => (
+                  <option key={x} value={x}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Mode{" "}
+              <select value={link.mode} onChange={(e) => save({ mode: e.target.value as LinkMode })}>
+                {LINK_MODES.map(([x, t]) => (
+                  <option key={x} value={x}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Min <input type="number" min={0} max={255} value={link.min} onChange={(e) => save({ min: Math.max(0, Math.min(255, Number(e.target.value) || 0)) })} />
+            </label>
+            <label>
+              Max <input type="number" min={0} max={255} value={link.max} onChange={(e) => save({ max: Math.max(0, Math.min(255, Number(e.target.value) || 0)) })} />
+            </label>
+            {link.mode !== "follow" && caps?.length ? (
+              <label title="Step through the channel's named ranges from its fixture definition">
+                <input type="checkbox" checked={link.useRanges} onChange={(e) => save({ useRanges: e.target.checked })} /> Use the channel's ranges ({caps.length})
+              </label>
+            ) : null}
+            {link.mode !== "follow" && !(link.useRanges && caps?.length) && (
+              <label>
+                Steps <input type="number" min={2} max={64} value={link.steps} onChange={(e) => save({ steps: Math.max(2, Math.min(64, Number(e.target.value) || 2)) })} />
+              </label>
+            )}
+            <span className="lx-spacer" />
+            <button onClick={() => l.setChannelLink(universe, channel, null)}>Remove link</button>
+          </div>
+          <p className="hint">
+            {link.mode === "follow"
+              ? `Value moves between ${Math.min(link.min, link.max)} and ${Math.max(link.min, link.max)} with the ${LINK_SOURCES.find(([x]) => x === link.source)?.[1].toLowerCase()}.`
+              : `On each ${link.source === "low" ? "bass hit" : link.source === "mid" ? "mid hit" : link.source === "high" ? "high hit" : link.source === "downbeat" ? "bar" : "beat"} → ${link.mode === "step" ? "next" : "a random"} value of: ${steps.map((x) => (caps?.length && link.useRanges ? `${x} (${capabilityAt(info?.channel, x) ?? ""})` : x)).join(", ")}`}
+            {". "}Active while sound control is on; the fader takes over when it's off.
+          </p>
+          {!cfg.sound.enabled && <p className="warn">Sound control is off — switch it on (Virtual Console) for linked channels to follow the music.</p>}
+          {laser && !cfg.sound.allowLasers && <p className="warn">This is a laser fixture: it only follows the music once “Allow lasers” is switched on in sound control.</p>}
+        </>
+      )}
     </div>
   );
 }

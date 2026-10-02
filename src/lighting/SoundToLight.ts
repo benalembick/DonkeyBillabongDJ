@@ -115,6 +115,57 @@ function hash01(n: number): number {
 
 const POSITION_TYPES = new Set<ChannelType>(["pan", "panFine", "tilt", "tiltFine"]);
 
+/** What a desk channel linked to sound follows. */
+export type LinkSource = "low" | "mid" | "high" | "amplitude" | "beat" | "downbeat";
+export type LinkMode = "follow" | "step" | "random";
+
+export const LINK_SOURCES: [LinkSource, string][] = [
+  ["low", "Bass"],
+  ["mid", "Mids"],
+  ["high", "Highs"],
+  ["amplitude", "Overall level"],
+  ["beat", "Beat"],
+  ["downbeat", "Downbeat (each bar)"],
+];
+
+export const LINK_MODES: [LinkMode, string][] = [
+  ["follow", "Follow the level"],
+  ["step", "Next step on each hit"],
+  ["random", "Random step on each hit"],
+];
+
+/**
+ * A DMX Desk channel allocated to part of the music, e.g. a laser's pattern channel stepping
+ * through its shapes on every beat, or a gobo following the highs. Owned by sound control (LTP)
+ * while it's on; the desk fader takes over again when it's off.
+ */
+export interface ChannelLink {
+  universe: number;
+  /** 1..512 */
+  channel: number;
+  source: LinkSource;
+  mode: LinkMode;
+  /** DMX value range used (0..255). */
+  min: number;
+  max: number;
+  /** Step / Random: number of evenly spaced values between min and max… */
+  steps: number;
+  /** …or the channel's named ranges (e.g. laser patterns from a QLC+ definition) within min–max. */
+  useRanges: boolean;
+}
+
+/** The values a Step/Random link moves between. */
+export function linkSteps(link: Pick<ChannelLink, "min" | "max" | "steps" | "useRanges">, capabilities?: { min: number; max: number }[]): number[] {
+  const lo = Math.max(0, Math.min(255, Math.min(link.min, link.max)));
+  const hi = Math.max(0, Math.min(255, Math.max(link.min, link.max)));
+  if (link.useRanges && capabilities?.length) {
+    const inside = capabilities.filter((c) => c.max >= lo && c.min <= hi).map((c) => Math.round((Math.max(c.min, lo) + Math.min(c.max, hi)) / 2));
+    if (inside.length) return [...new Set(inside)];
+  }
+  const n = Math.max(2, Math.min(256, Math.round(link.steps)));
+  return Array.from({ length: n }, (_, i) => Math.round(lo + (i * (hi - lo)) / (n - 1)));
+}
+
 export interface SoundSettings {
   enabled: boolean;
   source: SoundSource;
@@ -134,6 +185,8 @@ export interface SoundSettings {
   /** Lasers are never driven by sound unless this is switched on deliberately. */
   allowLasers: boolean;
   movement: MovementSettings;
+  /** DMX Desk channels allocated to parts of the music. */
+  channelLinks: ChannelLink[];
 }
 
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
@@ -151,6 +204,7 @@ export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   mappings: DEFAULT_MAPPINGS,
   allowLasers: false,
   movement: DEFAULT_MOVEMENT,
+  channelLinks: [],
 };
 
 /** Raw band magnitudes from the audio graph (any scale; normalised here). */
@@ -241,6 +295,12 @@ export class SoundToLight extends Emitter<SoundEvents> {
   /** Slow loudness follower for "Follow energy" (0..1). */
   private energy = 0;
   private claimed = new Map<number, string>();
+  /** Downbeat flash for links (1 on each bar, decaying). */
+  private downEnv = 0;
+  /** This frame's hits, for Step/Random links. */
+  private trig: Record<LinkSource, boolean> = { low: false, mid: false, high: false, amplitude: false, beat: false, downbeat: false };
+  /** Current step per linked channel ("u:ch"). */
+  private linkStep = new Map<string, number>();
   meters: SoundMeters = { low: 0, mid: 0, high: 0, amplitude: 0, beat: 0, bpm: null, beatFrom: "none", signal: false };
 
   constructor(opts: { engine: DmxEngine; probe: AudioProbe; beats: BeatSource; rig: () => { defs: FixtureDef[]; fixtures: PatchedFixture[] } }) {
@@ -270,8 +330,10 @@ export class SoundToLight extends Emitter<SoundEvents> {
     this.ampPeak = Math.max(rd.amplitude, this.ampPeak * Math.exp(-dt / 8), 1e-6);
     const bassHit = this.low.step(Math.min(1, wl / this.bandPeak), dt, s.sensitivity, s.speed, now) && signal;
     if (bassHit) this.emit("bassHit", undefined);
-    if (this.mid.step(Math.min(1, wm / this.bandPeak), dt, s.sensitivity, s.speed, now) && signal) this.emit("midHit", undefined);
-    if (this.high.step(Math.min(1, wh / this.bandPeak), dt, s.sensitivity, s.speed, now) && signal) this.emit("highHit", undefined);
+    const midHit = this.mid.step(Math.min(1, wm / this.bandPeak), dt, s.sensitivity, s.speed, now) && signal;
+    if (midHit) this.emit("midHit", undefined);
+    const highHit = this.high.step(Math.min(1, wh / this.bandPeak), dt, s.sensitivity, s.speed, now) && signal;
+    if (highHit) this.emit("highHit", undefined);
     this.amp.step(Math.min(1, rd.amplitude / this.ampPeak), dt, s.sensitivity, s.speed, now);
 
     // Beats: from the deck's beat grid when there is one, else from bass onsets.
@@ -317,6 +379,11 @@ export class SoundToLight extends Emitter<SoundEvents> {
     } else if (signal && fired) this.moveBeats = Math.round(this.moveBeats) + 1;
     this.energy += ((signal ? this.amp.level : 0) - this.energy) * (1 - Math.exp(-dt / 1.5));
 
+    const beatNow = !!fired && signal;
+    this.trig = { low: bassHit, mid: midHit, high: highHit, amplitude: beatNow, beat: beatNow, downbeat: beatNow && !!fired?.downbeat };
+    if (this.trig.downbeat) this.downEnv = 1;
+    this.downEnv *= Math.exp(-dt / 0.4);
+
     // Flash decay: quicker at fast response.
     this.beatEnv *= Math.exp(-dt / (0.32 - 0.22 * s.speed));
     if (!s.beatFlash) this.beatEnv = 0;
@@ -327,6 +394,46 @@ export class SoundToLight extends Emitter<SoundEvents> {
     this.meters = { low, mid, high, amplitude: this.amp.level, beat: this.beatEnv, bpm, beatFrom, signal };
     this.emit("meters", this.meters);
     this.writeLayer({ low, mid, high, amplitude: signal ? this.amp.level : 0, beat: signal ? this.beatEnv : 0 });
+  }
+
+  /** Raw (unscaled) level a link follows: the band envelopes, or the beat/downbeat flash. */
+  private linkLevel(src: LinkSource, inputs: Record<SoundInput, number>): number {
+    return src === "downbeat" ? this.downEnv : Math.min(1, inputs[src]);
+  }
+
+  /** Desk channels allocated to sound: write their values and claim them (LTP). */
+  private writeLinks(defs: FixtureDef[], fixtures: PatchedFixture[], inputs: Record<SoundInput, number>, claims: Map<number, number[]>): void {
+    const s = this.settings;
+    const universes = new Set(this.engine.getUniverses());
+    for (const link of s.channelLinks ?? []) {
+      if (!universes.has(link.universe) || link.channel < 1 || link.channel > DMX_SLOTS) continue;
+      const fx = fixtures.find((f) => f.universe === link.universe && link.channel >= f.address && link.channel < f.address + f.channelCount);
+      if (fx && findDef(defs, fx.defId)?.laser && !s.allowLasers) continue; // laser safety
+      const key = `${link.universe}:${link.channel}`;
+      let value: number;
+      if (link.mode === "follow") {
+        value = link.min + (link.max - link.min) * this.linkLevel(link.source, inputs);
+      } else {
+        const caps = fx ? modeOf(defs, fx)?.channels[link.channel - fx.address]?.capabilities : undefined;
+        const steps = linkSteps(link, caps);
+        let i = this.linkStep.get(key) ?? 0;
+        if (this.trig[link.source]) {
+          if (link.mode === "step") i = (i + 1) % steps.length;
+          else if (steps.length > 1) {
+            const r = Math.floor(Math.random() * (steps.length - 1));
+            i = r >= i ? r + 1 : r; // a different step every time
+          }
+          this.linkStep.set(key, i);
+        }
+        value = steps[Math.min(i, steps.length - 1)];
+      }
+      let frame = this.frames.get(link.universe);
+      if (!frame) this.frames.set(link.universe, (frame = new Uint8Array(DMX_SLOTS)));
+      frame[link.channel - 1] = Math.max(0, Math.min(255, Math.round(value)));
+      let list = claims.get(link.universe);
+      if (!list) claims.set(link.universe, (list = []));
+      list.push(link.channel);
+    }
   }
 
   private lastOnsetBeat = -1;
@@ -412,6 +519,7 @@ export class SoundToLight extends Emitter<SoundEvents> {
         if (v > 0) frame[a - 1] = Math.max(frame[a - 1], Math.round(Math.min(1, v) * 255));
       }
     }
+    this.writeLinks(defs, fixtures, inputs, claims);
     for (const u of this.engine.getUniverses()) this.engine.writeLayer(LAYER_SOUND, u, this.frames.get(u) ?? new Uint8Array(DMX_SLOTS));
     this.claim(claims);
   }

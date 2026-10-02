@@ -686,6 +686,14 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .lx-fixture-pick { max-height: 190px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 6px; }
 .lx-check { display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 0; }
 .lx-mappings { margin-top: 8px; font-size: 12px; }
+.lx-link { margin-top: 3px; padding: 1px 4px; font-size: 9px; font-weight: 800; border-radius: 4px; background: transparent; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.lx-link.on { background: #3a2a0a; border-color: #ffb020; color: #ffd27a; }
+.lx-link.editing { outline: 2px solid var(--accent); }
+.lx-fader.linked .vfader { opacity: 0.45; }
+.lx-link-editor { margin: 0 0 8px; padding: 8px 10px; border: 1px solid #ffb02066; border-radius: 8px; background: #1a1610; }
+.lx-link-editor .lx-row { margin-bottom: 4px; }
+.lx-link-editor input[type="number"] { width: 58px; }
+.lx-link-editor p { margin: 4px 0 0; font-size: 11px; }
 .lx-movement { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .lx-movement .lx-row { margin-bottom: 4px; }
 .lx-movement-sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 16px; }
