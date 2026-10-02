@@ -2,7 +2,7 @@
  * Music browser: Local Library + streaming providers (Spotify, Apple Music).
  * Streaming tracks are browse-only; when a matching local file exists it can be loaded instead.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { TrackInfo } from "../core/engine/types";
 import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
 import { PROVIDER_NAMES, toTrackInfo, type ProviderView } from "../providers/StreamingStore";
@@ -11,6 +11,7 @@ import { AudiusPane, useAudiusState } from "./AudiusPane";
 import type { ResolutionResult } from "../matching/SmartTrackResolver";
 import type { StreamingProviderId } from "../providers/streamingTypes";
 import { useApp, useEngineState, useLibraryState } from "./context";
+import type { App } from "../app/createApp";
 import { useFrameStore } from "./hooks";
 import { useStemIndex, useStemStatus } from "./stemHooks";
 import { ArtTile } from "./ArtTile";
@@ -38,11 +39,24 @@ function useStreamingState() {
 }
 
 /** Deck to use for "load" shortcuts: the first deck that isn't playing. */
-function useFreeDeck(): number | null {
-  const s = useEngineState();
-  const i = s.decks.findIndex((d) => !d.playing);
-  return i >= 0 ? i : null;
+/**
+ * One engine value as a primitive, re-rendering only when it changes — not on every engine
+ * update (library rows mustn't re-render while a deck plays).
+ */
+function useEngineValue<T extends string | number | null>(read: (s: ReturnType<App["engine"]["getState"]>) => T): T {
+  const { engine } = useApp();
+  return useFrameStore(useCallback((cb) => engine.on("state", cb), [engine]), () => read(engine.getState()));
 }
+
+function useFreeDeck(): number | null {
+  return useEngineValue((s) => {
+    const i = s.decks.findIndex((d) => !d.playing);
+    return i >= 0 ? i : null;
+  });
+}
+
+/** "10" = deck A playing, deck B not. */
+const usePlayingFlags = () => useEngineValue((s) => s.decks.map((d) => (d.playing ? "1" : "0")).join(""));
 
 type LocalCollection = "all" | "recent" | "rated";
 
@@ -155,12 +169,76 @@ function Stars({ value, onChange }: { value: number; onChange: (n: number) => vo
   );
 }
 
+/** Sorting 20,000 titles: one shared collator is far faster than localeCompare with options. */
+const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const ROW_OVERSCAN = 12;
+
+interface RowHandlers {
+  click: (t: TrackInfo, e: React.MouseEvent) => void;
+  doubleClick: (t: TrackInfo) => void;
+  dragStart: (t: TrackInfo, e: React.DragEvent) => void;
+  contextMenu: (t: TrackInfo, e: React.MouseEvent) => void;
+  rate: (t: TrackInfo, n: number) => void;
+}
+
+/** One library row; re-renders only when its own track, selection or match changes. */
+const TrackRow = memo(function TrackRow({ track: t, selected, matchScore, matchReasons, stem, handlers }: {
+  track: TrackInfo; selected: boolean; matchScore: number | null; matchReasons?: string; stem?: string; handlers: RowHandlers;
+}) {
+  return (
+    <tr
+      className={`track-row ${selected ? "selected" : ""}`}
+      onClick={(e) => handlers.click(t, e)}
+      onDoubleClick={() => handlers.doubleClick(t)}
+      draggable
+      onDragStart={(e) => handlers.dragStart(t, e)}
+      onContextMenu={(e) => handlers.contextMenu(t, e)}
+    >
+      <td className="col-art">
+        <ArtTile track={t} size={22} />
+      </td>
+      <td className="title-cell">{t.title}{t.unavailableReason && <span className="warn"> · Reconnect file</span>}</td>
+      <td>{t.artist}</td>
+      <td>{t.album}</td>
+      <td>{t.genre ?? ""}</td>
+      <td className="num">{t.bpm ? t.bpm.toFixed(1) : "—"}</td>
+      <td>{t.key ?? "—"}</td>
+      <td>{t.camelot ?? "—"}</td>
+      <td className="num" title={t.analysisConfidence === undefined ? "Not analysed" : `${Math.round(t.analysisConfidence * 100)}% confidence`}>{t.energy ?? "—"}</td>
+      <td className="num" title={matchReasons}>{matchScore ?? "—"}{matchScore !== null ? "%" : ""}</td>
+      <td className="num">{fmtDuration(t.durationMs)}</td>
+      <td>
+        <Stars value={t.rating ?? 0} onChange={(n) => handlers.rate(t, n)} />
+      </td>
+      <td>
+        <span className="source-badge">LOCAL</span>{" "}
+        {stem && (
+          <span className={`lib-stem ${stem}`} title={stem === "complete" ? "STEMS analysed and cached" : "STEMS partly analysed"}>
+            {stem === "complete" ? "STEMS" : "STEMS…"}
+          </span>
+        )}
+      </td>
+      <td className="hint">{t.addedAt ? new Date(t.addedAt).toLocaleDateString() : ""}</td>
+      <td className="row-actions">
+        <LoadButtons track={t} />
+      </td>
+    </tr>
+  );
+});
+
+/** Background analysis progress, kept out of the table so progress doesn't re-render it. */
+function AnalysisProgress() {
+  const { analysis } = useApp();
+  const s = useFrameStore(useCallback((cb) => analysis.on("change", cb), [analysis]), () => analysis.getState());
+  if (!s.busy) return null;
+  return <><span className="hint">Analysing {s.done + 1}/{s.total}: {s.current}</span><button onClick={() => analysis.cancelBatch()}>Cancel</button></>;
+}
+
 function LocalView({ collection }: { collection: LocalCollection }) {
   const app = useApp();
   const { library, platform, engine, log, browser } = app;
   const state = useLibraryState();
   const freeDeck = useFreeDeck();
-  const selectedRef = useRef<HTMLTableRowElement>(null);
   const [dropping, setDropping] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: collection === "recent" ? "addedAt" : "artist", dir: collection === "recent" ? -1 : 1 });
@@ -170,10 +248,14 @@ function LocalView({ collection }: { collection: LocalCollection }) {
   const [info, setInfo] = useState<TrackInfo | null>(null);
   const [advanced, setAdvanced] = useState({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" });
   const [discovery, setDiscovery] = useState<DiscoveryMode | null>(null);
-  const analysisStatus = useFrameStore(useCallback((cb) => app.analysis.on("change", cb), [app.analysis]), () => app.analysis.getState());
-  const engineState = useEngineState();
-  const reference = engineState.decks.find((d) => d.playing)?.track ?? state.tracks[state.selected];
+  // Match % is measured against the playing track (else the selected one). Only the playing
+  // track's ref is watched, so engine updates don't re-render the table.
+  const playingRef = useEngineValue((s) => s.decks.find((d) => d.playing)?.track?.ref ?? null);
+  const playingTrack = useMemo(() => (playingRef ? engine.getState().decks.find((d) => d.track?.ref === playingRef)?.track ?? null : null), [playingRef, engine]);
+  const reference = playingTrack ?? state.tracks[state.selected];
   const match = useCallback((t: TrackInfo) => reference && reference.ref !== t.ref ? compatibility(reference, t, app.preparation.forRef(reference.ref), app.preparation.forRef(t.ref)) : null, [reference, app.preparation]);
+  // The list only depends on the reference while the Min match % filter is in use.
+  const matchFilter = advanced.minMatch && reference ? match : null;
 
   useEffect(() => {
     if (collection === "recent") setSort({ key: "addedAt", dir: -1 });
@@ -193,15 +275,15 @@ function LocalView({ collection }: { collection: LocalCollection }) {
     if (advanced.minEnergy) list = list.filter((t) => (t.energy ?? -Infinity) >= Number(advanced.minEnergy));
     if (advanced.maxEnergy) list = list.filter((t) => (t.energy ?? Infinity) <= Number(advanced.maxEnergy));
     if (advanced.genre) list = list.filter((t) => t.genre?.toLowerCase().includes(advanced.genre.toLowerCase()));
-    if (advanced.minMatch && reference) list = list.filter((t) => (match(t)?.score ?? 0) >= Number(advanced.minMatch));
+    if (matchFilter) list = list.filter((t) => (matchFilter(t)?.score ?? 0) >= Number(advanced.minMatch));
     const k = sort.key;
     return [...list].sort((a, b) => {
       const va = (a as unknown as Record<string, unknown>)[k] ?? (typeof (b as unknown as Record<string, unknown>)[k] === "number" ? -1 : "");
       const vb = (b as unknown as Record<string, unknown>)[k] ?? (typeof va === "number" ? -1 : "");
-      const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
+      const c = typeof va === "number" && typeof vb === "number" ? va - vb : COLLATOR.compare(String(va), String(vb));
       return c * sort.dir;
     });
-  }, [state.tracks, query, sort, collection, advanced, reference, match]);
+  }, [state.tracks, query, sort, collection, advanced, matchFilter]);
 
   const selectedTrack = state.tracks[state.selected];
   const visibleRef = useRef(visible);
@@ -226,9 +308,79 @@ function LocalView({ collection }: { collection: LocalCollection }) {
     return () => browser.setActive(library);
   }, [browser, library]);
 
+  // Virtualised list: only the rows in view (plus a margin) are in the page — a library can
+  // hold tens of thousands of tracks. Spacer rows keep the scrollbar the right size.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState({ top: 0, height: 800 });
+  const [rowH, setRowH] = useState(29);
   useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: "nearest" });
-  }, [state.selected]);
+    const el = wrapRef.current;
+    if (!el) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      setViewport((v) => (v.top === el.scrollTop && v.height === el.clientHeight ? v : { top: el.scrollTop, height: el.clientHeight }));
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(onScroll);
+    ro.observe(el);
+    update();
+    return () => { el.removeEventListener("scroll", onScroll); ro.disconnect(); if (frame) cancelAnimationFrame(frame); };
+  }, []);
+  // Measure the real row height once rows exist (font size / zoom).
+  useLayoutEffect(() => {
+    const row = wrapRef.current?.querySelector<HTMLTableRowElement>("tr.track-row");
+    if (row && Math.abs(row.offsetHeight - rowH) > 0.5) setRowH(row.offsetHeight);
+  });
+  const first = Math.max(0, Math.floor(viewport.top / rowH) - ROW_OVERSCAN);
+  const last = Math.min(visible.length, Math.ceil((viewport.top + viewport.height) / rowH) + ROW_OVERSCAN);
+
+  // Keep the selected track in view when it moves (browse knob, keyboard).
+  useEffect(() => {
+    const el = wrapRef.current;
+    const sel = state.tracks[state.selected];
+    if (!el || !sel) return;
+    const i = visibleRef.current.findIndex((t) => t.ref === sel.ref);
+    if (i < 0) return;
+    const header = el.querySelector("thead")?.offsetHeight ?? 0;
+    const top = header + i * rowH;
+    if (top < el.scrollTop + header) el.scrollTop = top - header;
+    else if (top + rowH > el.scrollTop + el.clientHeight) el.scrollTop = top + rowH - el.clientHeight;
+  }, [state.selected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Row handlers read the latest state through a ref so rows can be memoised.
+  const selectedSet = useMemo(() => new Set(selectedRefs), [selectedRefs]);
+  const live = useRef({ visible, selectedRefs, freeDeck, tracks: state.tracks });
+  live.current = { visible, selectedRefs, freeDeck, tracks: state.tracks };
+  const rowHandlers = useMemo<RowHandlers>(() => ({
+    click: (t, e) => {
+      const { visible: vis, selectedRefs: refs, tracks } = live.current;
+      if (e.shiftKey && refs.length) {
+        const a = vis.findIndex((x) => x.ref === refs[0]), b = vis.indexOf(t);
+        setSelectedRefs(vis.slice(Math.max(0, Math.min(a, b)), Math.max(a, b) + 1).map((x) => x.ref));
+      } else setSelectedRefs(e.ctrlKey || e.metaKey ? refs.includes(t.ref) ? refs.filter((r) => r !== t.ref) : [...refs, t.ref] : [t.ref]);
+      library.select(tracks.indexOf(t));
+    },
+    doubleClick: (t) => {
+      const fd = live.current.freeDeck;
+      if (fd === null) log.warn("engine", "Both decks are playing — pause one to load.");
+      else void engine.loadTrack(fd, t);
+    },
+    dragStart: (t, e) => {
+      const refs = live.current.selectedRefs;
+      e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(t));
+      e.dataTransfer.setData(TRACK_REFS, JSON.stringify(refs.includes(t.ref) ? refs : [t.ref]));
+      e.dataTransfer.effectAllowed = "copy";
+    },
+    contextMenu: (t, e) => {
+      e.preventDefault();
+      library.select(live.current.tracks.indexOf(t));
+      if (!live.current.selectedRefs.includes(t.ref)) setSelectedRefs([t.ref]);
+      setMenu({ x: e.clientX, y: e.clientY, track: t });
+    },
+    rate: (t, n) => void app.setRating(t.ref, n),
+  }), [library, log, engine, app]);
 
   const add = async (folder: boolean) => {
     try {
@@ -273,7 +425,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         <button disabled={!selectedTrack} onClick={() => setDiscovery("matches")}>FIND MATCHES</button>
         <button disabled={!selectedTrack} onClick={() => setDiscovery("djmix")}>CREATE DJMIX</button>
         <button disabled={!selectedTrack} onClick={() => setDiscovery("mashup")}>FIND MASHUPS</button>
-        {analysisStatus.busy && <><span className="hint">Analysing {analysisStatus.done + 1}/{analysisStatus.total}: {analysisStatus.current}</span><button onClick={() => app.analysis.cancelBatch()}>Cancel</button></>}
+        <AnalysisProgress />
         <span className="hint">
           {visible.length} of {state.tracks.length} tracks · double-click loads into a free deck · drag to a deck · browse knob + LOAD on the DDJ-SB
         </span>
@@ -284,7 +436,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         <button onClick={() => setAdvanced({ ...advanced, minEnergy: "4", maxEnergy: "6" })}>Warm Up</button><button onClick={() => setAdvanced({ ...advanced, minEnergy: "7", maxEnergy: "10" })}>Peak Hour Bangers</button><button onClick={() => setAdvanced({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" })}>Clear</button>
       </div>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap" ref={wrapRef}>
         <table className="tracks">
           <thead>
             <tr>
@@ -305,68 +457,22 @@ function LocalView({ collection }: { collection: LocalCollection }) {
                 </td>
               </tr>
             )}
-            {visible.map((t) => {
-              const sel = selectedRefs.includes(t.ref) || t.ref === selectedTrack?.ref;
+            {first > 0 && <tr className="spacer" aria-hidden="true" style={{ height: first * rowH }}><td colSpan={COLUMNS.length} /></tr>}
+            {visible.slice(first, last).map((t) => {
+              const m = reference ? match(t) : null;
               return (
-                <tr
+                <TrackRow
                   key={t.ref}
-                  ref={sel ? selectedRef : undefined}
-                  className={sel ? "selected" : ""}
-                  onClick={(e) => {
-                    if (e.shiftKey && selectedRefs.length) {
-                      const a = visible.findIndex((x) => x.ref === selectedRefs[0]), b = visible.indexOf(t);
-                      setSelectedRefs(visible.slice(Math.max(0, Math.min(a, b)), Math.max(a, b) + 1).map((x) => x.ref));
-                    } else setSelectedRefs(e.ctrlKey || e.metaKey ? selectedRefs.includes(t.ref) ? selectedRefs.filter((r) => r !== t.ref) : [...selectedRefs, t.ref] : [t.ref]);
-                    library.select(state.tracks.indexOf(t));
-                  }}
-                  onDoubleClick={() => {
-                    if (freeDeck === null) log.warn("engine", "Both decks are playing — pause one to load.");
-                    else void engine.loadTrack(freeDeck, t);
-                  }}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(t));
-                    e.dataTransfer.setData(TRACK_REFS, JSON.stringify(selectedRefs.includes(t.ref) ? selectedRefs : [t.ref]));
-                    e.dataTransfer.effectAllowed = "copy";
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    library.select(state.tracks.indexOf(t));
-                    if (!selectedRefs.includes(t.ref)) setSelectedRefs([t.ref]);
-                    setMenu({ x: e.clientX, y: e.clientY, track: t });
-                  }}
-                >
-                  <td className="col-art">
-                    <ArtTile track={t} size={22} />
-                  </td>
-                  <td className="title-cell">{t.title}{t.unavailableReason && <span className="warn"> · Reconnect file</span>}</td>
-                  <td>{t.artist}</td>
-                  <td>{t.album}</td>
-                  <td>{t.genre ?? ""}</td>
-                  <td className="num">{t.bpm ? t.bpm.toFixed(1) : "—"}</td>
-                  <td>{t.key ?? "—"}</td>
-                  <td>{t.camelot ?? "—"}</td>
-                  <td className="num" title={t.analysisConfidence === undefined ? "Not analysed" : `${Math.round(t.analysisConfidence * 100)}% confidence`}>{t.energy ?? "—"}</td>
-                  <td className="num" title={match(t)?.reasons.join(" · ")}>{match(t)?.score ?? "—"}{match(t) ? "%" : ""}</td>
-                  <td className="num">{fmtDuration(t.durationMs)}</td>
-                  <td>
-                    <Stars value={t.rating ?? 0} onChange={(n) => void app.setRating(t.ref, n)} />
-                  </td>
-                  <td>
-                    <span className="source-badge">LOCAL</span>{" "}
-                    {stemIdx[t.ref] && (
-                      <span className={`lib-stem ${stemIdx[t.ref]}`} title={stemIdx[t.ref] === "complete" ? "STEMS analysed and cached" : "STEMS partly analysed"}>
-                        {stemIdx[t.ref] === "complete" ? "STEMS" : "STEMS…"}
-                      </span>
-                    )}
-                  </td>
-                  <td className="hint">{t.addedAt ? new Date(t.addedAt).toLocaleDateString() : ""}</td>
-                  <td className="row-actions">
-                    <LoadButtons track={t} />
-                  </td>
-                </tr>
+                  track={t}
+                  selected={selectedSet.has(t.ref) || t.ref === selectedTrack?.ref}
+                  matchScore={m?.score ?? null}
+                  matchReasons={m?.reasons.join(" · ")}
+                  stem={stemIdx[t.ref]}
+                  handlers={rowHandlers}
+                />
               );
             })}
+            {last < visible.length && <tr className="spacer" aria-hidden="true" style={{ height: (visible.length - last) * rowH }}><td colSpan={COLUMNS.length} /></tr>}
           </tbody>
         </table>
       </div>
@@ -424,15 +530,15 @@ function TrackMenu({ x, y, track, refs, cached, onInfo, onClose }: { x: number; 
 
 function LoadButtons({ track }: { track: TrackInfo }) {
   const { engine } = useApp();
-  const s = useEngineState();
+  const playing = usePlayingFlags();
   return (
     <>
-      {s.decks.map((d, i) => (
+      {[...playing].map((flag, i) => (
         <button
           key={i}
           className={`tiny ${i === 0 ? "deck-a-btn" : "deck-b-btn"}`}
-          disabled={d.playing}
-          title={d.playing ? `Deck ${String.fromCharCode(65 + i)} is playing` : `Load into deck ${String.fromCharCode(65 + i)}`}
+          disabled={flag === "1"}
+          title={flag === "1" ? `Deck ${String.fromCharCode(65 + i)} is playing` : `Load into deck ${String.fromCharCode(65 + i)}`}
           onClick={(e) => {
             e.stopPropagation();
             void engine.loadTrack(i, track);

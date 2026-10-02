@@ -301,6 +301,7 @@ th.sortable { cursor: pointer; }
 th.sortable:hover { color: var(--text); }
 td, th { padding: 3px 6px; border-bottom: 1px solid #ffffff08; }
 td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+.tracks tr.spacer td { padding: 0; border: 0; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.selected td { background: #2d8cff2e; }
 tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
