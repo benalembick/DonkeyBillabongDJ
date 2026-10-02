@@ -14,6 +14,7 @@ import { registerStreamingIpc } from "./streaming/ipc";
 import { registerStemIpc } from "./stems/host";
 import { registerLightingIpc } from "./lighting/ipc";
 import { registerUpdater } from "./updater";
+import { transcodeToWav } from "./audio/transcode";
 import { handleArtProtocol, registerArtScheme } from "./library/artwork";
 
 registerArtScheme();
@@ -153,6 +154,12 @@ function registerIpc(): void {
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   });
 
+  // macOS: audio Chromium can't decode (Apple Lossless…) → WAV via afconvert. null elsewhere / on failure.
+  ipcMain.handle("dbdj:audio:transcode", async (_e, data: ArrayBuffer) => {
+    const wav = await transcodeToWav(new Uint8Array(data));
+    return wav ? wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength) : null;
+  });
+
   ipcMain.handle("dbdj:readTextFile", async (_e, filePath: string) => {
     const p = String(filePath);
     if (![".xml", ".json"].includes(path.extname(p).toLowerCase())) throw new Error("Only .xml/.json mapping files");
@@ -177,6 +184,18 @@ function runSmokeTest(win: BrowserWindow): void {
   const errors: string[] = [];
   let smokeLighting: unknown = null;
   let smokeKnobs: unknown = null;
+  // Peak renderer memory (MB) while the smoke test runs, for the analysis memory check.
+  let peakRendererMb = 0;
+  const rendererMbTimeline: number[] = []; // once a second
+  let memTicks = 0;
+  const memTimer = setInterval(() => {
+    for (const m of app.getAppMetrics()) {
+      if (m.type !== "Tab") continue;
+      const mb = Math.round(m.memory.workingSetSize / 1024);
+      peakRendererMb = Math.max(peakRendererMb, mb);
+      if (memTicks++ % 10 === 0) rendererMbTimeline.push(mb);
+    }
+  }, 100);
   win.webContents.on("console-message", (details) => {
     if (details.level === "error") errors.push(details.message);
   });
@@ -573,6 +592,16 @@ function runSmokeTest(win: BrowserWindow): void {
             await sleep(500);
             checks.waveStyle = JSON.parse(localStorage.getItem("dbdj.ui.layout.v1") || "{}").waveStyle;
           }
+          // Library analysis (DBDJ_SMOKE_ANALYSIS=/folder): background-analyse every audio file in it, as an import does.
+          const analysisDir = ${JSON.stringify(process.env.DBDJ_SMOKE_ANALYSIS ?? "")};
+          if (analysisDir && window.dbdjDesktop) {
+            const files = await window.dbdjDesktop.scanFolder(analysisDir);
+            const tracks = files.map((f) => ({ ref: f.path, title: f.name, artist: "", album: "", source: "local", bpm: null, key: null }));
+            const t0 = performance.now();
+            await a.analysis.analyseTracks(tracks);
+            const st = a.analysis.getState();
+            checks.analysis = { files: files.map((f) => f.name), ms: Math.round(performance.now() - t0), runs: st.runs, errors: st.errors, skipped: st.skipped };
+          }
           // App updates (DBDJ_SMOKE_UPDATES=1): a real check against GitHub Releases, then the About page
           // (an installed Windows build downloads the update; set DBDJ_SMOKE_UPDATES_WAIT_MS to wait for it).
           if (${JSON.stringify(!!process.env.DBDJ_SMOKE_UPDATES)} && window.dbdjDesktop?.updates) {
@@ -624,7 +653,8 @@ function runSmokeTest(win: BrowserWindow): void {
       }
       const gpuStatus = app.getGPUFeatureStatus() as unknown as Record<string, string>;
       const gpu = { canvas: gpuStatus["2d_canvas"], compositing: gpuStatus.gpu_compositing, rasterization: gpuStatus.rasterization };
-      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu, lighting: smokeLighting, knobs: smokeKnobs }, null, 2)}\n`);
+      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu, lighting: smokeLighting, knobs: smokeKnobs, peakRendererMb, rendererMbTimeline }, null, 2)}\n`);
+      clearInterval(memTimer);
       app.exit(errors.length ? 1 : 0);
     }, Number(process.env.DBDJ_SMOKE_WAIT_MS ?? 8000));
   });
@@ -654,6 +684,26 @@ function createWindow(): void {
     if (!(devServer && url.startsWith(devServer))) e.preventDefault();
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  // If the page crashes (e.g. out of memory) reload it rather than leaving a black window.
+  // The analysis crash guard then skips the file that was being processed.
+  const crashes: number[] = [];
+  win.webContents.on("render-process-gone", (_e, details) => {
+    process.stderr.write(`[renderer] gone: ${details.reason} (exit ${details.exitCode})\n`);
+    if (details.reason === "clean-exit" || process.env.DBDJ_SMOKE_TEST || win.isDestroyed()) return;
+    const now = Date.now();
+    crashes.push(now);
+    while (crashes.length && now - crashes[0] > 60_000) crashes.shift();
+    if (crashes.length > 3) {
+      void dialog.showMessageBox(win, {
+        type: "error",
+        message: "Donkey Billabong DJ keeps stopping",
+        detail: `The window crashed ${crashes.length} times in a minute (${details.reason}). Please quit and reopen the app.`,
+      });
+      return;
+    }
+    win.webContents.reload();
+  });
 
   const smokeSize = /^(\d+)x(\d+)$/.exec(process.env.DBDJ_SMOKE_SIZE ?? "");
   if (process.env.DBDJ_SMOKE_TEST && smokeSize) win.setContentSize(Number(smokeSize[1]), Number(smokeSize[2]));

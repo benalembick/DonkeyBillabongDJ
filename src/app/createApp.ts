@@ -97,6 +97,8 @@ export function createApp(): App {
   const browser = new BrowserRouter(library);
   const audioConfig = load<AudioConfig>(AUDIO_KEY, DEFAULT_AUDIO_CONFIG);
   const audio = new WebAudioEngine(2, audioConfig);
+  const desktop = platform.kind === "desktop" ? window.dbdjDesktop : undefined;
+  if (desktop?.platform === "darwin" && desktop.transcodeAudio) audio.setDecodeFallback((bytes) => desktop.transcodeAudio!(bytes));
   const storedSettings = load<Partial<EngineSettings>>(ENGINE_KEY, {});
   const engine = new DJEngine({
     bus,
@@ -120,7 +122,9 @@ export function createApp(): App {
     preparation,
     audio,
     readAudio: (ref) => platform.readAudio(ref),
-    onError: (err) => log.warn("analysis", String(err)),
+    onError: (err) => log.warn("analysis", err instanceof Error ? err.message : String(err)),
+    onInfo: (message) => log.info("analysis", message),
+    probeDuration: async (ref) => ((await platform.readTags([ref]))[0]?.durationMs ?? 0) / 1000 || null,
   });
   const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
   void playlists.load();

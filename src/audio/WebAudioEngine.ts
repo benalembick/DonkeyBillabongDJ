@@ -21,6 +21,7 @@ import type {
 } from "../core/engine/types";
 import { DEFAULT_AUDIO_CONFIG } from "../core/engine/types";
 import { FxSlot, INSERT_TYPES } from "./fx";
+import { aiffToWav, isAiff } from "./aiff";
 import { EQ_HIGH_HZ, EQ_LOW_HZ, EQ_MID_HZ } from "../core/engine/mixerMath";
 
 const PARAM_SMOOTH_S = 0.008;
@@ -383,8 +384,28 @@ export class WebAudioEngine implements AudioEngine {
     if (!this.ctx) await this.start();
     const ctx = this.ctx;
     if (!ctx) throw new Error("Audio engine is not running");
-    const buffer = await ctx.decodeAudioData(bytes);
+    // Chromium can't decode AIFF; rewrite it as WAV first.
+    const input = (isAiff(bytes) && aiffToWav(bytes)) || bytes;
+    // decodeAudioData detaches its input, so keep the bytes for the fallback decoder.
+    const spare = this.decodeFallback && input === bytes ? bytes.slice(0) : null;
+    let buffer: AudioBuffer;
+    try {
+      buffer = await ctx.decodeAudioData(input);
+    } catch (err) {
+      const wav = spare && (await this.decodeFallback!(spare).catch(() => null));
+      if (!wav) throw err;
+      buffer = await ctx.decodeAudioData(wav);
+    }
     return { duration: buffer.duration, sampleRate: buffer.sampleRate, channels: buffer.numberOfChannels, handle: buffer };
+  }
+
+  /**
+   * Converter for formats Chromium can't decode (e.g. Apple Lossless on macOS): given the file's
+   * bytes, returns them as WAV, or null. Only tried after decodeAudioData has failed.
+   */
+  private decodeFallback: ((bytes: ArrayBuffer) => Promise<ArrayBuffer | null>) | null = null;
+  setDecodeFallback(fn: ((bytes: ArrayBuffer) => Promise<ArrayBuffer | null>) | null): void {
+    this.decodeFallback = fn;
   }
 
   loadDeck(deck: number, audio: DecodedAudio): void {

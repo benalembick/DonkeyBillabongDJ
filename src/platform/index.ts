@@ -50,6 +50,8 @@ export interface DesktopBridge {
   expandPaths(paths: string[]): Promise<ScannedFile[]>;
   getPathForFile(file: File): string;
   readAudioFile(path: string): Promise<ArrayBuffer>;
+  /** macOS: converts audio Chromium can't decode (Apple Lossless…) to WAV; null elsewhere. */
+  transcodeAudio?(data: ArrayBuffer): Promise<ArrayBuffer | null>;
   saveMashupFile(name: string, data: ArrayBuffer): Promise<AudioFileRef | null>;
   openMappingFile(): Promise<string | null>;
   readTextFile(path: string): Promise<string>;
