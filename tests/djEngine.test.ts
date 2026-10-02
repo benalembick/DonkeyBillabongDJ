@@ -205,6 +205,34 @@ describe("jog", () => {
     expect(audio.last("scratchMove")).toBeUndefined();
     expect(audio.last("seek")).toBeDefined();
   });
+
+  it("scratches from the on-screen waveform, playing or paused, whatever the vinyl setting", async () => {
+    expect(engine.beginScratch(0)).toBe(false); // nothing loaded
+    await loaded();
+    bus.send("deck1.vinyl", 1); // vinyl off: the waveform still scratches
+    expect(engine.beginScratch(0)).toBe(true);
+    expect(audio.scratching[0]).toBe(true);
+    expect(engine.getState().decks[0].scratching).toBe(true);
+    engine.scratchBy(0, -0.25);
+    expect(audio.last("scratchMove")?.args[0]).toBe(-0.25);
+    engine.endScratch(0);
+    expect(audio.scratching[0]).toBe(false);
+    expect(engine.getState().decks[0].scratching).toBe(false);
+    expect(engine.getState().decks[0].playing).toBe(false); // paused stays paused
+    const moves = audio.calls.filter((c) => c.fn === "scratchMove").length;
+    engine.scratchBy(0, 1); // ignored once released
+    expect(audio.calls.filter((c) => c.fn === "scratchMove").length).toBe(moves);
+  });
+
+  it("releasing the waveform doesn't end a scratch held on the hardware platter", async () => {
+    await loaded();
+    bus.send("deck1.jog.touch", 1, "midi");
+    engine.beginScratch(0);
+    engine.endScratch(0);
+    expect(audio.scratching[0]).toBe(true);
+    bus.send("deck1.jog.touch", 0, "midi");
+    expect(audio.scratching[0]).toBe(false);
+  });
 });
 
 describe("mixer", () => {

@@ -144,9 +144,13 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
   const { zoomSeconds, waveMode, waveStyle } = useLayout();
   const stemNorm = useRef<{ env: StemEnvelopes | null; version: number; norms: number[] }>({ env: null, version: -1, norms: [1, 1, 1, 1] });
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ start: number; pos: number } | null>(null);
+  const drag = useRef<{ id: number; last: number } | null>(null);
+  const endScratch = (e: React.PointerEvent) => {
+    if (drag.current?.id !== e.pointerId) return;
+    drag.current = null;
+    engine.endScratch(deck);
+  };
   const tiles = useRef<{ key: string; ov: Overview | null; env: StemEnvelopes | null; map: Map<number, Tile> }>({ key: "", ov: null, env: null, map: new Map() });
-  const send = useSend();
 
   useAnimationFrame(() => {
     const c = canvasRef.current;
@@ -297,25 +301,30 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     <canvas
       ref={canvasRef}
       className={`scroll-wave ${orientation}`}
-      title="Scroll to zoom · drag to move the track while paused"
+      title="Drag to scratch (like a hand on the record) · scroll to zoom"
       onWheel={(e) => zoom(e.deltaY > 0 ? 1 : -1)}
+      // Scratch: the waveform under the pointer moves with it, like the record under your hand.
+      // Holding still stops the sound; letting go carries on playing (or stays paused).
       onPointerDown={(e) => {
-        const d = engine.getState().decks[deck];
-        if (!d || d.status !== "ready" || d.playing) return;
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        drag.current = { start: orientation === "vertical" ? e.clientY : e.clientX, pos: engine.getPosition(deck) };
+        if (e.button !== 0 || !engine.beginScratch(deck)) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { id: e.pointerId, last: orientation === "vertical" ? e.clientY : e.clientX };
       }}
       onPointerMove={(e) => {
         const dr = drag.current;
         const c = canvasRef.current;
-        if (!dr || !c) return;
+        if (!dr || dr.id !== e.pointerId || !c) return;
+        const at = orientation === "vertical" ? e.clientY : e.clientX;
         const len = orientation === "vertical" ? c.clientHeight : c.clientWidth;
         const d = engine.getState().decks[deck];
-        const delta = ((orientation === "vertical" ? e.clientY : e.clientX) - dr.start) * ((zoomSeconds * Math.max(0.01, d.rate)) / len);
-        const target = Math.max(0, Math.min(d.duration, dr.pos - delta));
-        send(`deck${deck + 1}.seek`, target / d.duration);
+        // Same scale as the drawing: dragging right/down pulls earlier audio under the playhead.
+        engine.scratchBy(deck, -(at - dr.last) * ((zoomSeconds * Math.max(0.01, d.rate)) / Math.max(1, len)));
+        dr.last = at;
       }}
-      onPointerUp={() => (drag.current = null)}
+      onPointerUp={endScratch}
+      onPointerCancel={endScratch}
+      onLostPointerCapture={endScratch}
     />
   );
 }

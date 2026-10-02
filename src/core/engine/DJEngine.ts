@@ -1269,6 +1269,29 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     }
   }
 
+  /**
+   * On-screen scratching (dragging the scrolling waveform): like a hand on a vinyl-mode platter,
+   * whatever the vinyl setting. Holding still stops the sound; letting go resumes playback,
+   * or stays paused if the deck was paused.
+   */
+  beginScratch(deck: number): boolean {
+    const d = this.state.decks[deck];
+    if (!d || d.status !== "ready") return false;
+    this.audio.setScratching(deck, true);
+    this.patchDeck(deck, { scratching: true });
+    return true;
+  }
+  /** Move the record by `seconds` of track time (negative = backwards). */
+  scratchBy(deck: number, seconds: number): void {
+    if (this.state.decks[deck]?.scratching && Number.isFinite(seconds)) this.audio.scratchMove(deck, seconds);
+  }
+  endScratch(deck: number): void {
+    const d = this.state.decks[deck];
+    if (!d?.scratching || d.jogTouched) return; // a hand still on the hardware platter keeps it
+    this.audio.setScratching(deck, false);
+    this.patchDeck(deck, { scratching: false });
+  }
+
   private onJog(deck: number, surface: "platter" | "ring" | "search", ticks: number): void {
     if (surface !== "search") this.jogTicks[deck] += ticks;
     const d = this.state.decks[deck];

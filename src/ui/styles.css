@@ -161,7 +161,8 @@ select { padding: 2px 4px; }
 .wave-stack.horizontal { grid-template-rows: 1fr 1fr; }
 .wave-stack.vertical { grid-template-columns: 1fr 1fr; }
 .wave-lane { position: relative; min-height: 0; min-width: 0; background: #07080b; }
-.scroll-wave { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.scroll-wave { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.scroll-wave:active { cursor: grabbing; }
 .wave-label { position: absolute; z-index: 1; top: 3px; left: 4px; font-weight: 900; font-size: 11px; padding: 0 5px; border-radius: 3px; color: #000; pointer-events: none; }
 .deck-a .wave-label, .wave-lane.deck-a .wave-label { background: var(--deck-a); }
 .wave-lane.deck-b .wave-label { background: var(--deck-b); border-radius: 8px; }
