@@ -161,6 +161,8 @@ export interface AudioEngine {
   setPlaying(deck: number, playing: boolean): void;
   seek(deck: number, seconds: number): void;
   setRate(deck: number, rate: number): void;
+  /** Key lock: tempo changes keep the original pitch (time-stretch). Scratching stays vinyl-like. */
+  setKeylock(deck: number, on: boolean): void;
   nudge(deck: number, rateOffset: number): void;
   setScratching(deck: number, active: boolean): void;
   scratchMove(deck: number, seconds: number): void;

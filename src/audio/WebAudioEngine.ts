@@ -51,6 +51,7 @@ interface DeckModel {
   playing: boolean;
   scratching: boolean;
   rate: number;
+  keylock: boolean;
   seq: number;
   // last known playhead
   pos: number;
@@ -94,6 +95,7 @@ export class WebAudioEngine implements AudioEngine {
       playing: false,
       scratching: false,
       rate: 1,
+      keylock: false,
       seq: 0,
       pos: 0,
       speed: 0,
@@ -299,6 +301,7 @@ export class WebAudioEngine implements AudioEngine {
     const m = this.models[i];
     if (m.dsp) this.applyChannel(i, m.dsp);
     this.post(i, { type: "rate", rate: m.rate });
+    this.post(i, { type: "keylock", on: m.keylock });
     if (m.buffer) {
       this.sendBuffer(i, m.buffer);
       this.post(i, { type: "seek", seconds: m.pos, seq: ++m.seq });
@@ -472,6 +475,11 @@ export class WebAudioEngine implements AudioEngine {
   setRate(deck: number, rate: number): void {
     this.models[deck].rate = rate;
     this.post(deck, { type: "rate", rate });
+  }
+
+  setKeylock(deck: number, on: boolean): void {
+    this.models[deck].keylock = on;
+    this.post(deck, { type: "keylock", on });
   }
 
   setLoop(deck: number, loop: { start: number; end: number } | null): void {

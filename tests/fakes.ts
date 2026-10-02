@@ -41,6 +41,11 @@ export class FakeAudioEngine implements AudioEngine {
     this.positions[deck] = seconds;
     this.rec("seek", deck, seconds);
   }
+  keylock = [false, false];
+  setKeylock(deck: number, on: boolean) {
+    this.keylock[deck] = on;
+    this.rec("setKeylock", deck, on);
+  }
   setRate(deck: number, rate: number) {
     this.rates[deck] = rate;
     this.rec("setRate", deck, rate);

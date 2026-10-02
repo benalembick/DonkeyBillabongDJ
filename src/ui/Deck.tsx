@@ -280,7 +280,7 @@ function StateButtons({ deck }: { deck: number }) {
   return (
     <div className="state-buttons">
       <button className={`tiny ${d.vinyl ? "lit" : ""}`} onClick={() => send(`${p}.vinyl`)} title="Vinyl (scratch) mode">VINYL</button>
-      <button className={`tiny ${d.keylock ? "lit" : ""}`} onClick={() => send(`${p}.keylock`)} title="Key lock (time-stretch) — Phase 2">KEY LOCK</button>
+      <button className={`tiny ${d.keylock ? "lit" : ""}`} onClick={() => send(`${p}.keylock`)} title="Key lock: change tempo without changing the key (pitch). Scratching still sounds like vinyl.">KEY LOCK</button>
       <button
         className={`tiny ${d.sync ? "lit" : ""}`}
         onClick={() => send(`${p}.sync`)}

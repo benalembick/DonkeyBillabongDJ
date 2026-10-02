@@ -224,6 +224,20 @@ describe("jog", () => {
     expect(audio.calls.filter((c) => c.fn === "scratchMove").length).toBe(moves);
   });
 
+  it("KEY LOCK toggles time-stretching in the audio engine and survives ejecting the track", async () => {
+    await loaded();
+    bus.send("deck1.keylock", 1);
+    expect(audio.keylock[0]).toBe(true);
+    expect(engine.getState().decks[0].keylock).toBe(true);
+    expect(engine.getFeedback("deck1.keylock")).toBe(1);
+    bus.send("deck1.eject", 1);
+    expect(engine.getState().decks[0].keylock).toBe(true);
+    expect(audio.keylock[0]).toBe(true);
+    bus.send("deck1.keylock", 1);
+    expect(audio.keylock[0]).toBe(false);
+    expect(engine.getState().decks[0].keylock).toBe(false);
+  });
+
   it("releasing the waveform doesn't end a scratch held on the hardware platter", async () => {
     await loaded();
     bus.send("deck1.jog.touch", 1, "midi");

@@ -405,7 +405,8 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
   restoreManualMashupSetup(setup: ManualMashupSetup): void {
     setup.decks.slice(0, this.deckCount).forEach((saved, deck) => {
       this.setRateDirect(deck, saved.rate);
-      this.patchDeck(deck, { tempoRange: saved.tempoRange, keylock: saved.keylock, vinyl: saved.vinyl, sync: saved.sync });
+      this.patchDeck(deck, { tempoRange: saved.tempoRange, vinyl: saved.vinyl, sync: saved.sync });
+      this.setKeylock(deck, saved.keylock);
       this.patchStems(deck, { enabled: saved.stems.enabled, muted: saved.stems.muted.slice(), volume: saved.stems.volume.slice() });
     });
     setup.channels.slice(0, this.deckCount).forEach((channel, i) => this.patchChannel(i, { ...channel }));
@@ -978,10 +979,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       on(`${p}.play`, pressed(() => this.onPlay(i)));
       on(`${p}.cue`, (v) => this.onCue(i, v > 0));
       on(`${p}.vinyl`, pressed(() => this.toggleVinyl(i)));
-      on(`${p}.keylock`, pressed(() => {
-        this.patchDeck(i, { keylock: !this.state.decks[i].keylock });
-        this.warnUnimplemented(`${p}.keylock`, "Key lock (time-stretching) arrives in Phase 2; the flag is stored only.");
-      }));
+      on(`${p}.keylock`, pressed(() => this.setKeylock(i, !this.state.decks[i].keylock)));
       on(`${p}.eject`, pressed(() => this.eject(i)));
       on(`${p}.stems`, pressed(() => this.setStemsEnabled(i, !this.state.decks[i].stems.enabled)));
       STEM_NAMES.forEach((s, k) => {
@@ -1212,7 +1210,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.loadTokens[deck]++;
     this.loadAborts[deck]?.abort();
     this.audio.unloadDeck(deck);
-    this.patchDeck(deck, { ...initialDeck(deck), tempo: d.tempo, tempoRange: d.tempoRange, rate: d.rate, vinyl: d.vinyl });
+    this.patchDeck(deck, { ...initialDeck(deck), tempo: d.tempo, tempoRange: d.tempoRange, rate: d.rate, vinyl: d.vinyl, keylock: d.keylock });
     this.rolls[deck] = null;
     if (this.state.masterDeck === deck) this.reassignMaster(deck);
     this.emit("event", { type: "trackUnloaded", deck });
@@ -1257,6 +1255,12 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     const tempoRange = TEMPO_RANGES[(i + 1) % TEMPO_RANGES.length];
     this.patchDeck(deck, { tempoRange });
     this.applyTempo(deck, d.tempo);
+  }
+
+  /** Key lock: tempo changes keep the track's pitch (time-stretched in the deck worklet). */
+  setKeylock(deck: number, on: boolean): void {
+    this.audio.setKeylock(deck, on);
+    this.patchDeck(deck, { keylock: on });
   }
 
   private onJogTouch(deck: number, touched: boolean): void {
