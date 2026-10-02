@@ -686,6 +686,10 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .lx-fixture-pick { max-height: 190px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 6px; }
 .lx-check { display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 0; }
 .lx-mappings { margin-top: 8px; font-size: 12px; }
+.lx-movement { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.lx-movement .lx-row { margin-bottom: 4px; }
+.lx-movement-sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 16px; }
+.lx-enable.small { padding: 4px 10px; font-size: 11px; }
 .lx-mappings summary { cursor: pointer; color: var(--muted); font-weight: 700; }
 .lx-mappings table { border-collapse: collapse; margin: 6px 0; }
 .lx-mappings td, .lx-mappings th { padding: 2px 8px 2px 0; text-align: left; }

@@ -3,8 +3,10 @@
  *
  * Every control source writes into its own *layer* (desk, sound-to-light, Art-Net
  * input; later scenes, chases, MIDI, Auto DJ lighting). The output of a universe
- * is the HTP (highest-takes-precedence) merge of all layers, then the grand
- * master is applied to intensity channels, then blackout. Layers are never
+ * is the HTP (highest-takes-precedence) merge of all layers — except channels a
+ * layer has *claimed* (LTP: e.g. sound-to-light movement owns pan/tilt, which must
+ * never be "the highest of two positions") — then the grand master is applied to
+ * intensity channels, then blackout. Layers are never
  * modified by master/blackout, so releasing blackout restores the exact state.
  *
  * No UI or hardware code lives here: the desk and virtual console read/write
@@ -26,6 +28,8 @@ export class DmxEngine extends Emitter<{ change: void }> {
   private masterMask = new Map<number, Uint8Array>();
   private master = 1;
   private blackout = false;
+  /** layer → universe → 1 where that layer's value replaces the HTP merge. */
+  private claims = new Map<LayerId, Map<number, Uint8Array>>();
   /** universe → channel indexes (0-based) whose output is inverted (255 − v). */
   private inverted = new Map<number, Set<number>>();
   /** Bumped on every change: cheap "did anything change" check for UIs and outputs. */
@@ -46,6 +50,7 @@ export class DmxEngine extends Emitter<{ change: void }> {
   removeUniverse(u: number): void {
     if (!this.universes.delete(u)) return;
     for (const l of this.layers.values()) l.delete(u);
+    for (const c of this.claims.values()) c.delete(u);
     this.masterMask.delete(u);
     this.touch();
   }
@@ -109,6 +114,24 @@ export class DmxEngine extends Emitter<{ change: void }> {
     return this.buf(layer, u);
   }
 
+  /**
+   * Let a layer own channels outright (LTP) instead of HTP-merging them — for position
+   * channels. `channels` are 1-based; empty or null releases the claim.
+   */
+  claimChannels(layer: LayerId, u: number, channels: Iterable<number> | null): void {
+    const mask = new Uint8Array(DMX_SLOTS);
+    let any = false;
+    for (const c of channels ?? []) if (c >= 1 && c <= DMX_SLOTS) (mask[c - 1] = 1), (any = true);
+    let l = this.claims.get(layer);
+    const prev = l?.get(u);
+    if (!any && !prev) return;
+    if (prev && any && prev.every((v, i) => v === mask[i])) return;
+    if (!l) this.claims.set(layer, (l = new Map()));
+    if (any) l.set(u, mask);
+    else l.delete(u);
+    this.touch();
+  }
+
   clearLayer(layer: LayerId, u?: number): void {
     const l = this.layers.get(layer);
     if (!l) return;
@@ -161,6 +184,12 @@ export class DmxEngine extends Emitter<{ change: void }> {
       const b = l.get(u);
       if (!b) continue;
       for (let i = 0; i < DMX_SLOTS; i++) if (b[i] > out[i]) out[i] = b[i];
+    }
+    for (const [layer, byU] of this.claims) {
+      const mask = byU.get(u);
+      if (!mask) continue;
+      const b = this.layers.get(layer)?.get(u);
+      for (let i = 0; i < DMX_SLOTS; i++) if (mask[i]) out[i] = b ? b[i] : 0;
     }
     if (this.master < 1) {
       const mask = this.masterMask.get(u);

@@ -5,7 +5,7 @@ import { DmxEngine, LAYER_DESK, LAYER_SOUND } from "../src/lighting/DmxEngine";
 import { addressRange, channelMap, GENERIC_FIXTURES, nextFreeAddress, overlaps, type PatchedFixture } from "../src/lighting/fixtures";
 import { defaultIo, type IoStatus } from "../src/lighting/io";
 import { artDmx, artPoll, e131Data, enttecProDmx, parseArtDmx, parseArtPollReply, parseE131, sacnMulticast } from "../src/lighting/protocol";
-import { SoundToLight, type BandReading } from "../src/lighting/SoundToLight";
+import { movementOffset, SoundToLight, type BandReading } from "../src/lighting/SoundToLight";
 
 const frame = (pairs: [number, number][]) => {
   const d = new Uint8Array(512);
@@ -260,5 +260,128 @@ describe("USB DMX detection", () => {
     const f = openDmxFrame(frame([[1, 9], [512, 7]]));
     expect(f.length).toBe(513);
     expect([f[0], f[1], f[512]]).toEqual([0, 9, 7]);
+  });
+});
+
+describe("sound-to-light movement (moving heads)", () => {
+  const head = GENERIC_FIXTURES.find((d) => d.id === "generic/moving-head")!;
+  const mode11 = head.modes[0].name; // pan, panFine, tilt, tiltFine, speed, dimmer, …
+  const rig = (extra: PatchedFixture[] = []) => () => ({
+    defs: [...GENERIC_FIXTURES, { ...head, id: "test/laser-head", laser: true }],
+    fixtures: [
+      { id: "h1", name: "Head L", defId: head.id, mode: mode11, universe: 1, address: 1, channelCount: 11 },
+      { id: "h2", name: "Head R", defId: head.id, mode: mode11, universe: 1, address: 21, channelCount: 11 },
+      ...extra,
+    ] as PatchedFixture[],
+  });
+  /** pan/tilt (0..1, 16-bit) of a head starting at `addr`. */
+  const pos = (out: Uint8Array, addr: number) => ({ pan: ((out[addr - 1] << 8) | out[addr]) / 65535, tilt: ((out[addr + 1] << 8) | out[addr + 2]) / 65535 });
+
+  function setup(opts: { signal?: () => "kick" | "quiet" | "silent"; grid?: boolean; extra?: PatchedFixture[] } = {}) {
+    const engine = new DmxEngine();
+    let beats = 0;
+    const loud = { low: 1, mid: 0.5, high: 0.3, amplitude: 1 };
+    const stl = new SoundToLight({
+      engine,
+      probe: { read: () => { const s = opts.signal?.() ?? "kick"; return s === "silent" ? { low: 0, mid: 0, high: 0, amplitude: 0 } : s === "quiet" ? { low: 0.05, mid: 0.2, high: 0.1, amplitude: 0.25 } : loud; } },
+      beats: { beatPosition: () => (opts.grid === false ? null : { beats, bpm: 120 }) },
+      rig: rig(opts.extra),
+    });
+    stl.settings = { ...stl.settings, enabled: true, fixtures: ["h1", "h2", ...(opts.extra ?? []).map((f) => f.id)], movement: { ...stl.settings.movement, enabled: true, followEnergy: false, size: 0.4, spread: 0, mirror: true, pattern: "circle", beatsPerCycle: 8 } };
+    const advance = (b: number, steps = 40) => { for (let i = 0; i < steps; i++) { beats += b / steps; stl.update(0.5 * b / steps); } };
+    return { engine, stl, advance, beatsNow: () => beats };
+  }
+
+  it("DmxEngine: a claimed channel takes the claiming layer's value (LTP), released → HTP again", () => {
+    const e = new DmxEngine();
+    e.setChannel(LAYER_DESK, 1, 1, 200);
+    e.setChannel(LAYER_SOUND, 1, 1, 50);
+    expect(e.compute(1)[0]).toBe(200);
+    e.claimChannels(LAYER_SOUND, 1, [1]);
+    expect(e.compute(1)[0]).toBe(50);
+    e.claimChannels(LAYER_SOUND, 1, null);
+    expect(e.compute(1)[0]).toBe(200);
+  });
+
+  it("pattern shapes: circle stays on the unit circle; beat jumps hold within a beat and move on the next", () => {
+    for (let p = 0; p < 1; p += 0.1) expect(Math.hypot(movementOffset("circle", p).x, movementOffset("circle", p).y)).toBeCloseTo(1);
+    expect(movementOffset("sweep", 0.3).y).toBe(0);
+    expect(movementOffset("nod", 0.3).x).toBe(0);
+    expect(movementOffset("jump", 0.01)).toEqual(movementOffset("jump", 0.2)); // same quarter cycle
+    expect(movementOffset("jump", 0.01)).not.toEqual(movementOffset("jump", 0.26));
+    expect(movementOffset("jump", 0.01, 0)).not.toEqual(movementOffset("jump", 0.01, 1)); // heads differ
+  });
+
+  it("circles locked to the beat grid: one cycle per 8 beats, 16-bit, mirror pairs", () => {
+    const { engine, advance } = setup();
+    advance(0.001, 1);
+    const start = pos(engine.compute(1), 1);
+    expect(start.pan).toBeCloseTo(0.5 + 0.2, 2); // circle starts at +x; size 0.4 → reach 0.2
+    expect(start.tilt).toBeCloseTo(0.5, 2);
+    advance(2); // a quarter cycle
+    const q = pos(engine.compute(1), 1);
+    expect(q.pan).toBeCloseTo(0.5, 2);
+    expect(q.tilt).toBeCloseTo(0.7, 2);
+    const other = pos(engine.compute(1), 21);
+    expect(other.tilt).toBeCloseTo(q.tilt, 2); // same phase (spread 0)
+    advance(6); // completes the cycle
+    const back = pos(engine.compute(1), 1);
+    expect(back.pan).toBeCloseTo(start.pan, 2);
+    expect(back.tilt).toBeCloseTo(start.tilt, 2);
+    expect(pos(engine.compute(1), 21).pan).toBeCloseTo(1 - back.pan, 2); // mirrored
+    // Fine channels carry the low byte: positions between coarse steps are output.
+    let fineSeen = false;
+    for (let i = 0; i < 20; i++) { advance(0.05, 1); if (engine.compute(1)[1] !== 0) fineSeen = true; }
+    expect(fineSeen).toBe(true);
+  });
+
+  it("spread offsets heads around the cycle", () => {
+    const { engine, stl, advance } = setup();
+    stl.settings = { ...stl.settings, movement: { ...stl.settings.movement, spread: 1, mirror: false } };
+    advance(0.001, 1);
+    const a = pos(engine.compute(1), 1), b = pos(engine.compute(1), 21);
+    expect(a.pan).toBeCloseTo(0.7, 2); // phase 0
+    expect(b.pan).toBeCloseTo(0.3, 2); // half a cycle later (2 heads, spread 1)
+  });
+
+  it("owns pan/tilt while on (desk position ignored), hands it back when movement is switched off", () => {
+    const { engine, stl, advance } = setup();
+    engine.setChannel(LAYER_DESK, 1, 1, 255); // desk pan full right
+    engine.setChannel(LAYER_DESK, 1, 6, 255); // desk dimmer
+    advance(2);
+    const out = engine.compute(1);
+    expect(out[0]).toBeLessThan(200); // movement, not HTP with the desk's 255
+    expect(out[5]).toBe(255); // dimmer still HTP
+    stl.settings = { ...stl.settings, movement: { ...stl.settings.movement, enabled: false } };
+    advance(0.1, 1);
+    expect(engine.compute(1)[0]).toBe(255);
+    stl.settings = { ...stl.settings, enabled: false };
+    stl.update(0.02);
+    expect(engine.compute(1)[0]).toBe(255);
+  });
+
+  it("follows detected kicks when there's no beat grid, and holds still in silence", () => {
+    let level: "kick" | "quiet" | "silent" = "kick";
+    const { engine, stl } = setup({ grid: false, signal: () => level });
+    // Kicks at 120 BPM over quieter music, so beats are detected from the bass.
+    const loudFor = (seconds: number) => { for (let t = 0; t < seconds; t += 0.02) { level = (t % 0.5) < 0.1 ? "kick" : "quiet"; stl.update(0.02); } };
+    loudFor(6);
+    const p1 = pos(engine.compute(1), 1);
+    loudFor(1);
+    const p2 = pos(engine.compute(1), 1);
+    expect(Math.hypot(p2.pan - p1.pan, p2.tilt - p1.tilt)).toBeGreaterThan(0.01); // moving
+    level = "silent";
+    for (let i = 0; i < 30; i++) stl.update(0.02);
+    const s1 = pos(engine.compute(1), 1);
+    for (let i = 0; i < 100; i++) stl.update(0.02);
+    const s2 = pos(engine.compute(1), 1);
+    expect(s2).toEqual(s1); // silence: heads hold position
+  });
+
+  it("never moves lasers unless lasers are allowed", () => {
+    const laser = { id: "lz", name: "Laser head", defId: "test/laser-head", mode: mode11, universe: 1, address: 41, channelCount: 11 } as PatchedFixture;
+    const { engine, advance } = setup({ extra: [laser] });
+    advance(3);
+    expect(Math.max(...engine.compute(1).subarray(40, 51))).toBe(0);
   });
 });

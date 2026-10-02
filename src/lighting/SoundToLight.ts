@@ -9,6 +9,11 @@
  * Bands use the same crossovers as the channel EQ and the EQ-reactive waveform
  * (220 Hz / 3.5 kHz). When the playing deck has a beat grid, beats come from it
  * (exact, including downbeats every 4 beats); otherwise from bass onsets.
+ *
+ * MOVEMENT: fixtures with pan/tilt trace a pattern (circle, figure-8, sweep, nod, beat
+ * jumps) locked to the beat — the deck's beat grid when it has one, else the detected
+ * tempo, pulled back into phase on every kick. Movement owns those fixtures' pan/tilt
+ * (LTP claim) while on; with no signal the heads hold still.
  */
 import { Emitter } from "../core/events";
 import { DmxEngine, LAYER_SOUND } from "./DmxEngine";
@@ -37,6 +42,79 @@ export const DEFAULT_MAPPINGS: SoundMapping[] = [
   { input: "beat", output: "generic", amount: 1 },
 ];
 
+export type MovementPattern = "circle" | "figure8" | "sweep" | "nod" | "jump";
+
+export const MOVEMENT_PATTERNS: [MovementPattern, string][] = [
+  ["circle", "Circle"],
+  ["figure8", "Figure 8"],
+  ["sweep", "Pan sweep"],
+  ["nod", "Tilt nod"],
+  ["jump", "Beat jumps"],
+];
+
+/** Moving heads following the music (part of sound-to-light). */
+export interface MovementSettings {
+  enabled: boolean;
+  pattern: MovementPattern;
+  /** Beats per pattern cycle (Beat jumps: four jumps per cycle). */
+  beatsPerCycle: number;
+  /** 0..1: how far from the centre the heads move (1 = the whole pan/tilt range). */
+  size: number;
+  /** Centre of the movement, 0..1 of the pan / tilt range. */
+  panCentre: number;
+  tiltCentre: number;
+  /** 0..1: heads offset around the cycle (0 = in unison, 1 = spread over a whole cycle). */
+  spread: number;
+  /** Every other head moves as a mirror image (pan reversed). */
+  mirror: boolean;
+  /** Bigger moves when the music is loud, smaller in quiet passages. */
+  followEnergy: boolean;
+}
+
+export const DEFAULT_MOVEMENT: MovementSettings = {
+  enabled: false,
+  pattern: "circle",
+  beatsPerCycle: 8,
+  size: 0.3,
+  panCentre: 0.5,
+  tiltCentre: 0.5,
+  spread: 0.25,
+  mirror: true,
+  followEnergy: true,
+};
+
+/**
+ * Offset from the centre (x = pan, y = tilt, each −1..1) for a pattern at `phase`
+ * (cycles, any real number). Beat jumps pick a stable pseudo-random spot per jump and head.
+ */
+export function movementOffset(pattern: MovementPattern, phase: number, head = 0): { x: number; y: number } {
+  const a = 2 * Math.PI * phase;
+  switch (pattern) {
+    case "circle":
+      return { x: Math.cos(a), y: Math.sin(a) };
+    case "figure8":
+      return { x: Math.sin(a), y: Math.sin(2 * a) };
+    case "sweep":
+      return { x: Math.sin(a), y: 0 };
+    case "nod":
+      return { x: 0, y: Math.sin(a) };
+    case "jump": {
+      const n = Math.floor(phase * 4); // four jumps per cycle
+      return { x: hash01(n * 2 + head * 7919) * 2 - 1, y: hash01(n * 2 + 1 + head * 7919) * 2 - 1 };
+    }
+  }
+}
+
+/** Deterministic 0..1 from an integer, so a jump target stays put between frames. */
+function hash01(n: number): number {
+  let h = (n | 0) ^ 0x9e3779b9;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+const POSITION_TYPES = new Set<ChannelType>(["pan", "panFine", "tilt", "tiltFine"]);
+
 export interface SoundSettings {
   enabled: boolean;
   source: SoundSource;
@@ -55,6 +133,7 @@ export interface SoundSettings {
   mappings: SoundMapping[];
   /** Lasers are never driven by sound unless this is switched on deliberately. */
   allowLasers: boolean;
+  movement: MovementSettings;
 }
 
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
@@ -71,6 +150,7 @@ export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   fixtures: [],
   mappings: DEFAULT_MAPPINGS,
   allowLasers: false,
+  movement: DEFAULT_MOVEMENT,
 };
 
 /** Raw band magnitudes from the audio graph (any scale; normalised here). */
@@ -156,6 +236,11 @@ export class SoundToLight extends Emitter<SoundEvents> {
   private onsetCount = 0;
   private time = 0;
   private wasEnabled = false;
+  /** Beat clock for movement (beats, fractional). */
+  private moveBeats = 0;
+  /** Slow loudness follower for "Follow energy" (0..1). */
+  private energy = 0;
+  private claimed = new Map<number, string>();
   meters: SoundMeters = { low: 0, mid: 0, high: 0, amplitude: 0, beat: 0, bpm: null, beatFrom: "none", signal: false };
 
   constructor(opts: { engine: DmxEngine; probe: AudioProbe; beats: BeatSource; rig: () => { defs: FixtureDef[]; fixtures: PatchedFixture[] } }) {
@@ -223,6 +308,15 @@ export class SoundToLight extends Emitter<SoundEvents> {
       }
       if (s.beatFlash) this.beatEnv = Math.max(this.beatEnv, fired.downbeat && s.downbeatAccent ? 1 : 0.7);
     }
+    // Movement clock: the beat grid when there is one; else the detected tempo, pulled into
+    // phase on each detected beat; with no signal it stops (heads hold their position).
+    if (grid) this.moveBeats = grid.beats;
+    else if (signal && bpm) {
+      this.moveBeats += (dt * bpm) / 60;
+      if (fired) this.moveBeats += (Math.round(this.moveBeats) - this.moveBeats) * 0.5;
+    } else if (signal && fired) this.moveBeats = Math.round(this.moveBeats) + 1;
+    this.energy += ((signal ? this.amp.level : 0) - this.energy) * (1 - Math.exp(-dt / 1.5));
+
     // Flash decay: quicker at fast response.
     this.beatEnv *= Math.exp(-dt / (0.32 - 0.22 * s.speed));
     if (!s.beatFlash) this.beatEnv = 0;
@@ -262,11 +356,17 @@ export class SoundToLight extends Emitter<SoundEvents> {
     if (!s.enabled) {
       if (this.wasEnabled) for (const u of this.engine.getUniverses()) this.engine.clearLayer(LAYER_SOUND, u);
       this.wasEnabled = false;
+      this.claim(new Map());
       return;
     }
     this.wasEnabled = true;
     for (const f of this.frames.values()) f.fill(0);
     const selected = new Set(s.fixtures);
+    const mv = s.movement ?? DEFAULT_MOVEMENT;
+    const claims = new Map<number, number[]>();
+    let head = 0;
+    const isHead = (fx: PatchedFixture) => !!modeOf(defs, fx)?.channels.some((c) => c.type === "pan" || c.type === "tilt");
+    const heads = mv.enabled ? fixtures.filter((fx) => selected.has(fx.id) && isHead(fx) && (!findDef(defs, fx.defId)?.laser || s.allowLasers)).length : 0;
     for (const fx of fixtures) {
       if (!selected.has(fx.id)) continue;
       if (findDef(defs, fx.defId)?.laser && !s.allowLasers) continue; // laser safety
@@ -276,6 +376,17 @@ export class SoundToLight extends Emitter<SoundEvents> {
       if (!frame) this.frames.set(fx.universe, (frame = new Uint8Array(DMX_SLOTS)));
       const types = mode.channels.map((c) => c.type);
       const hasDimmer = types.includes("intensity");
+      // Movement: this head's pan/tilt (16-bit where the fixture has fine channels).
+      let pan = -1;
+      let tilt = -1;
+      if (mv.enabled && (types.includes("pan") || types.includes("tilt"))) {
+        const phase = this.moveBeats / Math.max(0.25, mv.beatsPerCycle) + (heads > 1 ? (head * mv.spread) / heads : 0);
+        const o = movementOffset(mv.pattern, phase, head);
+        const reach = 0.5 * mv.size * (mv.followEnergy ? 0.35 + 0.65 * Math.min(1, this.energy * 1.25) : 1);
+        pan = Math.min(1, Math.max(0, mv.panCentre + (mv.mirror && head % 2 === 1 ? -o.x : o.x) * reach));
+        tilt = Math.min(1, Math.max(0, mv.tiltCentre + o.y * reach));
+        head++;
+      }
       const dim = this.valueFor("intensity", inputs);
       // Without a dimmer channel, the colour channels carry the intensity (beat flash etc.).
       const colourScale = hasDimmer ? s.brightness : s.brightness * dim;
@@ -287,11 +398,34 @@ export class SoundToLight extends Emitter<SoundEvents> {
         if (t === "intensity") v = dim * s.brightness;
         else if (t === "generic") v = this.valueFor("generic", inputs) * s.brightness;
         else if (t === "red" || t === "green" || t === "blue" || t === "white" || t === "amber" || t === "uv") v = this.valueFor(t, inputs) * colourScale;
-        // Strobe, position and effect channels are left alone (0) — never strobe automatically.
+        else if (POSITION_TYPES.has(t)) {
+          const pos = t === "pan" || t === "panFine" ? pan : tilt;
+          if (pos < 0) continue; // movement off: position stays with the desk
+          const v16 = Math.round(pos * 65535);
+          frame[a - 1] = t === "panFine" || t === "tiltFine" ? v16 & 0xff : v16 >> 8;
+          let list = claims.get(fx.universe);
+          if (!list) claims.set(fx.universe, (list = []));
+          list.push(a);
+          continue;
+        }
+        // Strobe and effect channels are left alone (0) — never strobe automatically.
         if (v > 0) frame[a - 1] = Math.max(frame[a - 1], Math.round(Math.min(1, v) * 255));
       }
     }
     for (const u of this.engine.getUniverses()) this.engine.writeLayer(LAYER_SOUND, u, this.frames.get(u) ?? new Uint8Array(DMX_SLOTS));
+    this.claim(claims);
+  }
+
+  /** Movement owns the moving heads' pan/tilt (LTP) while on; released when off. */
+  private claim(claims: Map<number, number[]>): void {
+    for (const u of new Set([...this.claimed.keys(), ...claims.keys()])) {
+      const list = claims.get(u) ?? [];
+      const key = list.join(",");
+      if ((this.claimed.get(u) ?? "") === key) continue;
+      this.engine.claimChannels(LAYER_SOUND, u, list);
+      if (key) this.claimed.set(u, key);
+      else this.claimed.delete(u);
+    }
   }
 
   /** Highest mapped input for a channel type (mappings are editable data, not code). */

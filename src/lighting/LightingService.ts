@@ -18,7 +18,7 @@ import { DMX_SLOTS } from "./protocol";
 import { GENERIC_FIXTURES, INTENSITY_TYPES, findDef, fitsUniverse, modeOf, nextFreeAddress, overlaps, type FixtureDef, type PatchedFixture } from "./fixtures";
 import { addPlaceholderMode, parseQlcDefinition, parseQlcFixtureList, placeholderDef, qlcDefId, qlcFileKind } from "./qlcImport";
 import { defaultIo, type ExitBehaviour, type IoStatus, type UniverseIo } from "./io";
-import { DEFAULT_SOUND_SETTINGS, SoundToLight, type SoundSettings } from "./SoundToLight";
+import { DEFAULT_SOUND_SETTINGS, SoundToLight, type MovementSettings, type SoundSettings } from "./SoundToLight";
 import { makeBeatSource, makeProbe, MicInput, type AnalysisTapProvider } from "./audioInputs";
 import { UsbProOutput } from "./usbPro";
 
@@ -160,7 +160,8 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
       universes: Array.isArray(c.universes) && c.universes.length ? c.universes.map((u) => ({ ...defaultIo(u.universe), ...u, artnet: { ...defaultIo(u.universe).artnet, ...u.artnet }, sacn: { ...defaultIo(u.universe).sacn, ...u.sacn } })) : base.universes,
       fixtures: Array.isArray(c.fixtures) ? c.fixtures : [],
       customDefs: Array.isArray(c.customDefs) ? c.customDefs : [],
-      sound: { ...base.sound, ...c.sound, enabled: false }, // sound control never starts by itself
+      // Sound control never starts by itself; movement settings merged so older setups get the new fields.
+      sound: { ...base.sound, ...c.sound, enabled: false, movement: { ...base.sound.movement, ...c.sound?.movement } },
       console: c.console?.widgets ? c.console : base.console,
     };
     if (raw) this.log.info("lighting", `Lighting setup restored: ${this.cfg.fixtures.length} fixture(s), ${this.cfg.universes.length} universe(s)`);
@@ -347,6 +348,10 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
     this.update({ sound: { ...this.cfg.sound, ...patch } });
   }
 
+  setMovement(patch: Partial<MovementSettings>): void {
+    this.setSound({ movement: { ...this.cfg.sound.movement, ...patch } });
+  }
+
   /**
    * Import QLC+ files: fixture lists (.qxfl) / workspaces (.qxw) recreate the patch;
    * fixture definitions (.qxf) give each channel its real function. Files can come in any
@@ -441,5 +446,7 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
     bus.handle("lighting.sound.brightness", (v) => this.setSound({ brightness: Math.max(0, Math.min(1, v)) }));
     bus.handle("lighting.sound.sensitivity", (v) => this.setSound({ sensitivity: Math.max(0, Math.min(1, v)) }));
     bus.handle("lighting.sound.speed", (v) => this.setSound({ speed: Math.max(0, Math.min(1, v)) }));
+    bus.handle("lighting.sound.movement", pressed(() => this.setMovement({ enabled: !this.cfg.sound.movement.enabled })));
+    bus.handle("lighting.sound.movement.size", (v) => this.setMovement({ size: Math.max(0, Math.min(1, v)) }));
   }
 }

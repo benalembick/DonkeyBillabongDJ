@@ -113,7 +113,7 @@ The Virtual Console is a list of widgets (`VcWidget`, with a type registry). The
 - Overall level → Dimmer.
 - Beat → Dimmer flash (downbeats flash stronger with Downbeat Accent).
 - Fixtures without a dimmer carry the flash in their colour channels.
-- Strobe, pan/tilt and effect channels are never driven by sound.
+- Strobe and effect channels are never driven by sound; pan/tilt only by **Movement** (below).
 
 **Controls:**
 - Enable, source, Sensitivity, Master Brightness, Speed (Slow ↔ Fast), and Bass/Mid/High Response.
@@ -122,6 +122,16 @@ The Virtual Console is a list of widgets (`VcWidget`, with a type registry). The
 - **Controlled fixtures** checklist with Select all / Clear.
 - Sound control never switches itself on at startup.
 
+**Movement (moving heads follow the music).** Part of sound control, for the controlled fixtures that have pan/tilt:
+- **Patterns:** Circle, Figure 8, Pan sweep, Tilt nod, and Beat jumps (a new pseudo-random spot four times per cycle, stable per head).
+- **Locked to the beat:** one cycle every 1 beat … 4 bars. The clock is the deck's beat grid when there is one; otherwise the detected tempo, pulled back into phase on each detected kick. With no signal the heads hold still.
+- **Shape:** Size, Pan/Tilt centre, Spread (heads offset around the cycle, unison → wave) and Mirror pairs (every other head reverses pan).
+- **Follow energy:** moves grow with the loudness (drops) and shrink in breakdowns.
+- **Output:** 16-bit through PAN FINE / TILT FINE where the fixture has them; inverted-pan modifiers still apply.
+- **Position is LTP, not HTP.** While Movement is on, the sound layer *claims* those pan/tilt channels (`DmxEngine.claimChannels`), so the result is the movement — never "the higher of two positions". Switching Movement (or sound control) off releases them and the desk position returns.
+- Lasers are never moved unless **Allow lasers** is on.
+- MIDI-mappable: `lighting.sound.movement` (on/off) and `lighting.sound.movement.size`.
+
 ## Persistence
 
 The whole setup is saved to `<userData>/lighting.json` (desktop) or localStorage (browser) and restored at start:
@@ -129,15 +139,16 @@ The whole setup is saved to `<userData>/lighting.json` (desktop) or localStorage
 - universes and input/output settings;
 - exit behaviour and master;
 - Virtual Console widgets;
-- sound settings, mappings and controlled fixtures.
+- sound settings, mappings, movement and controlled fixtures.
 
 ## Verified
 
-Unit tests (`tests/lighting.test.ts`, 12 tests) cover:
+Unit tests (`tests/lighting.test.ts`) cover:
 - ArtDmx / ArtPoll / ArtPollReply, the E1.31 layout, and Enttec framing;
 - address ranges, overlaps and channel labels;
 - HTP merge, master mask, and non-destructive blackout;
 - sound mappings, grid beats, quiet signals, and editable mappings;
+- movement: pattern shapes, one cycle per N grid beats, mirror/spread, 16-bit output, LTP ownership of pan/tilt and its release, kick-locked movement without a grid, holding still in silence, lasers never moved;
 - **real UDP on localhost**: Art-Net frames and ArtPoll, "connected" only after a node's ArtPollReply, sACN packets, and zeroing on shutdown.
 
 End-to-end in the desktop app (`DBDJ_SMOKE_LIGHTING=run`, then `=verify` after a restart), with the main process acting as an sACN receiver and an Art-Net node:
@@ -148,6 +159,8 @@ End-to-end in the desktop app (`DBDJ_SMOKE_LIGHTING=run`, then `=verify` after a
 - Sound-to-light on a real track: beats from the grid at 128.04 BPM (`DbbbDbbbD`), and 146 distinct colour frames on sACN with the strobe at 0.
 - Blackout: dark frames until release, then the look returned.
 - After a restart, fixtures, universes and controlled fixtures were all restored.
+
+Movement in the app (`DBDJ_SMOKE_MOVEMENT=track.wav`): two generic moving heads circled once per bar locked to the track's 123.98 BPM grid (pan and tilt 0.34–0.66 around the centre, the second head an exact mirror), and switching Movement off returned pan/tilt to the desk.
 
 Not tested with real hardware here: a physical Art-Net/sACN node and a USB DMX Pro interface.
 

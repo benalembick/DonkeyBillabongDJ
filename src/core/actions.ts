@@ -148,6 +148,8 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
   add("lighting.sound.brightness", "Sound-to-light brightness", "absolute", "Lighting");
   add("lighting.sound.sensitivity", "Sound-to-light sensitivity", "absolute", "Lighting");
   add("lighting.sound.speed", "Sound-to-light speed / response", "absolute", "Lighting");
+  add("lighting.sound.movement", "Moving heads follow the music on/off", "button", "Lighting");
+  add("lighting.sound.movement.size", "Moving heads: movement size", "absolute", "Lighting");
   add("recording.toggle", "Record", "button", "Recording", false);
   add("modifier.shift", "Shift (mapping modifier)", "button", "Controller");
   return out;

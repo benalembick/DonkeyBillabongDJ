@@ -11,7 +11,7 @@ import { VC_WIDGET_TYPES } from "../../lighting/LightingService";
 import { LAYER_DESK } from "../../lighting/DmxEngine";
 import { CHANNEL_LABELS, addressRange, capabilityAt, channelMap, findDef, type ChannelType, type PatchedFixture } from "../../lighting/fixtures";
 import { INPUT_LABELS, OUTPUT_LABELS, type InputKind, type LinkState, type OutputKind, type UniverseIo } from "../../lighting/io";
-import { DEFAULT_MAPPINGS, type SoundInput, type SoundMapping, type SoundSettings, type SoundSource } from "../../lighting/SoundToLight";
+import { DEFAULT_MAPPINGS, MOVEMENT_PATTERNS, type MovementPattern, type MovementSettings, type SoundInput, type SoundMapping, type SoundSettings, type SoundSource } from "../../lighting/SoundToLight";
 
 type Tab = "console" | "desk" | "fixtures" | "io";
 const TABS: [Tab, string][] = [
@@ -317,7 +317,75 @@ function SoundWidget({ l }: { l: LightingService }) {
           )}
         </div>
       </div>
+      <MovementControls l={l} />
       <MappingEditor value={s.mappings} onChange={(mappings) => set({ mappings })} />
+    </div>
+  );
+}
+
+const CYCLES: [number, string][] = [
+  [1, "1 beat"],
+  [2, "2 beats"],
+  [4, "1 bar"],
+  [8, "2 bars"],
+  [16, "4 bars"],
+];
+
+/** Moving heads following the music: part of sound control, for selected fixtures with pan/tilt. */
+function MovementControls({ l }: { l: LightingService }) {
+  const cfg = useLightingConfig(l);
+  const { bus } = useApp();
+  const mv = cfg.sound.movement;
+  const set = (patch: Partial<MovementSettings>) => l.setMovement(patch);
+  const selected = new Set(cfg.sound.fixtures);
+  const heads = cfg.fixtures.filter((f) => selected.has(f.id) && l.defs.find((d) => d.id === f.defId)?.modes.some((m) => m.channels.some((c) => c.type === "pan" || c.type === "tilt")));
+  const anyHeads = cfg.fixtures.some((f) => l.defs.find((d) => d.id === f.defId)?.modes.some((m) => m.channels.some((c) => c.type === "pan" || c.type === "tilt")));
+  return (
+    <div className="lx-movement">
+      <div className="lx-row">
+        <button className={`lx-enable small ${mv.enabled ? "on" : ""}`} onClick={() => bus.send("lighting.sound.movement")} disabled={!anyHeads} title={anyHeads ? "Moving heads trace a pattern locked to the beat" : "No fixtures with pan/tilt in the rig"}>
+          {mv.enabled ? "MOVEMENT ON" : "MOVE HEADS WITH THE MUSIC"}
+        </button>
+        <label>
+          Pattern{" "}
+          <select value={mv.pattern} onChange={(e) => set({ pattern: e.target.value as MovementPattern })}>
+            {MOVEMENT_PATTERNS.map(([v, t]) => (
+              <option key={v} value={v}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          One cycle every{" "}
+          <select value={mv.beatsPerCycle} onChange={(e) => set({ beatsPerCycle: Number(e.target.value) })}>
+            {CYCLES.map(([v, t]) => (
+              <option key={v} value={v}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label title="Every other head moves as a mirror image">
+          <input type="checkbox" checked={mv.mirror} onChange={(e) => set({ mirror: e.target.checked })} /> Mirror pairs
+        </label>
+        <label title="Bigger moves at the drop, smaller in breakdowns">
+          <input type="checkbox" checked={mv.followEnergy} onChange={(e) => set({ followEnergy: e.target.checked })} /> Follow energy
+        </label>
+        <span className="hint">
+          {!anyHeads
+            ? "Add a moving head (a fixture with pan/tilt) to use movement."
+            : heads.length
+              ? `Moves ${heads.length} head${heads.length === 1 ? "" : "s"} · pan/tilt follow the beat while sound control is on`
+              : "Tick moving heads under Controlled fixtures to move them."}
+        </span>
+      </div>
+      <div className="lx-movement-sliders">
+        <Slider label="Size" value={mv.size} onChange={(v) => set({ size: v })} left="Small" right="Wide" />
+        <Slider label="Spread" value={mv.spread} onChange={(v) => set({ spread: v })} left="Unison" right="Wave" />
+        <Slider label="Pan centre" value={mv.panCentre} onChange={(v) => set({ panCentre: v })} left="◀" right="▶" />
+        <Slider label="Tilt centre" value={mv.tiltCentre} onChange={(v) => set({ tiltCentre: v })} left="▼" right="▲" />
+      </div>
     </div>
   );
 }
@@ -385,7 +453,7 @@ function MappingEditor({ value, onChange }: { value: SoundMapping[]; onChange: (
         <button className="tiny" onClick={() => onChange(DEFAULT_MAPPINGS)}>
           Reset to defaults
         </button>
-        <span className="hint">Strobe, pan/tilt and effect channels are never driven by sound.</span>
+        <span className="hint">Strobe and effect channels are never driven by sound; pan/tilt only by Movement.</span>
       </div>
     </details>
   );
