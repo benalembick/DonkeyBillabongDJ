@@ -541,6 +541,9 @@ function runSmokeTest(win: BrowserWindow): void {
             document.querySelectorAll(".view-popover .layout-switch:not(.wave-style-picker) > button").forEach((b) => b.textContent.trim().toUpperCase() === wantLayout.toUpperCase() && b.click());
             await sleep(400);
           }
+          // Library height (DBDJ_SMOKE_LIBH=420): as if dragged/saved that tall — the decks must still fit.
+          const libH = ${JSON.stringify(process.env.DBDJ_SMOKE_LIBH ?? "")};
+          if (libH) { document.querySelector(".app")?.style.setProperty("--lib-h", libH + "px"); await sleep(300); }
           // EQ-reactive waveform (DBDJ_SMOKE_EQ=1): sweep deck A's LOW/MID through the DDJ-SB mapping while
           // playing, measure frame times + playback speed, then kill LOW on deck A only for the screenshot.
           if (${JSON.stringify(!!process.env.DBDJ_SMOKE_EQ)} && a.engine.getState().decks[0].status === "ready") {

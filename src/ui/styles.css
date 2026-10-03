@@ -50,7 +50,8 @@ select { padding: 2px 4px; }
 .section-label { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.12em; }
 
 /* ── app grid ── */
-.app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) 6px var(--lib-h, 360px); height: 100%; }
+/* The decks never shrink below their content: when space is short the library gives way (down to 140 px). */
+.app { display: grid; grid-template-rows: auto auto minmax(min-content, 1fr) 6px minmax(140px, var(--lib-h, 360px)); height: 100%; }
 
 /* ── top bar ── */
 .topbar { display: flex; gap: 10px; justify-content: space-between; align-items: center; padding: 4px 10px; background: #07080a; border-bottom: 1px solid var(--line); }
@@ -261,7 +262,8 @@ img.art-tile { object-fit: cover; display: block; }
 
 /* ── mixer ── */
 .mixer { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 6px; display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: hidden; }
-.mixer-strips { display: grid; grid-template-columns: 1fr 0.85fr 1fr; gap: 4px; flex: 1 1 0; min-height: 0; }
+/* Strips never shrink below their knobs, so the mixer reports its real height and the library gives way. */
+.mixer-strips { display: grid; grid-template-columns: 1fr 0.85fr 1fr; gap: 4px; flex: 1 0 auto; min-height: min-content; }
 .strip { min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 3px 4px; border-radius: 4px; background: var(--panel-2); }
 .strip.channel-a { box-shadow: inset 0 2px 0 var(--deck-a); }
 .strip.channel-b { box-shadow: inset 0 2px 0 var(--deck-b); }
@@ -502,7 +504,7 @@ tr.stream-only td { color: var(--muted); }
 .provider-table td { padding: 3px 8px; }
 
 /* ── mixer strips: knobs beside the fader ── */
-.strip { display: grid; grid-template-columns: auto auto; grid-template-rows: auto minmax(0, 1fr); column-gap: 4px; align-items: stretch; justify-content: center; }
+.strip { display: grid; grid-template-columns: auto auto; grid-template-rows: auto minmax(min-content, 1fr); column-gap: 4px; align-items: stretch; justify-content: center; }
 .strip-name { grid-column: 1 / -1; text-align: center; }
 .strip-knobs { display: flex; flex-direction: column; justify-content: space-between; gap: 1px; }
 .strip-fader { display: flex; flex-direction: column; gap: 4px; min-height: 0; align-items: center; }
@@ -547,7 +549,7 @@ tr.stream-only td { color: var(--muted); }
 .deck.compact .pad small { display: none; }
 
 /* ── use extra height on taller screens (1080p+) ── */
-.stage.horizontal { grid-template-rows: clamp(132px, 22vh, 300px) minmax(0, 1fr); }
+.stage.horizontal { grid-template-rows: clamp(132px, 22vh, 300px) minmax(min-content, 1fr); }
 .stage.classic { grid-template-rows: clamp(96px, 13vh, 170px) 250px; }
 .strip-knobs { justify-content: flex-start; gap: 6px; }
 .deck.full .jog { width: clamp(92px, 15vh, 180px); height: clamp(92px, 15vh, 180px); }
