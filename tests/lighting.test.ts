@@ -5,7 +5,7 @@ import { DmxEngine, LAYER_DESK, LAYER_SOUND } from "../src/lighting/DmxEngine";
 import { addressRange, channelMap, GENERIC_FIXTURES, nextFreeAddress, overlaps, type PatchedFixture } from "../src/lighting/fixtures";
 import { defaultIo, type IoStatus } from "../src/lighting/io";
 import { artDmx, artPoll, e131Data, enttecProDmx, parseArtDmx, parseArtPollReply, parseE131, sacnMulticast } from "../src/lighting/protocol";
-import { linkSteps, movementOffset, SoundToLight, type BandReading } from "../src/lighting/SoundToLight";
+import { DEFAULT_LOOK, DEFAULT_STROBE, linkSteps, movementOffset, SoundToLight, STROBE_MAX_HZ, strobeChannelValue, type BandReading } from "../src/lighting/SoundToLight";
 
 const frame = (pairs: [number, number][]) => {
   const d = new Uint8Array(512);
@@ -465,5 +465,95 @@ describe("DMX Desk channels linked to sound", () => {
     }
     for (let i = 1; i < values.length; i++) expect(values[i]).not.toBe(values[i - 1]);
     expect(values.every((v) => [0, 51, 102, 153, 204, 255].includes(v))).toBe(true);
+  });
+});
+
+describe("sound-to-light per-fixture setup and strobe", () => {
+  const par = GENERIC_FIXTURES.find((d) => d.id === "generic/rgb-par")!; // 5ch: R G B DIMMER STROBE
+  const rgbw = GENERIC_FIXTURES.find((d) => d.id === "generic/rgbw-par")!; // 4ch mode: R G B W (no strobe channel)
+  const fixtures = [
+    { id: "p1", name: "PAR 1", defId: par.id, mode: par.modes[0].name, universe: 1, address: 1, channelCount: 5 },
+    { id: "p2", name: "PAR 2", defId: par.id, mode: par.modes[0].name, universe: 1, address: 11, channelCount: 5 },
+    { id: "w", name: "RGBW", defId: rgbw.id, mode: rgbw.modes[1].name, universe: 1, address: 21, channelCount: 4 },
+    { id: "lz", name: "Laser", defId: "test/laser-par", mode: par.modes[0].name, universe: 1, address: 31, channelCount: 5 },
+  ] as PatchedFixture[];
+  const rig = () => ({ defs: [...GENERIC_FIXTURES, { ...par, id: "test/laser-par", laser: true }], fixtures });
+  function setup(opts: { reading?: () => BandReading; track?: () => { deck: number; pos: number; drops: number[] | null } | null } = {}) {
+    const engine = new DmxEngine();
+    let beats = 0;
+    const stl = new SoundToLight({ engine, probe: { read: opts.reading ?? (() => ({ low: 1, mid: 0.2, high: 0.05, amplitude: 1 })) }, beats: { beatPosition: () => ({ beats, bpm: 120 }), track: opts.track }, rig });
+    stl.settings = { ...stl.settings, enabled: true, fixtures: ["p1", "p2", "w", "lz"] };
+    const step = (secs: number, perStep = 1 / 40) => { for (let t = 0; t < secs; t += perStep) { beats += (perStep * 120) / 60; stl.update(perStep); } };
+    return { engine, stl, step };
+  }
+
+  it("one PAR flashes to the beat in a fixed colour while another follows the highs", () => {
+    const { engine, stl, step } = setup();
+    stl.settings = { ...stl.settings, fixtureLooks: { p1: { ...DEFAULT_LOOK, drive: "beat", colour: "#0000ff" }, p2: { ...DEFAULT_LOOK, drive: "high" } } };
+    step(2);
+    const out = engine.compute(1);
+    expect(out[0]).toBe(0); // p1 red off despite loud bass: fixed blue
+    expect(out[2]).toBe(255); // p1 blue at full colour…
+    expect(out[13]).toBeLessThan(60); // p2 dimmer follows the (quiet) highs
+    expect(out[10]).toBeGreaterThan(150); // p2 keeps the mapping colours (bass → red)
+    let flashes = 0;
+    let prev = 0;
+    for (let i = 0; i < 80; i++) { step(1 / 40); const d = engine.compute(1)[3]; if (d > 120 && prev <= 120) flashes++; prev = d; } // beat flash 70% (178), downbeat 100%
+    expect(flashes).toBeGreaterThanOrEqual(3); // p1's dimmer pulses on the beats (2 s at 120 BPM ≈ 4)
+  });
+
+  it("manual strobe: the fixture's own strobe channel, or flashed in software; works with sound control off", () => {
+    const { engine, stl, step } = setup();
+    stl.settings = { ...stl.settings, enabled: false, strobe: { ...DEFAULT_STROBE, rateHz: 8 } };
+    step(0.5);
+    expect(Math.max(...engine.compute(1))).toBe(0);
+    stl.setManualStrobe(true);
+    step(0.1);
+    const out = engine.compute(1);
+    expect(out[4]).toBe(strobeChannelValue(8)); // p1 strobe channel
+    expect(out[3]).toBe(255); // dimmer open while its own strobe flashes
+    expect([out[0], out[1], out[2]]).toEqual([255, 255, 255]); // white
+    let changes = 0;
+    let last = engine.compute(1)[20];
+    for (let i = 0; i < 40; i++) { step(1 / 40); const v = engine.compute(1)[20]; if (v !== last) changes++; last = v; }
+    expect(changes).toBeGreaterThanOrEqual(10); // RGBW without a strobe channel flashes ~8×/s
+    expect(Math.max(...engine.compute(1).subarray(30, 35))).toBe(0); // lasers never strobe unless allowed
+    stl.setManualStrobe(false);
+    step(0.1);
+    expect(Math.max(...engine.compute(1))).toBe(0); // sound off again: dark
+  });
+
+  it("strobe on drops: only the chosen fixtures, for the chosen bars, when the track crosses an analysed drop", () => {
+    let pos = 8;
+    const { engine, stl, step } = setup({ track: () => ({ deck: 0, pos, drops: [10] }) });
+    stl.settings = { ...stl.settings, fixtureLooks: { p2: { ...DEFAULT_LOOK, strobeOnDrop: true, manualStrobe: false } }, strobe: { ...DEFAULT_STROBE, dropBars: 2 } };
+    const drops: string[] = [];
+    stl.on("drop", (d) => drops.push(d.from));
+    for (let i = 0; i < 40 && pos < 10.2; i++) { pos += 1 / 16; step(1 / 40); }
+    expect(drops).toEqual(["analysis"]);
+    expect(stl.dropStrobeLeft()).toBeGreaterThan(3); // 2 bars at 120 BPM = 4 s
+    expect(engine.compute(1)[14]).toBe(strobeChannelValue(8)); // p2 strobes
+    expect(engine.compute(1)[4]).toBe(0); // p1 doesn't
+    step(4.5);
+    expect(stl.dropStrobeLeft()).toBe(0);
+    expect(engine.compute(1)[14]).toBe(0);
+  });
+
+  it("without drop analysis, a bass return after a breakdown counts as a drop", () => {
+    let low = 0.05;
+    const { stl, step } = setup({ reading: () => ({ low, mid: 0.5, high: 0.3, amplitude: 0.6 }), track: () => ({ deck: 0, pos: 1, drops: null }) });
+    const drops: string[] = [];
+    stl.on("drop", (d) => drops.push(d.from));
+    step(10); // 5 bars of breakdown (quiet bass, loud mids keep the auto-gain up)
+    low = 1;
+    step(0.3);
+    expect(drops).toEqual(["bass"]);
+  });
+
+  it("strobe channel values follow the fixture's 'strobe slow → fast' range and the rate cap", () => {
+    const caps = [{ min: 0, max: 9, name: "Strobe open" }, { min: 10, max: 250, name: "Strobe slow → fast" }];
+    expect(strobeChannelValue(1, caps)).toBe(10);
+    expect(strobeChannelValue(STROBE_MAX_HZ, caps)).toBe(250);
+    expect(strobeChannelValue(50, caps)).toBe(250); // capped
   });
 });

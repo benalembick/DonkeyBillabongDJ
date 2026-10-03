@@ -712,6 +712,16 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .lx-link-editor .lx-row { margin-bottom: 4px; }
 .lx-link-editor input[type="number"] { width: 58px; }
 .lx-link-editor p { margin: 4px 0 0; font-size: 11px; }
+.lx-strobe { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.lx-strobe-btn { font-weight: 900; padding: 8px 16px; border: 2px solid #ffd166; background: #2a2208; color: #ffe2a0; touch-action: none; user-select: none; }
+.lx-strobe-btn.on { background: #ffd166; color: #000; animation: lx-strobe-blink 0.25s steps(2) infinite; }
+@keyframes lx-strobe-blink { 50% { background: #fff; } }
+.lx-looks { margin-top: 10px; font-size: 12px; }
+.lx-looks summary { cursor: pointer; color: var(--muted); font-weight: 700; }
+.lx-looks-table { border-collapse: collapse; margin-top: 6px; }
+.lx-looks-table th, .lx-looks-table td { padding: 3px 10px 3px 0; text-align: left; vertical-align: middle; }
+.lx-looks-table input[type="range"] { width: 90px; }
+.lx-preview { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--line); vertical-align: middle; }
 .lx-movement { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .lx-movement .lx-row { margin-bottom: 4px; }
 .lx-movement-sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 16px; }

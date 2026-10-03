@@ -11,6 +11,7 @@ import { VC_WIDGET_TYPES } from "../../lighting/LightingService";
 import { LAYER_DESK } from "../../lighting/DmxEngine";
 import { CHANNEL_LABELS, addressRange, capabilityAt, channelMap, findDef, type ChannelType, type PatchedFixture } from "../../lighting/fixtures";
 import { INPUT_LABELS, OUTPUT_LABELS, type InputKind, type LinkState, type OutputKind, type UniverseIo } from "../../lighting/io";
+import { DEFAULT_LOOK, FIXTURE_DRIVES, STROBE_MAX_HZ, type FixtureDrive, type FixtureLook, type StrobeSettings } from "../../lighting/SoundToLight";
 import { DEFAULT_MAPPINGS, LINK_MODES, LINK_SOURCES, linkSteps, MOVEMENT_PATTERNS, type ChannelLink, type LinkMode, type LinkSource, type MovementPattern, type MovementSettings, type SoundInput, type SoundMapping, type SoundSettings, type SoundSource } from "../../lighting/SoundToLight";
 
 type Tab = "console" | "desk" | "fixtures" | "io";
@@ -317,9 +318,137 @@ function SoundWidget({ l }: { l: LightingService }) {
           )}
         </div>
       </div>
+      <StrobeControls l={l} />
       <MovementControls l={l} />
+      <FixtureSetup l={l} />
       <MappingEditor value={s.mappings} onChange={(mappings) => set({ mappings })} />
     </div>
+  );
+}
+
+/** Manual STROBE (hold or latch) and strobe-on-drop settings. */
+function StrobeControls({ l }: { l: LightingService }) {
+  const cfg = useLightingConfig(l);
+  useLightingStatus(l);
+  const { bus } = useApp();
+  const st = cfg.sound.strobe;
+  const set = (patch: Partial<StrobeSettings>) => l.setStrobe(patch);
+  const status = useRef<HTMLSpanElement>(null);
+  useAnimationFrame(() => {
+    const el = status.current;
+    if (!el) return;
+    const left = l.sound.dropStrobeLeft();
+    const known = l.sound.dropsKnown;
+    const last = l.sound.lastDrop;
+    el.textContent = [
+      l.sound.manualStrobe ? "● STROBE ON (manual)" : left > 0 ? `● DROP STROBE (${left.toFixed(1)} s left)` : "○ Strobe off",
+      !cfg.sound.enabled ? "drops need sound control on" : known === null ? "drops: estimated from bass returns (no track analysis)" : known ? `drops in this track: ${known} (from analysis)` : "no drops found in this track's analysis",
+      last ? `last drop ${last.from === "analysis" ? "from analysis" : "from a bass return"}` : "",
+    ].filter(Boolean).join(" · ");
+  });
+  const strobing = Object.values(cfg.sound.fixtureLooks).some((x) => x.strobeOnDrop);
+  return (
+    <div className="lx-strobe">
+      <div className="lx-row">
+        <button
+          className={`lx-strobe-btn ${l.sound.manualStrobe ? "on" : ""}`}
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); bus.send("lighting.strobe", 1); }}
+          onPointerUp={() => bus.send("lighting.strobe", 0)}
+          onPointerCancel={() => bus.send("lighting.strobe", 0)}
+          title={st.latch ? "Press to switch the strobe on, press again to stop" : "Hold to strobe — release to stop"}
+        >
+          ⚡ STROBE {st.latch ? "(on/off)" : "(hold)"}
+        </button>
+        <label title="The STROBE button stays on until you press it again">
+          <input type="checkbox" checked={st.latch} onChange={(e) => set({ latch: e.target.checked })} /> Latch
+        </label>
+        <label>
+          Drop strobe{" "}
+          <select value={st.dropBars} onChange={(e) => set({ dropBars: Number(e.target.value) })}>
+            {[1, 2, 4].map((n) => <option key={n} value={n}>{n} bar{n > 1 ? "s" : ""}</option>)}
+          </select>
+        </label>
+        <label title="Strobe colour for fixtures with colour channels">
+          Colour <input type="color" value={st.colour} onChange={(e) => set({ colour: e.target.value })} />
+        </label>
+        <span className="hint" ref={status} aria-live="polite" />
+      </div>
+      <label className="lx-slider">
+        <span>Strobe rate</span>
+        <small>1/s</small>
+        <input type="range" min={1} max={STROBE_MAX_HZ} step={1} value={st.rateHz} onChange={(e) => set({ rateHz: Number(e.target.value) })} />
+        <small>{STROBE_MAX_HZ}/s</small>
+        <output>{st.rateHz} flashes/s</output>
+      </label>
+      <p className="hint">
+        ⚠ Strobe lighting can trigger seizures in people with photosensitive epilepsy — warn your audience. Choose which fixtures strobe (manually and on drops) in Per-fixture setup below{strobing ? "" : " — no fixture is set to strobe on drops yet"}. The STROBE button works even when sound control is off, and is mappable (“Strobe (hold…)” / “Strobe on/off”).
+      </p>
+    </div>
+  );
+}
+
+/** Per-fixture sound setup: what drives each fixture, its colour and level, and which strobe. */
+function FixtureSetup({ l }: { l: LightingService }) {
+  const cfg = useLightingConfig(l);
+  useDmxVersion(l);
+  const selected = cfg.fixtures.filter((f) => cfg.sound.fixtures.includes(f.id));
+  if (!selected.length) return null;
+  return (
+    <details className="lx-looks" open={Object.keys(cfg.sound.fixtureLooks).length > 0}>
+      <summary>Per-fixture setup (advanced) — {selected.length} fixture{selected.length === 1 ? "" : "s"}</summary>
+      <p className="hint">By default every fixture follows the shared mappings. Give a fixture its own drive (e.g. a PAR on the highs, another flashing to the beat) and colour, and choose which fixtures strobe.</p>
+      <table className="lx-looks-table">
+        <thead>
+          <tr><th>Fixture</th><th>Follows</th><th>Colour</th><th>Level</th><th>Strobe on drops</th><th>Manual strobe</th><th>Now</th><th /></tr>
+        </thead>
+        <tbody>
+          {selected.map((f) => <LookRow key={f.id} l={l} f={f} look={{ ...DEFAULT_LOOK, ...cfg.sound.fixtureLooks[f.id] }} custom={!!cfg.sound.fixtureLooks[f.id]} />)}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+
+function LookRow({ l, f, look, custom }: { l: LightingService; f: PatchedFixture; look: FixtureLook; custom: boolean }) {
+  const set = (patch: Partial<FixtureLook>) => l.setFixtureLook(f.id, patch);
+  const def = findDef(l.defs, f.defId);
+  const mode = def?.modes.find((m) => m.name === f.mode) ?? def?.modes[0];
+  const types = mode?.channels.map((c) => c.type) ?? [];
+  const hasColour = types.some((t) => t === "red" || t === "green" || t === "blue");
+  // Live output preview of this fixture (what's sent right now).
+  const out = l.engine.compute(f.universe);
+  const at = (t: ChannelType) => { const i = types.indexOf(t); return i >= 0 ? out[f.address - 1 + i] : null; };
+  const dim = at("intensity");
+  const k = dim === null ? 1 : dim / 255;
+  const rgb = hasColour ? [at("red") ?? 0, at("green") ?? 0, at("blue") ?? 0].map((x) => Math.round(x * k)) : [Math.round(255 * k), Math.round(255 * k), Math.round(255 * k)];
+  const pct = Math.round((Math.max(...rgb) / 255) * 100);
+  return (
+    <tr>
+      <td><span className="lx-swatch" style={{ background: fixtureColour(f.id) }} /> {f.name}</td>
+      <td>
+        <select value={look.drive} onChange={(e) => set({ drive: e.target.value as FixtureDrive })}>
+          {FIXTURE_DRIVES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+        </select>
+      </td>
+      <td>
+        {hasColour ? (
+          <span className="lx-row">
+            <select value={look.colour === "bands" ? "bands" : "fixed"} onChange={(e) => set({ colour: e.target.value === "bands" ? "bands" : "#3366ff" })}>
+              <option value="bands">From mappings</option>
+              <option value="fixed">Fixed colour</option>
+            </select>
+            {look.colour !== "bands" && <input type="color" value={look.colour} onChange={(e) => set({ colour: e.target.value })} aria-label={`${f.name} colour`} />}
+          </span>
+        ) : <span className="hint">no colour channels</span>}
+      </td>
+      <td>
+        <input type="range" min={0} max={1} step={0.05} value={look.level} onChange={(e) => set({ level: Number(e.target.value) })} aria-label={`${f.name} level`} /> {Math.round(look.level * 100)}%
+      </td>
+      <td><input type="checkbox" checked={look.strobeOnDrop} onChange={(e) => set({ strobeOnDrop: e.target.checked })} aria-label={`${f.name} strobe on drops`} /> {look.strobeOnDrop ? "Yes" : "No"}</td>
+      <td><input type="checkbox" checked={look.manualStrobe} onChange={(e) => set({ manualStrobe: e.target.checked })} aria-label={`${f.name} manual strobe`} /> {look.manualStrobe ? "Yes" : "No"}{types.includes("strobe") ? " · own strobe" : " · flashed"}</td>
+      <td title="Current output"><span className="lx-preview" style={{ background: `rgb(${rgb.join(",")})` }} /> {pct}%</td>
+      <td>{custom && <button className="tiny" onClick={() => l.resetFixtureLook(f.id)} title="Back to the shared mappings">Reset</button>}</td>
+    </tr>
   );
 }
 

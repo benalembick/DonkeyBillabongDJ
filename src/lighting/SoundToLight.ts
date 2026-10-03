@@ -166,6 +166,61 @@ export function linkSteps(link: Pick<ChannelLink, "min" | "max" | "steps" | "use
   return Array.from({ length: n }, (_, i) => Math.round(lo + (i * (hi - lo)) / (n - 1)));
 }
 
+/** What drives one fixture in sound control ("global" = the shared mappings). */
+export type FixtureDrive = "global" | SoundInput | "downbeat";
+
+/** Per-fixture setup: e.g. one PAR flashing to the beat in blue while another follows the highs. */
+export interface FixtureLook {
+  drive: FixtureDrive;
+  /** "bands" = colours from the mappings (bass→red…), or a fixed colour "#rrggbb". */
+  colour: "bands" | string;
+  /** 0..1 scale on this fixture's output. */
+  level: number;
+  /** Strobe for a few bars when the track hits a drop. */
+  strobeOnDrop: boolean;
+  /** Strobes when the manual STROBE is pressed. */
+  manualStrobe: boolean;
+}
+export const DEFAULT_LOOK: FixtureLook = { drive: "global", colour: "bands", level: 1, strobeOnDrop: false, manualStrobe: true };
+
+/** Strobe engine (manual STROBE and strobe-on-drop). */
+export interface StrobeSettings {
+  /** Flashes per second (capped at STROBE_MAX_HZ). */
+  rateHz: number;
+  /** Bars a drop strobe lasts. */
+  dropBars: number;
+  /** Colour for fixtures without their own strobe colour. */
+  colour: string;
+  /** The STROBE button stays on until pressed again (instead of hold-to-strobe). */
+  latch: boolean;
+}
+/** Photosensitivity: flash rate cap. */
+export const STROBE_MAX_HZ = 12;
+export const DEFAULT_STROBE: StrobeSettings = { rateHz: 8, dropBars: 2, colour: "#ffffff", latch: false };
+
+export const FIXTURE_DRIVES: [FixtureDrive, string][] = [
+  ["global", "Shared mappings"],
+  ["low", "Bass"],
+  ["mid", "Mids"],
+  ["high", "Highs"],
+  ["amplitude", "Overall level"],
+  ["beat", "Beat flash"],
+  ["downbeat", "Downbeat (each bar)"],
+];
+
+/** "#rrggbb" → 0..1 components (white when invalid). */
+export function hexColour(hex: string): { r: number; g: number; b: number } {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  return m ? { r: parseInt(m[1], 16) / 255, g: parseInt(m[2], 16) / 255, b: parseInt(m[3], 16) / 255 } : { r: 1, g: 1, b: 1 };
+}
+
+/** Strobe channel value for a rate: inside the fixture's "strobe slow → fast" range when its definition has one. */
+export function strobeChannelValue(rateHz: number, caps?: { min: number; max: number; name: string }[]): number {
+  const k = Math.max(0, Math.min(1, (Math.min(rateHz, STROBE_MAX_HZ) - 1) / (STROBE_MAX_HZ - 1)));
+  const range = caps?.find((c) => /strob/i.test(c.name) && !/(open|closed|no strobe|off|shut)/i.test(c.name));
+  return range ? Math.round(range.min + (range.max - range.min) * k) : Math.round(20 + 235 * k);
+}
+
 export interface SoundSettings {
   enabled: boolean;
   source: SoundSource;
@@ -187,6 +242,9 @@ export interface SoundSettings {
   movement: MovementSettings;
   /** DMX Desk channels allocated to parts of the music. */
   channelLinks: ChannelLink[];
+  /** Per-fixture setup, by patched fixture id (missing = DEFAULT_LOOK). */
+  fixtureLooks: Record<string, FixtureLook>;
+  strobe: StrobeSettings;
 }
 
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
@@ -205,6 +263,8 @@ export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   allowLasers: false,
   movement: DEFAULT_MOVEMENT,
   channelLinks: [],
+  fixtureLooks: {},
+  strobe: DEFAULT_STROBE,
 };
 
 /** Raw band magnitudes from the audio graph (any scale; normalised here). */
@@ -223,6 +283,8 @@ export interface AudioProbe {
 /** Beat grid position of the deck feeding a source (null = no grid → onset detection). */
 export interface BeatSource {
   beatPosition(source: SoundSource): { beats: number; bpm: number } | null;
+  /** The deck feeding the source: position and analysed drop starts (null = not known). */
+  track?(source: SoundSource): { deck: number; pos: number; drops: number[] | null } | null;
 }
 
 export interface SoundMeters {
@@ -241,6 +303,8 @@ export type SoundEvents = {
   downbeat: { index: number };
   bar: { index: number };
   bassHit: void;
+  /** A drop was detected (from the track's analysis, or a bass return after a breakdown). */
+  drop: { from: "analysis" | "bass" };
   midHit: void;
   highHit: void;
   meters: SoundMeters;
@@ -301,6 +365,28 @@ export class SoundToLight extends Emitter<SoundEvents> {
   private trig: Record<LinkSource, boolean> = { low: false, mid: false, high: false, amplitude: false, beat: false, downbeat: false };
   /** Current step per linked channel ("u:ch"). */
   private linkStep = new Map<string, number>();
+  /** Manual STROBE (runtime only — never saved). */
+  private manual = false;
+  /** Drop strobe runs until this time (s). */
+  private dropUntil = 0;
+  private lastTrack: { deck: number; pos: number } | null = null;
+  private quietBass = 0;
+  /** Last drop, for the UI. */
+  lastDrop: { from: "analysis" | "bass"; at: number } | null = null;
+  /** Analysed drops in the source deck's track (null = no analysis). */
+  dropsKnown: number | null = null;
+
+  /** Manual strobe on/off (works even while sound control is off). */
+  setManualStrobe(on: boolean): void {
+    this.manual = on;
+  }
+  get manualStrobe(): boolean {
+    return this.manual;
+  }
+  /** Seconds of drop strobe left (0 = none). */
+  dropStrobeLeft(): number {
+    return Math.max(0, this.dropUntil - this.time);
+  }
   meters: SoundMeters = { low: 0, mid: 0, high: 0, amplitude: 0, beat: 0, bpm: null, beatFrom: "none", signal: false };
 
   constructor(opts: { engine: DmxEngine; probe: AudioProbe; beats: BeatSource; rig: () => { defs: FixtureDef[]; fixtures: PatchedFixture[] } }) {
@@ -379,6 +465,7 @@ export class SoundToLight extends Emitter<SoundEvents> {
     } else if (signal && fired) this.moveBeats = Math.round(this.moveBeats) + 1;
     this.energy += ((signal ? this.amp.level : 0) - this.energy) * (1 - Math.exp(-dt / 1.5));
 
+    this.detectDrops(dt, signal, bassHit, bpm);
     const beatNow = !!fired && signal;
     this.trig = { low: bassHit, mid: midHit, high: highHit, amplitude: beatNow, beat: beatNow, downbeat: beatNow && !!fired?.downbeat };
     if (this.trig.downbeat) this.downEnv = 1;
@@ -436,6 +523,35 @@ export class SoundToLight extends Emitter<SoundEvents> {
     }
   }
 
+  /**
+   * Drops: crossing the start of a "drop" section of the playing track (from its analysis);
+   * without analysed drops, a big bass hit after at least 4 bars of little bass (a breakdown).
+   */
+  private detectDrops(dt: number, signal: boolean, bassHit: boolean, bpm: number | null): void {
+    const s = this.settings;
+    const barSecs = (4 * 60) / (bpm ?? 120);
+    const trigger = (from: "analysis" | "bass") => {
+      this.dropUntil = this.time + Math.max(1, s.strobe?.dropBars ?? 2) * barSecs;
+      this.lastDrop = { from, at: this.time };
+      this.emit("drop", { from });
+    };
+    const tp = s.enabled ? this.beats.track?.(s.source) ?? null : null;
+    this.dropsKnown = tp?.drops ? tp.drops.length : null;
+    if (tp && this.lastTrack && tp.deck === this.lastTrack.deck && tp.pos > this.lastTrack.pos && tp.pos - this.lastTrack.pos < 1) {
+      for (const d of tp.drops ?? []) if (this.lastTrack.pos < d && tp.pos >= d) trigger("analysis");
+    }
+    this.lastTrack = tp ? { deck: tp.deck, pos: tp.pos } : null;
+    if (!signal || tp?.drops?.length) {
+      this.quietBass = 0;
+      return;
+    }
+    if (this.low.level < 0.25) this.quietBass += dt;
+    else {
+      if (bassHit && this.quietBass >= 4 * barSecs) trigger("bass");
+      if (this.low.level > 0.5) this.quietBass = 0;
+    }
+  }
+
   private lastOnsetBeat = -1;
   private bandPeak = 1e-6;
   private ampPeak = 1e-6;
@@ -460,13 +576,19 @@ export class SoundToLight extends Emitter<SoundEvents> {
   private writeLayer(inputs: Record<SoundInput, number>): void {
     const s = this.settings;
     const { defs, fixtures } = this.rig();
-    if (!s.enabled) {
+    // The manual STROBE works even while sound control is off; everything else needs it on.
+    if (!s.enabled && !this.manual) {
       if (this.wasEnabled) for (const u of this.engine.getUniverses()) this.engine.clearLayer(LAYER_SOUND, u);
       this.wasEnabled = false;
       this.claim(new Map());
       return;
     }
     this.wasEnabled = true;
+    const strobe = { ...DEFAULT_STROBE, ...s.strobe };
+    const rate = Math.max(1, Math.min(STROBE_MAX_HZ, strobe.rateHz));
+    const dropOn = s.enabled && this.time < this.dropUntil;
+    const flashOn = Math.floor(this.time * rate * 2) % 2 === 0;
+    const sc = hexColour(strobe.colour);
     for (const f of this.frames.values()) f.fill(0);
     const selected = new Set(s.fixtures);
     const mv = s.movement ?? DEFAULT_MOVEMENT;
@@ -483,10 +605,13 @@ export class SoundToLight extends Emitter<SoundEvents> {
       if (!frame) this.frames.set(fx.universe, (frame = new Uint8Array(DMX_SLOTS)));
       const types = mode.channels.map((c) => c.type);
       const hasDimmer = types.includes("intensity");
+      const look = { ...DEFAULT_LOOK, ...s.fixtureLooks?.[fx.id] };
+      const strobing = (this.manual && look.manualStrobe) || (dropOn && look.strobeOnDrop);
+      if (!s.enabled && !strobing) continue; // sound off: only the manual strobe
       // Movement: this head's pan/tilt (16-bit where the fixture has fine channels).
       let pan = -1;
       let tilt = -1;
-      if (mv.enabled && (types.includes("pan") || types.includes("tilt"))) {
+      if (s.enabled && mv.enabled && (types.includes("pan") || types.includes("tilt"))) {
         const phase = this.moveBeats / Math.max(0.25, mv.beatsPerCycle) + (heads > 1 ? (head * mv.spread) / heads : 0);
         const o = movementOffset(mv.pattern, phase, head);
         const reach = 0.5 * mv.size * (mv.followEnergy ? 0.35 + 0.65 * Math.min(1, this.energy * 1.25) : 1);
@@ -494,17 +619,30 @@ export class SoundToLight extends Emitter<SoundEvents> {
         tilt = Math.min(1, Math.max(0, mv.tiltCentre + o.y * reach));
         head++;
       }
-      const dim = this.valueFor("intensity", inputs);
+      // This fixture's drive (shared mappings, or one part of the music) and colour.
+      const lvl = Math.max(0, Math.min(1, look.level)) * s.brightness;
+      const drive = look.drive === "global" ? this.valueFor("intensity", inputs) : look.drive === "downbeat" ? this.downEnv : Math.min(1, inputs[look.drive]);
+      const fixed = look.colour !== "bands" ? hexColour(look.colour) : null;
+      const comp = (t: ChannelType, c: { r: number; g: number; b: number }) => (t === "red" ? c.r : t === "green" ? c.g : t === "blue" ? c.b : t === "white" ? Math.min(c.r, c.g, c.b) : 0);
+      const hasStrobeCh = types.includes("strobe");
       // Without a dimmer channel, the colour channels carry the intensity (beat flash etc.).
-      const colourScale = hasDimmer ? s.brightness : s.brightness * dim;
+      const colourScale = hasDimmer ? lvl : lvl * drive;
       for (let i = 0; i < types.length && i < fx.channelCount; i++) {
         const a = fx.address + i;
         if (a < 1 || a > DMX_SLOTS) continue;
         const t = types[i];
         let v = 0;
-        if (t === "intensity") v = dim * s.brightness;
-        else if (t === "generic") v = this.valueFor("generic", inputs) * s.brightness;
-        else if (t === "red" || t === "green" || t === "blue" || t === "white" || t === "amber" || t === "uv") v = this.valueFor(t, inputs) * colourScale;
+        const isColour = t === "red" || t === "green" || t === "blue" || t === "white" || t === "amber" || t === "uv";
+        if (strobing && (t === "intensity" || t === "generic" || isColour || t === "strobe")) {
+          // Strobe: the fixture's own strobe channel when it has one, else flashing in software.
+          const on = hasStrobeCh || flashOn;
+          if (t === "strobe") frame[a - 1] = strobeChannelValue(rate, mode.channels[i].capabilities);
+          else frame[a - 1] = on ? Math.round(Math.min(1, t === "intensity" || t === "generic" ? 1 : comp(t, sc)) * 255 * s.brightness) : 0;
+          continue;
+        }
+        if (t === "intensity") v = drive * lvl;
+        else if (t === "generic") v = (look.drive === "global" ? this.valueFor("generic", inputs) : drive) * lvl;
+        else if (isColour) v = (fixed ? comp(t, fixed) : this.valueFor(t, inputs)) * colourScale;
         else if (POSITION_TYPES.has(t)) {
           const pos = t === "pan" || t === "panFine" ? pan : tilt;
           if (pos < 0) continue; // movement off: position stays with the desk
@@ -515,11 +653,11 @@ export class SoundToLight extends Emitter<SoundEvents> {
           list.push(a);
           continue;
         }
-        // Strobe and effect channels are left alone (0) — never strobe automatically.
+        // Strobe and effect channels are left alone (0) unless this fixture is strobing (above).
         if (v > 0) frame[a - 1] = Math.max(frame[a - 1], Math.round(Math.min(1, v) * 255));
       }
     }
-    this.writeLinks(defs, fixtures, inputs, claims);
+    if (s.enabled) this.writeLinks(defs, fixtures, inputs, claims);
     for (const u of this.engine.getUniverses()) this.engine.writeLayer(LAYER_SOUND, u, this.frames.get(u) ?? new Uint8Array(DMX_SLOTS));
     this.claim(claims);
   }

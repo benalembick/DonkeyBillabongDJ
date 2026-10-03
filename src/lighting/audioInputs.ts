@@ -119,8 +119,16 @@ export function makeProbe(audio: AnalysisTapProvider, mic: MicInput): AudioProbe
   };
 }
 
-export function makeBeatSource(engine: DJEngine, audio: AnalysisTapProvider): BeatSource {
+export function makeBeatSource(engine: DJEngine, audio: AnalysisTapProvider, sections?: (deck: number) => { kind: string; start: number }[] | null): BeatSource {
   return {
+    track(source: SoundSource) {
+      const deck = deckForSource(engine, audio.getLevels().channels, source);
+      if (deck === null) return null;
+      const d = engine.getState().decks[deck];
+      if (!d?.playing) return null;
+      const s = sections?.(deck) ?? null;
+      return { deck, pos: engine.getPosition(deck), drops: s ? s.filter((x) => x.kind === "drop").map((x) => x.start) : null };
+    },
     beatPosition(source: SoundSource) {
       const deck = deckForSource(engine, audio.getLevels().channels, source);
       if (deck === null) return null;

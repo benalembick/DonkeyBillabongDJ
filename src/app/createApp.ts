@@ -135,7 +135,7 @@ export function createApp(): App {
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
   const transitions = new TransitionService({ engine, bus, library, preparation, analysis, stems, log, readAudio: (ref) => platform.readAudio(ref) });
   const training = new TrainingService({ engine, bus, audio, library, preparation, analysis });
-  const lighting = new LightingService({ bus, log, dj: engine, audio, bridge: platform.kind === "desktop" ? (window.dbdjDesktop?.lighting ?? null) : null });
+  const lighting = new LightingService({ bus, log, dj: engine, audio, sections: (deck) => analysis.get(deck)?.sections ?? null, bridge: platform.kind === "desktop" ? (window.dbdjDesktop?.lighting ?? null) : null });
   void lighting.start();
   const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis, stemAvailable: (ref) => stems.index()[ref] === "complete",
     settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s) });

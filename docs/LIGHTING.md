@@ -132,6 +132,17 @@ The Virtual Console is a list of widgets (`VcWidget`, with a type registry). The
 - Lasers are never moved unless **Allow lasers** is on.
 - MIDI-mappable: `lighting.sound.movement` (on/off) and `lighting.sound.movement.size`.
 
+**Per-fixture setup (advanced).** Each controlled fixture can override the shared mappings (`SoundSettings.fixtureLooks`):
+- **Follows:** Shared mappings (default), Bass, Mids, Highs, Overall level, Beat flash or Downbeat — drives the fixture's dimmer (or its colours when it has no dimmer).
+- **Colour:** from the mappings (bass→red…) or a fixed colour (RGB; white channel = the colour's white part).
+- **Level:** 0–100% for that fixture. Reset returns it to the shared mappings.
+- **Strobe on drops / Manual strobe:** whether the fixture takes part in each strobe.
+
+**Strobe.**
+- **Manual STROBE:** hold to strobe (or *Latch* for press on / press off). Works even while sound control is off. Mappable: `lighting.strobe` (momentary, or toggles with Latch) and `lighting.strobe.toggle`.
+- **Strobe on drops:** for 1/2/4 bars when the source deck's track crosses the start of an analysed *drop* section; without analysed drops, a strong bass hit after ≥ 4 bars of little bass (a breakdown) counts. The panel shows where drops come from.
+- **Output:** a fixture's own STROBE channel at the chosen rate (inside its "strobe slow → fast" range when the definition has one) with the dimmer/colour open; fixtures without a strobe channel are flashed in software. Rate 1–12 flashes/s (capped); strobe colour selectable. Strobe channels are still never touched unless a fixture is set to strobe. Lasers never strobe unless *Allow lasers* is on. A photosensitivity warning is shown with the controls.
+
 **Desk channels linked to sound.** On the DMX Desk, any channel's **♪** button allocates it to part of the music (`SoundSettings.channelLinks`) — e.g. a laser's pattern channel changing shape on every beat, or a gobo following the highs:
 - **Follows:** Bass, Mids, Highs, Overall level, Beat, or Downbeat (each bar).
 - **Follow the level:** the value moves between Min and Max with that level (Beat/Downbeat: their flash).

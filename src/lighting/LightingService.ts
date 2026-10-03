@@ -18,7 +18,7 @@ import { DMX_SLOTS } from "./protocol";
 import { GENERIC_FIXTURES, INTENSITY_TYPES, findDef, fitsUniverse, modeOf, nextFreeAddress, overlaps, type FixtureDef, type PatchedFixture } from "./fixtures";
 import { addPlaceholderMode, parseQlcDefinition, parseQlcFixtureList, placeholderDef, qlcDefId, qlcFileKind } from "./qlcImport";
 import { defaultIo, type ExitBehaviour, type IoStatus, type UniverseIo } from "./io";
-import { DEFAULT_SOUND_SETTINGS, SoundToLight, type ChannelLink, type MovementSettings, type SoundSettings } from "./SoundToLight";
+import { DEFAULT_LOOK, DEFAULT_SOUND_SETTINGS, SoundToLight, STROBE_MAX_HZ, type ChannelLink, type FixtureLook, type MovementSettings, type SoundSettings, type StrobeSettings } from "./SoundToLight";
 import { makeBeatSource, makeProbe, MicInput, type AnalysisTapProvider } from "./audioInputs";
 import { UsbProOutput } from "./usbPro";
 
@@ -102,7 +102,7 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
   private readonly bridge: LightingBridge | null;
   private readonly log: EventLog;
 
-  constructor(opts: { bus: CommandBus; log: EventLog; dj: DJEngine; audio: AnalysisTapProvider; bridge: LightingBridge | null }) {
+  constructor(opts: { bus: CommandBus; log: EventLog; dj: DJEngine; audio: AnalysisTapProvider; bridge: LightingBridge | null; /** Analysed sections of the track on a deck (for strobe-on-drop). */ sections?: (deck: number) => { kind: string; start: number }[] | null }) {
     super();
     this.bridge = opts.bridge;
     this.log = opts.log;
@@ -110,7 +110,7 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
     this.sound = new SoundToLight({
       engine: this.engine,
       probe: makeProbe(opts.audio, this.mic),
-      beats: makeBeatSource(opts.dj, opts.audio),
+      beats: makeBeatSource(opts.dj, opts.audio, opts.sections),
       rig: () => ({ defs: this.defs, fixtures: this.cfg.fixtures }),
     });
     this.bridge?.onStatus((u, s) => {
@@ -161,7 +161,7 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
       fixtures: Array.isArray(c.fixtures) ? c.fixtures : [],
       customDefs: Array.isArray(c.customDefs) ? c.customDefs : [],
       // Sound control never starts by itself; movement settings merged so older setups get the new fields.
-      sound: { ...base.sound, ...c.sound, enabled: false, movement: { ...base.sound.movement, ...c.sound?.movement }, channelLinks: Array.isArray(c.sound?.channelLinks) ? c.sound.channelLinks : [] },
+      sound: { ...base.sound, ...c.sound, enabled: false, movement: { ...base.sound.movement, ...c.sound?.movement }, channelLinks: Array.isArray(c.sound?.channelLinks) ? c.sound.channelLinks : [], fixtureLooks: c.sound?.fixtureLooks && typeof c.sound.fixtureLooks === "object" ? c.sound.fixtureLooks : {}, strobe: { ...base.sound.strobe, ...c.sound?.strobe } },
       console: c.console?.widgets ? c.console : base.console,
     };
     if (raw) this.log.info("lighting", `Lighting setup restored: ${this.cfg.fixtures.length} fixture(s), ${this.cfg.universes.length} universe(s)`);
@@ -348,6 +348,27 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
     this.update({ sound: { ...this.cfg.sound, ...patch } });
   }
 
+  /** Per-fixture sound setup (drive, colour, level, strobe participation). */
+  setFixtureLook(id: string, patch: Partial<FixtureLook>): void {
+    const cur = { ...DEFAULT_LOOK, ...this.cfg.sound.fixtureLooks[id] };
+    this.setSound({ fixtureLooks: { ...this.cfg.sound.fixtureLooks, [id]: { ...cur, ...patch } } });
+  }
+
+  resetFixtureLook(id: string): void {
+    const { [id]: _gone, ...rest } = this.cfg.sound.fixtureLooks;
+    this.setSound({ fixtureLooks: rest });
+  }
+
+  setStrobe(patch: Partial<StrobeSettings>): void {
+    this.setSound({ strobe: { ...this.cfg.sound.strobe, ...patch, rateHz: Math.max(1, Math.min(STROBE_MAX_HZ, patch.rateHz ?? this.cfg.sound.strobe.rateHz)) } });
+  }
+
+  /** Manual STROBE (runtime only). */
+  strobe(on: boolean): void {
+    this.sound.setManualStrobe(on);
+    this.emit("status", undefined);
+  }
+
   setMovement(patch: Partial<MovementSettings>): void {
     this.setSound({ movement: { ...this.cfg.sound.movement, ...patch } });
   }
@@ -457,6 +478,12 @@ export class LightingService extends Emitter<{ config: LightingConfig; status: v
     bus.handle("lighting.sound.sensitivity", (v) => this.setSound({ sensitivity: Math.max(0, Math.min(1, v)) }));
     bus.handle("lighting.sound.speed", (v) => this.setSound({ speed: Math.max(0, Math.min(1, v)) }));
     bus.handle("lighting.sound.movement", pressed(() => this.setMovement({ enabled: !this.cfg.sound.movement.enabled })));
+    // Strobe: momentary (press = on, release = off) unless latch is on; toggle always latches.
+    bus.handle("lighting.strobe", (v) => {
+      if (this.cfg.sound.strobe.latch) { if (v > 0) this.strobe(!this.sound.manualStrobe); }
+      else this.strobe(v > 0);
+    });
+    bus.handle("lighting.strobe.toggle", pressed(() => this.strobe(!this.sound.manualStrobe)));
     bus.handle("lighting.sound.movement.size", (v) => this.setMovement({ size: Math.max(0, Math.min(1, v)) }));
   }
 }
