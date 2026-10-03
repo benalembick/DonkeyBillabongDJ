@@ -686,6 +686,7 @@ function createWindow(): void {
   const win = new BrowserWindow({
     ...(state ? state.bounds : { width: 1440, height: 900 }),
     show: smoke,
+    icon: WINDOW_ICON,
     minWidth: 1024,
     minHeight: 640,
     backgroundColor: "#0d0f12",
@@ -748,7 +749,24 @@ function createWindow(): void {
   }
 }
 
+// One running copy: opening the app again brings the existing window forward (two copies
+// would share — and fight over — the same library database). Smoke tests use their own profiles.
+const primaryInstance = process.env.DBDJ_SMOKE_TEST ? true : app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+app.on("second-instance", () => {
+  const w = BrowserWindow.getAllWindows()[0];
+  if (!w) return;
+  if (w.isMinimized()) w.restore();
+  w.show();
+  w.focus();
+});
+
+/** Title bar / taskbar icon (the packaged app also has it built into the .exe / .app). */
+const WINDOW_ICON = path.join(__dirname, "..", "build", "window-icon.png");
+
 app.whenReady().then(() => {
+  if (!primaryInstance) return;
+  if (process.platform === "darwin" && !app.isPackaged) app.dock?.setIcon(WINDOW_ICON);
   const ses = session.defaultSession;
   ses.setPermissionRequestHandler((_wc, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)));
   ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
