@@ -278,6 +278,16 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     } finally { this.restoringPreparation = false; }
   }
 
+  /** A cue point for this session only (rehearsals): CUE returns to it, but it isn't saved to the track. */
+  setSessionCue(deck: number, seconds: number): void {
+    const d = this.state.decks[deck];
+    if (d.status !== "ready") return;
+    this.restoringPreparation = true;
+    try {
+      this.patchDeck(deck, { cuePoint: clamp(seconds, 0, d.duration) });
+    } finally { this.restoringPreparation = false; }
+  }
+
   editBeatGrid(deck: number, bpm: number, firstBeat: number): void {
     const d = this.state.decks[deck];
     if (d.status !== "ready" || !Number.isFinite(bpm) || bpm < 20 || bpm > 400 || !Number.isFinite(firstBeat) || firstBeat < 0 || firstBeat >= d.duration) return;

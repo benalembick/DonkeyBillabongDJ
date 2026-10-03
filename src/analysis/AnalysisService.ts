@@ -143,6 +143,28 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
   }
 
   cancelBatch(): void { this.cancelled = true; }
+
+  /**
+   * Analyse one track now, even while a library batch is running (e.g. the Transitions page
+   * needs it). Reports its stage; resolves when the analysis is saved.
+   */
+  async analyseOne(track: TrackInfo, onStage: (stage: "reading" | "decoding" | "analysing" | "done") => void = () => undefined, force = false): Promise<void> {
+    if (!this.options) throw new Error("Analysis isn't available");
+    if (track.source !== "local") throw new Error("Only local files can be analysed");
+    if (track.unavailableReason) throw new Error(track.unavailableReason);
+    onStage("reading");
+    const bytes = await this.options.readAudio(track.ref);
+    const prep = await this.options.preparation.identify(track, bytes);
+    if (!force && (await this.options.preparation.waveform(prep.trackId)) && prep.analysisVersion !== null) return onStage("done");
+    onStage("decoding");
+    const decoded = await this.options.audio.decode(bytes);
+    const buffer = decoded.handle as AudioBuffer;
+    if (!buffer || typeof buffer.getChannelData !== "function") throw new Error("Audio decoder did not provide analysis samples");
+    onStage("analysing");
+    const result = await this.analyseBuffer({ ...track, trackId: prep.trackId }, buffer, force, true);
+    this.engine.getState().decks.forEach((d, deck) => { if (d.status === "ready" && d.track?.trackId === prep.trackId) this.apply(deck, result); });
+    onStage("done");
+  }
   /** Add import work without blocking the caller; one sequential batch protects playback responsiveness. */
   queueTracks(tracks: TrackInfo[]): void {
     for (const track of tracks) if (track.source === "local" && !track.unavailableReason) this.queued.set(track.ref, track);

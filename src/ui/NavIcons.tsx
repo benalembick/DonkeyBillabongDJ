@@ -1,7 +1,7 @@
 /** Icons for the main navigation (top bar): drawn in the button's colour, 24 px. */
 import type { ReactNode } from "react";
 
-export type NavArea = "collections" | "playlists" | "mashups" | "practice" | "streaming" | "lighting";
+export type NavArea = "collections" | "playlists" | "mashups" | "transitions" | "practice" | "streaming" | "lighting";
 
 const PATHS: Record<NavArea, ReactNode> = {
   // Music library: a note.
@@ -22,6 +22,14 @@ const PATHS: Record<NavArea, ReactNode> = {
   ),
   // Lightning: mashups.
   mashups: <path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z" />,
+  // Two tracks crossing: transitions.
+  transitions: (
+    <>
+      <path d="M3 7h6c4 0 6 10 10 10h2" />
+      <path d="M3 17h6c4 0 6-10 10-10h2" />
+      <path d="m18 4 3 3-3 3M18 14l3 3-3 3" />
+    </>
+  ),
   // Target: practice.
   practice: (
     <>

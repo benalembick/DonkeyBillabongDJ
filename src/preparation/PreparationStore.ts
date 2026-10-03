@@ -140,6 +140,15 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
     }
     if (changed) this.commit(update);
   }
+  /** Correct a track's beat grid by hand (saved as manually adjusted; analysis won't overwrite it). */
+  editGrid(id: string, bpm: number, firstBeat: number): TrackPreparation | null {
+    const r = this.get(id);
+    if (!r || !(bpm >= 20 && bpm <= 400) || !Number.isFinite(firstBeat)) return null;
+    const base = r.beatGrid ?? { bpm, firstBeat, confidence: 1, source: "metadata" as const };
+    const grid = makeGrid({ ...base, bpm, firstBeat: Math.max(0, firstBeat) }, r.duration, true, (r.beatGrid?.offset ?? 0) + firstBeat - base.firstBeat);
+    return this.commit({ ...r, beatGrid: grid, bpm });
+  }
+
   async waveform(id: string): Promise<TrackAnalysis | null> {
     const record = this.waveformMemory.get(id) ?? await this.persistence.loadWaveform(id);
     if (!record) return null;

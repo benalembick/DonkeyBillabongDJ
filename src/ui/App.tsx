@@ -8,6 +8,7 @@ import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
 import { UpdateBadge } from "./Updates";
 import { NavIcon } from "./NavIcons";
+import { TransitionWorkspace } from "./TransitionWorkspace";
 import { useFrameStore, useTick } from "./hooks";
 import { LibraryPanel, type MainBrowserArea } from "./LibraryPanel";
 import { MatchDialogHost } from "./MatchDialog";
@@ -239,9 +240,9 @@ function Stage({ mode }: { mode: LayoutMode }) {
 
 function Shell() {
   const [tool, setTool] = useState<ToolTab | null>(null);
-  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting"; id: number }>({ area: "collections", id: 0 });
+  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting" | "transitions"; id: number }>({ area: "collections", id: 0 });
   const libraryNavigation = useRef<{ area: MainBrowserArea; id: number }>({ area: "collections", id: 0 });
-  if (navigation.area !== "lighting") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
+  if (navigation.area !== "lighting" && navigation.area !== "transitions") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
   const app = useApp();
   const { platform } = app;
   const layout = useLayout();
@@ -278,7 +279,7 @@ function Shell() {
           <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={800} height={267} draggable={false} />
         </div>
         <nav className="main-navigation" aria-label="Main browser areas">
-          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["practice","Practice Mode"],["streaming","Streaming"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
+          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["transitions","Transitions"],["practice","Practice Mode"],["streaming","Streaming"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
         </nav>
         <LayoutSwitch />
         <div className="statuses">
@@ -295,10 +296,11 @@ function Shell() {
       {layout.mode !== "classic" && <Splitter mode={layout.mode} />}
       <section className="lower">
         {/* The library stays mounted (hidden) while Lighting is open, so it comes back exactly as it was. */}
-        <div className="lower-pane" hidden={navigation.area === "lighting"}>
+        <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "transitions"}>
           <Boundary name="Library"><LibraryPanel navigation={libraryNavigation.current} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} /></Boundary>
         </div>
         {navigation.area === "lighting" && <Boundary name="Lighting"><LightingWorkspace /></Boundary>}
+        {navigation.area === "transitions" && <Boundary name="Transitions"><TransitionWorkspace /></Boundary>}
       </section>
       {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}
       <Toasts />

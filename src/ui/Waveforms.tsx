@@ -139,7 +139,7 @@ function fitCanvas(c: HTMLCanvasElement): { w: number; h: number; dpr: number } 
 export function ScrollingWaveform({ deck, orientation }: { deck: number; orientation: "horizontal" | "vertical" }) {
   const eqSmooth = useRef(new EqSmoother());
   const tileEq = useRef<EqGains>([1, 1, 1]);
-  const { engine, stems, autoDJ } = useApp();
+  const { engine, stems, autoDJ, transitions } = useApp();
   const ov = useOverview(deck);
   const { zoomSeconds, waveMode, waveStyle } = useLayout();
   const stemNorm = useRef<{ env: StemEnvelopes | null; version: number; norms: number[] }>({ env: null, version: -1, norms: [1, 1, 1, 1] });
@@ -276,6 +276,8 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     if (planned) marker(planned.start, planned.role === "out" ? "#ff9f43" : "#2ee59d", planned.label);
     marker(d.cuePoint, "#ffd166", "");
     d.hotcues.forEach((hc, i) => hc != null && marker(hc, HOTCUE_COLORS[i], String(i + 1)));
+    // The open Transitions plan: where B starts, the bass swap, where A is out (labels, not just colour).
+    for (const m of transitions.markersFor(d.track?.trackId)) marker(m.t, m.colour, m.label);
 
     // Loop region (green when active, grey when stored for RELOOP).
     if (d.loop) {
