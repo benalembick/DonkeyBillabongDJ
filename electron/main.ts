@@ -15,6 +15,7 @@ import { registerStemIpc } from "./stems/host";
 import { registerLightingIpc } from "./lighting/ipc";
 import { registerUpdater } from "./updater";
 import { transcodeToWav } from "./audio/transcode";
+import { initialWindowState, trackWindowState } from "./windowState";
 import { handleArtProtocol, registerArtScheme } from "./library/artwork";
 
 registerArtScheme();
@@ -676,9 +677,12 @@ function runSmokeTest(win: BrowserWindow): void {
 }
 
 function createWindow(): void {
+  // Sized to the screen (and remembered between sessions); smoke tests use a fixed 1440×900.
+  const smoke = !!process.env.DBDJ_SMOKE_TEST;
+  const state = smoke ? null : initialWindowState();
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    ...(state ? state.bounds : { width: 1440, height: 900 }),
+    show: smoke,
     minWidth: 1024,
     minHeight: 640,
     backgroundColor: "#0d0f12",
@@ -692,6 +696,14 @@ function createWindow(): void {
       backgroundThrottling: false,
     },
   });
+
+  if (state) {
+    win.once("ready-to-show", () => {
+      if (state.maximized) win.maximize();
+      win.show();
+    });
+    trackWindowState(win);
+  }
 
   // Dropping a file on the window must never navigate away from the app (Electron's default).
   win.webContents.on("will-navigate", (e, url) => {
