@@ -76,7 +76,7 @@
       "category": "public.app-category.music",
       "hardenedRuntime": true,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Used only if you choose to record from an audio input."
+        "NSMicrophoneUsageDescription": "Used only if you choose the microphone as the Lighting sound-to-light source."
       },
       "files": [
         "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"

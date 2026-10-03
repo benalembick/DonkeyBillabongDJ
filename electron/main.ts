@@ -6,7 +6,7 @@
  * a narrow IPC surface. All DJ, audio and controller logic lives in the
  * renderer's engine layers so it can also run in browser mode.
  */
-import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell, systemPreferences, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -33,7 +33,31 @@ import { runTransitionSmoke } from "./transitionSmoke";
 import { runTrainingSmoke } from "./trainingSmoke";
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".flac", ".ogg", ".opus", ".aif", ".aiff"]);
-const ALLOWED_PERMISSIONS = new Set(["midi", "midiSysex", "media", "speaker-selection", "clipboard-sanitized-write", "serial"]);
+// "media" (microphone/camera) is deliberately NOT here: granting it made Chromium touch the
+// microphone at startup (device enumeration), and macOS showed a permission prompt for each
+// attempt. Output devices only need "speaker-selection". See micAllowed() below.
+const ALLOWED_PERMISSIONS = new Set(["midi", "midiSysex", "speaker-selection", "clipboard-sanitized-write", "serial"]);
+
+/** Set once the user picks the microphone (lighting sound-to-light source). */
+let micWanted = false;
+let micAsk: Promise<boolean> | null = null;
+
+/** One system prompt at most (macOS): concurrent callers share the same request. */
+async function ensureMicAccess(): Promise<{ granted: boolean; status: string }> {
+  if (process.platform !== "darwin") return { granted: true, status: "granted" };
+  const status = systemPreferences.getMediaAccessStatus("microphone");
+  if (status === "granted") return { granted: true, status };
+  if (status === "denied" || status === "restricted") return { granted: false, status };
+  micAsk ??= systemPreferences.askForMediaAccess("microphone").finally(() => { micAsk = null; });
+  const granted = await micAsk;
+  return { granted, status: granted ? "granted" : "denied" };
+}
+
+/** Audio capture only once the user asked for the microphone; never the camera. */
+function micAllowed(details: { mediaType?: string; mediaTypes?: string[] } | undefined): boolean {
+  const types = details?.mediaTypes ?? (details?.mediaType ? [details.mediaType] : []);
+  return micWanted && !types.includes("video") && (types.length === 0 || types.includes("audio"));
+}
 
 // Smoke tests run in a throwaway profile so they never touch the user's library, settings or credentials.
 if (process.env.DBDJ_SMOKE_TEST) {
@@ -547,6 +571,18 @@ function runSmokeTest(win: BrowserWindow): void {
             document.querySelectorAll(".view-popover .layout-switch:not(.wave-style-picker) > button").forEach((b) => b.textContent.trim().toUpperCase() === wantLayout.toUpperCase() && b.click());
             await sleep(400);
           }
+          // Microphone (DBDJ_SMOKE_MIC=1): only requested when Lighting's sound source is the mic.
+          if (${JSON.stringify(!!process.env.DBDJ_SMOKE_MIC)}) {
+            const l = a.lighting;
+            const before = l.mic.state;
+            l.setSound({ source: "mic" });
+            if (!l.getConfig().sound.enabled) a.bus.send("lighting.sound.enable");
+            for (let i = 0; i < 60 && (l.mic.state === "off" || l.mic.state === "starting"); i++) await sleep(100);
+            checks.mic = { beforeChoosingMic: before, afterChoosingMic: l.mic.state, message: l.mic.message };
+            a.bus.send("lighting.sound.enable");
+            await sleep(200);
+            checks.mic.afterTurningOff = l.mic.state;
+          }
           // Library height (DBDJ_SMOKE_LIBH=420): as if dragged/saved that tall — the decks must still fit.
           const libH = ${JSON.stringify(process.env.DBDJ_SMOKE_LIBH ?? "")};
           if (libH) { document.querySelector(".app")?.style.setProperty("--lib-h", libH + "px"); await sleep(300); }
@@ -774,8 +810,18 @@ app.whenReady().then(() => {
   if (!primaryInstance) return;
   if (process.platform === "darwin" && !app.isPackaged) app.dock?.setIcon(WINDOW_ICON);
   const ses = session.defaultSession;
-  ses.setPermissionRequestHandler((_wc, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)));
-  ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
+  ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    if (permission !== "media") return callback(ALLOWED_PERMISSIONS.has(permission));
+    if (!micAllowed(details as { mediaTypes?: string[] })) return callback(false);
+    void ensureMicAccess().then((r) => callback(r.granted));
+  });
+  ses.setPermissionCheckHandler((_wc, permission, _origin, details) =>
+    permission === "media" ? micAllowed(details as { mediaType?: string }) : ALLOWED_PERMISSIONS.has(permission),
+  );
+  ipcMain.handle("dbdj:media:microphone", async () => {
+    micWanted = true;
+    return ensureMicAccess();
+  });
 
   handleArtProtocol();
   // USB DMX (Web Serial): choose a DMX interface automatically — FTDI-based interfaces

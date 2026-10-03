@@ -56,6 +56,15 @@ export class MicInput {
     if (this.state === "on" || this.state === "starting") return;
     this.state = "starting";
     try {
+      // Desktop: the app only gets microphone access when it's asked for here (one system prompt on macOS).
+      const access = await window.dbdjDesktop?.requestMicrophone?.();
+      if (access && !access.granted) {
+        this.state = "denied";
+        this.message = access.status === "denied" || access.status === "restricted"
+          ? "Microphone access is off for Donkey Billabong DJ — allow it in System Settings → Privacy & Security → Microphone, then choose the microphone again."
+          : "Microphone access was not allowed";
+        return;
+      }
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       this.ctx = new AudioContext();
       const src = this.ctx.createMediaStreamSource(this.stream);
