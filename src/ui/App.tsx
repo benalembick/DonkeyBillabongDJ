@@ -7,6 +7,7 @@ import { ControllerTest, LiveEvents, MidiMonitor } from "./ControllerPanels";
 import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
 import { UpdateBadge } from "./Updates";
+import { NavIcon } from "./NavIcons";
 import { useFrameStore, useTick } from "./hooks";
 import { LibraryPanel, type MainBrowserArea } from "./LibraryPanel";
 import { MatchDialogHost } from "./MatchDialog";
@@ -277,7 +278,7 @@ function Shell() {
           <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={800} height={267} draggable={false} />
         </div>
         <nav className="main-navigation" aria-label="Main browser areas">
-          {([['collections','▦','Collections'],['playlists','▤','Playlists'],['mashups','⚡','Mashup Projects'],['practice','◆','Practice Mode'],['streaming','◉','Streaming'],['lighting','✺','Lighting']] as const).map(([area,icon,label])=><button key={area} title={label} className={navigation.area===area?"active":""} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><span>{icon}</span>{label}</button>)}
+          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["practice","Practice Mode"],["streaming","Streaming"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
         </nav>
         <LayoutSwitch />
         <div className="statuses">
