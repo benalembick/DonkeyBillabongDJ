@@ -177,7 +177,7 @@ function TrackSlot({ side, s, svc }: { side: Side; s: TransitionState; svc: Tran
   );
 }
 
-function TrackPicker({ value, onPick, deckTracks }: { value: string | null; onPick: (ref: string) => void; deckTracks: { deck: number; track: TrackInfo }[] }) {
+export function TrackPicker({ value, onPick, deckTracks }: { value: string | null; onPick: (ref: string) => void; deckTracks: { deck: number; track: TrackInfo }[] }) {
   const lib = useLibraryState();
   const [q, setQ] = useState("");
   const matches = useMemo(() => {

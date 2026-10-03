@@ -596,9 +596,23 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     return e - Math.round(e);
   }
 
+  /** Training: while locked, SYNC can't be switched on (from any input) and is switched off now. */
+  private syncLock: string | null = null;
+  lockSync(reason: string | null): void {
+    this.syncLock = reason;
+    if (reason) for (const d of this.state.decks) if (d.sync) this.patchDeck(d.index, { sync: false });
+  }
+  isSyncLocked(): boolean {
+    return this.syncLock !== null;
+  }
+
   private toggleSync(deck: number): void {
     const d = this.state.decks[deck];
     if (d.status !== "ready") return;
+    if (!d.sync && this.syncLock) {
+      this.log.info("engine", this.syncLock);
+      return;
+    }
     if (d.sync) {
       this.patchDeck(deck, { sync: false });
       return;

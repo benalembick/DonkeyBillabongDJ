@@ -50,7 +50,7 @@ export function FxBar() {
         const timed = f.slots.some((x) => TIMED.has(x.type));
         const stemCapable = f.slots.some((x) => SEND_TYPES.has(x.type));
         return (
-          <div key={u} className={`fx-unit ${anyOn ? "on" : ""}`}>
+          <div key={u} className={`fx-unit ${anyOn ? "on" : ""}`} data-train={`fx-${u + 1}`}>
             <span className="fx-name" title={`FX unit ${u + 1} — DDJ-SB: FX buttons 1–3 switch the slots, SHIFT+button changes the effect, knob = level`}>
               FX{u + 1}
             </span>

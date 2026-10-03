@@ -819,3 +819,105 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .tx-live small { color: var(--muted); }
 .tx-good { color: #8ef0b8; }
 @media (max-width: 1100px) { .tx-body { grid-template-columns: 1fr; } }
+
+/* ── DJ Training ── */
+@keyframes train-pulse { 0%, 100% { outline-offset: 3px; } 50% { outline-offset: 6px; } }
+.tr { height: 100%; overflow: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.tr-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tr-head h2 { margin: 0; font-size: 15px; letter-spacing: 0.06em; }
+.tr-spacer { flex: 1; }
+.tr-progress-text { font-weight: 700; }
+.tr-note { margin: 0; padding: 6px 10px; border-radius: 6px; background: #12324a; border: 1px solid #2d6c9a; font-size: 12px; }
+.tr-level h3 { margin: 6px 0; font-size: 13px; letter-spacing: 0.05em; }
+.tr-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.tr-card { display: flex; flex-direction: column; align-items: stretch; gap: 4px; text-align: left; white-space: normal; padding: 10px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); }
+.tr-card.done { border-left: 4px solid #39dca0; }
+.tr-card.next { box-shadow: inset 0 0 0 1px #ffd166; }
+.tr-card-title { font-weight: 800; font-size: 13.5px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tr-card-sum { font-size: 12px; color: #c4d0de; line-height: 1.35; }
+.tr-card-meta { display: flex; gap: 12px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.tr-card-pre { font-size: 11px; color: var(--muted); }
+.tr-badge { font-style: normal; font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--line); }
+.tr-badge.next { background: #3a2a0a; color: #ffd27a; border-color: #a8761b; }
+.tr-badge.level { background: var(--panel-2); }
+.tr-badge.practice { background: #12324a; color: #8fd0ff; border-color: #2d6c9a; }
+.tr-badge.assess { background: #3a1420; color: #ffb3c4; border-color: #a83a58; }
+.tr-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+.tr-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tr-box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; line-height: 1.45; }
+.tr-box h3 { margin: 0 0 6px; font-size: 13px; }
+.tr-box p { margin: 4px 0; }
+.tr-objective { font-weight: 700; color: #fff; }
+.tr-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
+.tr-assists { border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+.tr-assists th, .tr-assists td { padding: 2px 10px 2px 0; text-align: left; }
+.tr-suggest { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tr-suggest li { display: flex; gap: 6px; align-items: baseline; }
+.tr-pick { margin: 8px 0; padding-top: 6px; border-top: 1px solid var(--line); }
+.tr-side { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: #000; font-weight: 900; }
+.tr-side.a { background: var(--deck-a); }
+.tr-side.b { background: var(--deck-b); }
+.tr-title { font-weight: 700; margin: 4px 0; }
+.tr-ready { list-style: none; margin: 2px 0; padding: 0; font-size: 12px; }
+.tr-ready li { display: flex; gap: 6px; align-items: center; }
+.tr-ready li.ok { color: #b9e7cf; }
+.tr-ready li.warn { color: #ffd27a; }
+.tr-ready li.bad { color: #ff9b9b; }
+.tr-job { margin: 4px 0; color: #8fd0ff; font-size: 12px; }
+.tr-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; margin: 6px 0; }
+.tr-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; white-space: normal; text-align: left; padding: 6px 8px; }
+.tr-choice.chosen { box-shadow: inset 0 0 0 1px var(--accent); }
+.tr-ok { color: #8ef0b8; }
+.tr-assist-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.tr-chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+.tr-chip.on { background: #173b2a; color: #b9f2d2; border-color: #2e8a5a; }
+.tr-chip.off { background: #2a1a1a; color: #e9b0b0; border-color: #7a3b3b; text-decoration: line-through; text-decoration-thickness: 1px; }
+.tr-task { display: flex; flex-direction: column; gap: 4px; }
+.tr-task b { font-size: 16px; color: #fff; }
+.tr-steps { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.tr-steps li { padding: 3px 8px; border-radius: 5px; }
+.tr-steps li.done { color: #9fdcbc; }
+.tr-steps li.now { background: #173b5d; outline: 1px solid #4cb5ff; color: #fff; }
+.tr-step-icon { display: inline-block; width: 16px; font-weight: 900; }
+.tr-steps-preview { margin: 0 0 6px; padding-left: 18px; }
+.tr-tap { align-self: flex-start; font-size: 16px; font-weight: 900; padding: 10px 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; white-space: normal; }
+.tr-tap small { font-size: 10px; font-weight: 500; color: var(--muted); }
+.tr-counter { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tr-meter { display: flex; flex-direction: column; gap: 6px; font-variant-numeric: tabular-nums; }
+.tr-phase { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.tr-phase-track { position: relative; flex: 1; height: 14px; border-radius: 7px; background: #0a0d12; border: 1px solid var(--line); }
+.tr-phase-zone { position: absolute; left: 42.5%; width: 15%; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, #2e8a5a55 0 4px, transparent 4px 8px); }
+.tr-phase-dot { position: absolute; top: -3px; width: 4px; height: 18px; margin-left: -2px; background: #fff; border-radius: 2px; }
+.tr-hints { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.tr-hints li { padding: 6px 10px; border-radius: 6px; background: #1f1a0e; border: 1px solid #5c4a1c; }
+.tr-total { display: flex; align-items: baseline; gap: 12px; }
+.tr-total b { font-size: 40px; font-variant-numeric: tabular-nums; }
+.tr-total.pass { border-left: 4px solid #39dca0; }
+.tr-total.fail { border-left: 4px dashed #ff9b9b; }
+.tr-metrics { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tr-metrics th, .tr-metrics td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tr-metrics tr.na td { color: var(--muted); font-style: italic; }
+.tr-metrics details { font-size: 11px; color: var(--muted); }
+.tr-metrics summary { cursor: pointer; }
+.tr-history { margin: 0; padding-left: 18px; font-size: 12px; }
+.tr-svg { width: 100%; max-width: 560px; height: auto; background: #07090c; border: 1px solid var(--line); border-radius: 6px; }
+.tr-svg-label { fill: #c4d0de; font-size: 10px; }
+.tr-svg-bar { stroke: #ffffff22; }
+.tr-svg-phrase { stroke: #ffd166; stroke-width: 2; stroke-dasharray: 4 2; }
+.tr-svg-beat { stroke-width: 3; }
+.tr-svg-beat.a { stroke: var(--deck-a); }
+.tr-svg-beat.b { stroke: var(--deck-b); }
+.tr-svg-a { fill: var(--deck-a); opacity: 0.6; }
+.tr-svg-b { fill: var(--deck-b); opacity: 0.6; }
+.tr-svg-echo { fill: var(--deck-a); opacity: 0.3; }
+.tr-svg-line { fill: none; stroke-width: 3; }
+.tr-svg-line.a { stroke: var(--deck-a); }
+.tr-svg-line.b { stroke: var(--deck-b); stroke-dasharray: 6 3; }
+.tr-svg-cut { stroke: #ff6b6b; stroke-width: 2; }
+.tr-svg-key { fill: #173b5d; stroke: #4cb5ff; }
+.tr-svg-key.home { fill: #3a2a0a; stroke: #ffd166; stroke-width: 2; }
+.tr-svg-keytext { fill: #fff; font-size: 13px; font-weight: 800; }
+.about-train { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 10px 0 0; padding: 12px 14px; background: linear-gradient(145deg,#1d1a0e,#0e1218); border: 1px solid #5c4a1c; border-radius: 7px; }
+.about-train h3 { margin: 0 0 4px; color: #ffe2a0; font-size: 13px; }
+.about-train span { color: #c4d0de; font-size: 12px; }
+@media (max-width: 1100px) { .tr-cols { grid-template-columns: 1fr; } }

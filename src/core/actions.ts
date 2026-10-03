@@ -44,7 +44,7 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
     add(`${p}.cue`, `Cue ${L}`, "button", g);
     add(`${p}.sync`, `Sync ${L}`, "button", g);
     add(`${p}.master`, `Master ${L}`, "button", g);
-    add(`${p}.keylock`, `Key Lock ${L}`, "button", g, false);
+    add(`${p}.keylock`, `Key Lock ${L}`, "button", g);
     add(`${p}.vinyl`, `Vinyl/Scratch mode ${L}`, "button", g);
     add(`${p}.slip`, `Slip ${L}`, "button", g, false);
     add(`${p}.quantize`, `Quantize ${L}`, "button", g, false);
@@ -142,6 +142,7 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
   add("lighting.blackout", "Lighting blackout (toggle)", "button", "Lighting");
   add("lighting.master", "Lighting master brightness", "absolute", "Lighting");
   add("lighting.desk.clear", "Lighting desk clear", "button", "Lighting");
+  add("training.tap", "Training: tap a phrase start", "button", "Training");
   add("lighting.sound.enable", "Sound-to-light on/off", "button", "Lighting");
   add("lighting.sound.beatFlash", "Sound-to-light beat flash on/off", "button", "Lighting");
   add("lighting.sound.downbeatAccent", "Sound-to-light downbeat accent on/off", "button", "Lighting");

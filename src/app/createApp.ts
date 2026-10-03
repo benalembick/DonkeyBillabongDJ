@@ -29,6 +29,7 @@ import { audiusIdFromRef } from "../providers/audius/audiusTracks";
 import { StemService } from "../stems/StemService";
 import { LightingService } from "../lighting/LightingService";
 import { TransitionService } from "../transitions/TransitionService";
+import { TrainingService } from "../training/TrainingService";
 import { PlaylistStore } from "../library/PlaylistStore";
 import { AutoDJ } from "../autodj/AutoDJ";
 import { DEFAULT_AUTO_DJ } from "../autodj/transition";
@@ -54,6 +55,7 @@ export interface App {
   /** DMX lighting: fixtures, desk, virtual console, sound-to-light, Art-Net / sACN / USB DMX output. */
   lighting: LightingService;
   transitions: TransitionService;
+  training: TrainingService;
   keyboard: KeyboardShortcuts;
   platform: Platform;
   streaming: StreamingStore;
@@ -132,6 +134,7 @@ export function createApp(): App {
   void playlists.load();
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
   const transitions = new TransitionService({ engine, bus, library, preparation, analysis, stems, log, readAudio: (ref) => platform.readAudio(ref) });
+  const training = new TrainingService({ engine, bus, audio, library, preparation, analysis });
   const lighting = new LightingService({ bus, log, dj: engine, audio, bridge: platform.kind === "desktop" ? (window.dbdjDesktop?.lighting ?? null) : null });
   void lighting.start();
   const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis, stemAvailable: (ref) => stems.index()[ref] === "complete",
@@ -266,6 +269,7 @@ export function createApp(): App {
     stems,
     lighting,
     transitions,
+    training,
     keyboard,
     platform,
     streaming,

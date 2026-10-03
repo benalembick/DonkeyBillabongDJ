@@ -68,7 +68,7 @@ function JogDisplay({ deck, size }: { deck: number; size: number }) {
   });
   const pct = (d.rate - 1) * 100;
   return (
-    <div className={`jog ${d.jogTouched ? "touched" : ""} ${d.playing ? "playing" : ""}`} style={size ? { width: size, height: size } : undefined} title={`Jog ticks: ${engine.getJogTicks(deck)}`}>
+    <div data-train={`jog-${deckLetter(deck)}`} className={`jog ${d.jogTouched ? "touched" : ""} ${d.playing ? "playing" : ""}`} style={size ? { width: size, height: size } : undefined} title={`Jog ticks: ${engine.getJogTicks(deck)}`}>
       <svg viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="46" className="jog-ring" />
         <circle cx="50" cy="50" r="40" className="jog-inner" />
@@ -94,7 +94,7 @@ function TempoFader({ deck, vertical }: { deck: number; vertical: boolean }) {
   const p = `deck${deck + 1}`;
   const value = 0.5 + (d.tempo / 2) * (engine.getSettings().tempoDownIsFaster ? 1 : -1);
   return (
-    <div className={`tempo ${vertical ? "vertical" : ""}`}>
+    <div className={`tempo ${vertical ? "vertical" : ""}`} data-train={`tempo-${deckLetter(deck)}`}>
       <button className="tiny" onClick={() => send(`${p}.tempo.range`)} title="Pitch range">
         {RANGE_LABEL[String(d.tempoRange)]}
       </button>
@@ -283,6 +283,7 @@ function StateButtons({ deck }: { deck: number }) {
       <button className={`tiny ${d.keylock ? "lit" : ""}`} onClick={() => send(`${p}.keylock`)} title="Key lock: change tempo without changing the key (pitch). Scratching still sounds like vinyl.">KEY LOCK</button>
       <button
         className={`tiny ${d.sync ? "lit" : ""}`}
+        data-train={`sync-${deckLetter(deck)}`}
         onClick={() => send(`${p}.sync`)}
         disabled={d.status !== "ready"}
         title="Beat sync: match BPM and keep beats aligned with the master deck"
@@ -420,7 +421,7 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
             <LoopSection deck={deck} />
           </div>
           <div className="deck-center">
-            <div className="transport">
+            <div className="transport" data-train={`transport-${L}`}>
               <HoldButton action={`${p}.cue`} className={`round cue ${engine.getFeedback(`${p}.cue`) ? "lit" : ""}`}>CUE</HoldButton>
               <button className={`round play ${d.playing ? "lit" : ""}`} onClick={() => send(`${p}.play`)} aria-label="Play/Pause">
                 {d.playing ? "❚❚" : "▶"}

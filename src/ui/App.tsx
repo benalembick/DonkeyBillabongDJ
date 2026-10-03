@@ -9,6 +9,7 @@ import { DownloadDesktopButton } from "./DownloadDesktop";
 import { UpdateBadge } from "./Updates";
 import { NavIcon } from "./NavIcons";
 import { TransitionWorkspace } from "./TransitionWorkspace";
+import { TrainingWorkspace } from "./TrainingWorkspace";
 import { useFrameStore, useTick } from "./hooks";
 import { LibraryPanel, type MainBrowserArea } from "./LibraryPanel";
 import { MatchDialogHost } from "./MatchDialog";
@@ -240,9 +241,19 @@ function Stage({ mode }: { mode: LayoutMode }) {
 
 function Shell() {
   const [tool, setTool] = useState<ToolTab | null>(null);
-  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting" | "transitions"; id: number }>({ area: "collections", id: 0 });
+  // Other parts of the UI (About page, Practice home) can open an area: dispatch "dbdj:navigate".
+  useEffect(() => {
+    const go = (e: Event) => {
+      const area = (e as CustomEvent<string>).detail as typeof navigation.area;
+      setTool(null);
+      setNavigation((n) => ({ area, id: n.id + 1 }));
+    };
+    window.addEventListener("dbdj:navigate", go);
+    return () => window.removeEventListener("dbdj:navigate", go);
+  }, []);
+  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting" | "transitions" | "training"; id: number }>({ area: "collections", id: 0 });
   const libraryNavigation = useRef<{ area: MainBrowserArea; id: number }>({ area: "collections", id: 0 });
-  if (navigation.area !== "lighting" && navigation.area !== "transitions") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
+  if (navigation.area !== "lighting" && navigation.area !== "transitions" && navigation.area !== "training") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
   const app = useApp();
   const { platform } = app;
   const layout = useLayout();
@@ -296,11 +307,12 @@ function Shell() {
       {layout.mode !== "classic" && <Splitter mode={layout.mode} />}
       <section className="lower">
         {/* The library stays mounted (hidden) while Lighting is open, so it comes back exactly as it was. */}
-        <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "transitions"}>
+        <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "transitions" || navigation.area === "training"}>
           <Boundary name="Library"><LibraryPanel navigation={libraryNavigation.current} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} /></Boundary>
         </div>
         {navigation.area === "lighting" && <Boundary name="Lighting"><LightingWorkspace /></Boundary>}
         {navigation.area === "transitions" && <Boundary name="Transitions"><TransitionWorkspace /></Boundary>}
+        {navigation.area === "training" && <Boundary name="Training"><TrainingWorkspace /></Boundary>}
       </section>
       {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}
       <Toasts />

@@ -9,7 +9,7 @@ import { clampRaw, dragDelta, FINE_FACTOR, KEY_STEP, rawToValue, stepValue, valu
  * Rotary knob: drag up/down (or left/right) or scroll the wheel over it; hold Shift for fine
  * control. Bipolar knobs catch at the centre and double-click back to it. Response: knobMath.ts.
  */
-export function Knob(props: { label: string; value: number; action: string; kill?: boolean; killAction?: string; bipolar?: boolean; size?: number }) {
+export function Knob(props: { label: string; value: number; action: string; kill?: boolean; killAction?: string; bipolar?: boolean; size?: number; /** Training: control id for highlighting */ train?: string }) {
   const send = useSend();
   const size = props.size ?? 30;
   const bipolar = !!props.bipolar;
@@ -69,7 +69,7 @@ export function Knob(props: { label: string; value: number; action: string; kill
   };
 
   return (
-    <div className={`knob ${props.kill ? "killed" : ""}`}>
+    <div className={`knob ${props.kill ? "killed" : ""}`} data-train={props.train}>
       <div
         ref={dial}
         className="knob-dial"
@@ -152,10 +152,10 @@ export function Mixer({ dense }: { dense?: boolean }) {
         <div className="strip-name">{deckLetter(i)}</div>
         <div className="strip-knobs">
           <Knob size={k} label="TRIM" value={c.gain} action={`${m}.gain`} bipolar />
-          <Knob size={k} label="HI" value={c.eqHigh} action={`${m}.eq.high`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar />
-          <Knob size={k} label="MID" value={c.eqMid} action={`${m}.eq.mid`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar />
-          <Knob size={k} label="LOW" value={c.eqLow} action={`${m}.eq.low`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar />
-          <Knob size={k} label="FILTER" value={c.filter} action={`${m}.filter`} bipolar />
+          <Knob size={k} label="HI" value={c.eqHigh} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar />
+          <Knob size={k} label="MID" value={c.eqMid} action={`${m}.eq.mid`} train={`eq-mid-${deckLetter(i)}`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar />
+          <Knob size={k} label="LOW" value={c.eqLow} action={`${m}.eq.low`} train={`eq-low-${deckLetter(i)}`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar />
+          <Knob size={k} label="FILTER" value={c.filter} action={`${m}.filter`} train={`filter-${deckLetter(i)}`} bipolar />
         </div>
         <div className="strip-fader">
         <button
@@ -165,7 +165,7 @@ export function Mixer({ dense }: { dense?: boolean }) {
         >
           CUE
         </button>
-        <div className="fader-row">
+        <div className="fader-row" data-train={`volume-${deckLetter(i)}`}>
           <Meter index={i} />
           <input
             type="range"
@@ -202,7 +202,7 @@ export function Mixer({ dense }: { dense?: boolean }) {
         </div>
         {strip(1)}
       </div>
-      <div className="crossfader">
+      <div className="crossfader" data-train="crossfader">
         <span>A</span>
         <input
           type="range"
