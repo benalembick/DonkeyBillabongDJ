@@ -62,6 +62,7 @@ describe("SpotifyClient", () => {
     expect(status).toMatchObject({ connected: true, account: "Ben (premium)" });
 
     const pls = await client.playlists();
+    // Playlists by other people are listed after the viewable ones, locked (Spotify answers 403 for them).
     expect(pls.map((p) => [p.name, p.readable])).toEqual([["Liked Songs", true], ["Own", true], ["Theirs", false]]);
 
     const tracks = await client.playlistTracks("p1");

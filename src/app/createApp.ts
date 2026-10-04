@@ -36,6 +36,8 @@ import { DEFAULT_AUTO_DJ } from "../autodj/transition";
 import { PreparationStore } from "../preparation/PreparationStore";
 import { LiveMashupService } from "../mashup/LiveMashupService";
 import { PracticeService } from "../practice/PracticeService";
+import { SpotifyLocalService, type FileCheck } from "../acquire/SpotifyLocalService";
+import { AudiusAcquisition, informationalProviders, SpotDLAcquisition, type Downloader } from "../acquire/providers";
 
 export interface App {
   bus: CommandBus;
@@ -60,6 +62,8 @@ export interface App {
   platform: Platform;
   streaming: StreamingStore;
   matching: MatchingService;
+  /** Spotify → Local: Spotify playlists prepared as local playlists of real files. */
+  spotifyLocal: SpotifyLocalService;
   audius: AudiusStore;
   /** Which list the controller's browse encoder / LOAD buttons act on. */
   browser: BrowserRouter;
@@ -217,6 +221,79 @@ export function createApp(): App {
     void platform.library?.save(changed).catch((err) => log.warn("library", `Library database: ${String(err)}`));
   });
 
+  // Spotify → Local: Spotify supplies playlist + metadata; audio is always a validated local file.
+  const acquire = desktop?.acquire ?? null;
+  const downloader: Downloader | null = acquire
+    ? {
+        download: async (c, onProgress, signal) => {
+          const id = `dl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+          const off = acquire.onProgress((x, p) => x === id && onProgress(p));
+          const onAbort = () => void acquire.cancelDownload(id);
+          signal.addEventListener("abort", onAbort, { once: true });
+          try {
+            return await acquire.download({ ...c, id, toleranceS: spotifyLocal.getState().match.durationToleranceS });
+          } finally {
+            off();
+            signal.removeEventListener("abort", onAbort);
+          }
+        },
+      }
+    : null;
+  const checkFile = async (ref: string, opts: { decode: boolean }): Promise<FileCheck> => {
+    try {
+      let quality: FileCheck["quality"];
+      if (acquire) {
+        const p = await acquire.probe(ref);
+        if (!p.ok) return { ok: false, error: p.error };
+        quality = p.quality;
+      }
+      if (opts.decode) {
+        // Full decode (off the audio thread, one file at a time) proves the engine can play it.
+        const bytes = await platform.readAudio(ref);
+        if (!bytes.byteLength) return { ok: false, error: "File is empty" };
+        const size = bytes.byteLength;
+        const decoded = await audio.decode(bytes);
+        quality = {
+          codec: quality?.codec ?? null,
+          container: quality?.container ?? null,
+          bitrateKbps: quality?.bitrateKbps ?? null,
+          lossless: quality?.lossless ?? null,
+          sampleRate: quality?.sampleRate ?? decoded.sampleRate,
+          channels: quality?.channels ?? decoded.channels,
+          sizeBytes: quality?.sizeBytes ?? size,
+          durationMs: Math.round(decoded.duration * 1000),
+        };
+      }
+      return { ok: true, quality };
+    } catch (err) {
+      return { ok: false, error: `Couldn't decode the audio: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  };
+  const spotifyLocal = new SpotifyLocalService({
+    metadata: platform.streaming?.spotifySource ? { resolve: (ref) => platform.streaming!.spotifySource!(ref) } : null,
+    library,
+    playlists,
+    resolver: matching.resolver,
+    addFiles: (refs) => addFiles(refs),
+    checkFile,
+    analysis,
+    autoDJ,
+    engine,
+    providers: [
+      new AudiusAcquisition(audiusClient),
+      new SpotDLAcquisition(acquire?.toolStatus ? (force) => acquire.toolStatus!("spotdl", force) : null),
+      ...informationalProviders(),
+    ],
+    downloader,
+    persistence: platform.importJobs,
+    log,
+    desktop: acquire,
+    pickFiles: () => platform.pickAudioFiles(),
+    freshIndex: () => matching.flushIndex(),
+    storage: (() => { try { return localStorage; } catch { return null; } })(),
+  });
+  void libraryReady.then(() => spotifyLocal.load());
+
   bus.on("failed", ({ cmd, error }) => log.error("engine", `Action ${cmd.action} failed: ${String(error)}`));
   // Headphone CUE only reaches headphones with 4-channel routing (e.g. the DDJ-SB sound card: master 1/2, phones 3/4).
   let warnedNoCue = false;
@@ -240,7 +317,7 @@ export function createApp(): App {
   window.addEventListener("error", (e) => log.error("ui", e.message));
   window.addEventListener("unhandledrejection", (e) => log.error("ui", `Unhandled: ${String(e.reason)}`));
   window.addEventListener("beforeunload", () => controllers.shutdown());
-  window.addEventListener("beforeunload", () => { autoDJ.dispose(); void playlists.flush(); void preparation.flush(); });
+  window.addEventListener("beforeunload", () => { autoDJ.dispose(); spotifyLocal.flush(); void playlists.flush(); void preparation.flush(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden) { void playlists.flush(); void preparation.flush(); } });
 
   log.info("app", `Donkey Billabong DJ starting (${platform.kind} mode, ${platform.os})`);
@@ -277,43 +354,46 @@ export function createApp(): App {
     platform,
     streaming,
     matching,
+    spotifyLocal,
     audius: audiusStore,
     browser,
     setRating: async (ref, rating) => {
       const t = library.setRating(ref, rating);
       if (t) await platform.library?.save([t]).catch((err) => log.warn("library", `Library database: ${String(err)}`));
     },
-    addFiles: async (refs, loadIntoDeck) => {
-      await libraryReady;
-      const restored = refs.map((r) => library.getByRef(r.ref)).filter((t): t is TrackInfo => !!t).map((t) => ({ ...t, unavailableReason: undefined }));
-      library.patchTracks(restored);
-      if (restored.length) {
-        await platform.library?.save(restored).catch((err) => log.warn("library", String(err)));
-        void enrichTags(restored.filter((t) => !t.tagsRead || !t.artworkRead).map((t) => t.ref));
-        analysis.queueTracks(restored);
-      }
-      const added = library.addFiles(refs);
-      if (refs.length === 0) {
-        log.warn("library", "No supported audio files found (MP3, WAV, M4A/AAC, FLAC, OGG, AIFF).");
-        return 0;
-      }
-      const n = added.length;
-      if (n > 0) {
-        log.info("library", `Added ${n} track(s) to the library`);
-        await platform.library?.save(added).catch((err) => log.warn("library", `Library database: ${String(err)}`));
-        void enrichTags(added.map((t) => t.ref));
-        analysis.queueTracks(added);
-      }
-      if (loadIntoDeck !== undefined) {
-        const t = library.getByRef(refs[0].ref);
-        if (t) await engine.loadTrack(loadIntoDeck, t);
-      }
-      return n;
-    },
+    addFiles,
     saveAudioConfig: (c) => save(AUDIO_KEY, c),
     saveEngineSettings: (s) => {
       engine.updateSettings(s);
       save(ENGINE_KEY, engine.getSettings());
     },
   };
+
+  async function addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number> {
+    await libraryReady;
+    const restored = refs.map((r) => library.getByRef(r.ref)).filter((t): t is TrackInfo => !!t).map((t) => ({ ...t, unavailableReason: undefined }));
+    library.patchTracks(restored);
+    if (restored.length) {
+      await platform.library?.save(restored).catch((err) => log.warn("library", String(err)));
+      void enrichTags(restored.filter((t) => !t.tagsRead || !t.artworkRead).map((t) => t.ref));
+      analysis.queueTracks(restored);
+    }
+    const added = library.addFiles(refs);
+    if (refs.length === 0) {
+      log.warn("library", "No supported audio files found (MP3, WAV, M4A/AAC, FLAC, OGG, AIFF).");
+      return 0;
+    }
+    const n = added.length;
+    if (n > 0) {
+      log.info("library", `Added ${n} track(s) to the library`);
+      await platform.library?.save(added).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+      void enrichTags(added.map((t) => t.ref));
+      analysis.queueTracks(added);
+    }
+    if (loadIntoDeck !== undefined) {
+      const t = library.getByRef(refs[0].ref);
+      if (t) await engine.loadTrack(loadIntoDeck, t);
+    }
+    return n;
+  }
 }

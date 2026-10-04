@@ -20,8 +20,12 @@ import { compatibility } from "../analysis/discovery";
 import { DiscoveryDialog, type DiscoveryMode } from "./DiscoveryDialog";
 import { MashipsView } from "./MashipsPanel";
 import { PracticePanel } from "./PracticePanel";
+import { SpotifyLocalPanel, useSpotifyLocal } from "./SpotifyLocalPanel";
+import { PERMISSION_REMINDER } from "../acquire/providers";
+import { PLAYABLE_STATES, STATE_LABEL } from "../acquire/types";
+import type { StreamingTrack } from "../providers/streamingTypes";
 
-type Source = "local" | "audius" | "playlist" | "practice" | "auto-mashups" | "manual-mashups" | "queue" | StreamingProviderId;
+type Source = "local" | "audius" | "playlist" | "practice" | "auto-mashups" | "manual-mashups" | "queue" | "spotify-local" | StreamingProviderId;
 export type MainBrowserArea = "collections" | "playlists" | "mashups" | "practice" | "streaming";
 
 function fmtDuration(ms?: number): string {
@@ -75,11 +79,18 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
   const [practiceView, setPracticeView] = useState<"practice" | "history">("practice");
   const openPlaylist = (id: string) => { setHome(null); setPlaylistId(id); setSource("playlist"); };
   const openQueue = () => { setHome(null); setSource("queue"); };
+  const [spotifyLocalJob, setSpotifyLocalJob] = useState<string | null>(null);
+  const openSpotifyLocal = (jobId: string | null = null) => { setHome(null); setSpotifyLocalJob(jobId); setSource("spotify-local"); };
   const openMaships = (kind: "auto" | "manual") => { setHome(null); setSource(kind === "manual" ? "manual-mashups" : "auto-mashups"); };
   const lib = useLibraryState();
   const streams = useStreamingState();
   const audiusState = useAudiusState();
-  const dot = (v: ProviderView) => (v.status?.connected ? "● " : v.status?.configured ? "◐ " : "○ ");
+  /** Connection status on the right of a streaming item (text, so it doesn't rely on colour). */
+  const status = (v: ProviderView) =>
+    v.status?.connected ? <span className="count nav-status on" title="Connected">● on</span>
+    : v.status?.configured ? <span className="count nav-status" title="Set up, not signed in">◐ sign in</span>
+    : <span className="count nav-status" title="Not set up">○ off</span>;
+  const label = (icon: string, text: string) => <span><span className="nav-icon" aria-hidden>{icon}</span>{text}</span>;
   const choose = (s: Source, c?: LocalCollection) => {
     setSource(s);
     if (c) setCollection(c);
@@ -102,18 +113,19 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
     <div className="browser header-navigation">
       <nav className="browser-sources">
         <button className="browser-heading browser-section-link" onClick={() => { setHome("collections"); onNavigateArea?.("collections"); }}>COLLECTION <span>›</span></button>
-        {item("local", <>♫ All Tracks <span className="count">{lib.tracks.length}</span></>, "all")}
-        {item("local", <>⏱ Recently Added <span className="count">{recent}</span></>, "recent")}
-        {item("local", <>★ Top Rated <span className="count">{rated}</span></>, "rated")}
-        {item("practice", <>◆ Practice Mode</>)}
+        {item("local", <><span><span className="nav-icon" aria-hidden>♫</span>All Tracks</span><span className="count">{lib.tracks.length}</span></>, "all")}
+        {item("local", <><span><span className="nav-icon" aria-hidden>⏱</span>Recently Added</span><span className="count">{recent}</span></>, "recent")}
+        {item("local", <><span><span className="nav-icon" aria-hidden>★</span>Top Rated</span><span className="count">{rated}</span></>, "rated")}
+        {item("practice", <><span><span className="nav-icon" aria-hidden>◆</span>Practice Mode</span></>)}
         <PlaylistNav selected={!home && source === "playlist" ? playlistId : null} mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} onOpen={openPlaylist} onMaships={openMaships} onQueue={openQueue} onArea={(area) => { setHome(area); onNavigateArea?.(area); }} />
         <button className="browser-heading browser-section-link" onClick={() => { setHome("streaming"); onNavigateArea?.("streaming"); }}>STREAMING <span>›</span></button>
-        {item("spotify", <>{dot(streams.spotify)}Spotify</>)}
-        {item("apple-music", <>{dot(streams["apple-music"])}Apple Music</>)}
-        {item("audius", <>{audiusState.connection === "ok" ? "● " : audiusState.connection === "error" ? "▲ " : "○ "}Audius <span className="count">free</span></>)}
+        {item("spotify", <>{label("◉", "Spotify")}{status(streams.spotify)}</>)}
+        {item("spotify-local", <>{label("⇄", "Spotify → Local")}</>)}
+        {item("apple-music", <>{label("♪", "Apple Music")}{status(streams["apple-music"])}</>)}
+        {item("audius", <>{label("◎", "Audius")}<span className={`count nav-status${audiusState.connection === "ok" ? " on" : ""}`} title={audiusState.connection === "error" ? "Can't reach Audius" : "Free streaming"}>{audiusState.connection === "ok" ? "● free" : audiusState.connection === "error" ? "▲ offline" : "○ free"}</span></>)}
       </nav>
       <div className="browser-body">
-        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} />}
+        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}
       </div>
     </div>
   );
@@ -553,7 +565,7 @@ function LoadButtons({ track }: { track: TrackInfo }) {
 
 // ─────────────────────────────── Streaming ───────────────────────────────
 
-function ProviderPane({ id }: { id: StreamingProviderId }) {
+function ProviderPane({ id, onPrepare }: { id: StreamingProviderId; onPrepare: () => void }) {
   const { streaming } = useApp();
   const view = useStreamingState()[id];
   const name = PROVIDER_NAMES[id];
@@ -581,7 +593,7 @@ function ProviderPane({ id }: { id: StreamingProviderId }) {
       ) : !view.status.connected ? (
         <ConnectStep id={id} view={view} />
       ) : (
-        <ConnectedView id={id} view={view} />
+        <ConnectedView id={id} view={view} onPrepare={onPrepare} />
       )}
     </div>
   );
@@ -758,9 +770,15 @@ function ConnectStep({ id, view }: { id: StreamingProviderId; view: ProviderView
   );
 }
 
-function ConnectedView({ id, view }: { id: StreamingProviderId; view: ProviderView }) {
+const LOCKED_HELP =
+  "Spotify only gives this app the tracks of playlists you own or collaborate on. To use one fully, copy its tracks into one of your playlists in Spotify (select all → Add to playlist → New playlist).";
+
+function ConnectedView({ id, view, onPrepare }: { id: StreamingProviderId; view: ProviderView; onPrepare: () => void }) {
   const { streaming } = useApp();
   const [q, setQ] = useState("");
+  // Locked playlists can still be read with an installed spotDL (desktop), slowly the first time.
+  const sl = useSpotifyLocal();
+  const viaSpotdl = id === "spotify" && !!sl.providers.find((p) => p.id === "spotdl")?.state?.available;
   return (
     <div className="connected">
       <div className="toolbar">
@@ -781,23 +799,36 @@ function ConnectedView({ id, view }: { id: StreamingProviderId; view: ProviderVi
       </div>
       <div className="provider-split">
         <ul className="playlists">
-          {view.playlists.map((p) => (
+          {view.playlists.filter((p) => p.readable).map((p) => (
             <li key={p.id}>
-              <button
-                className={view.selected === p.id ? "active" : ""}
-                disabled={!p.readable}
-                title={p.note}
-                onClick={() => void streaming.openPlaylist(id, p.id)}
-              >
+              <button className={view.selected === p.id ? "active" : ""} onClick={() => void streaming.openPlaylist(id, p.id)}>
                 {p.name}
                 {p.trackCount ? <span className="count">{p.trackCount}</span> : null}
-                {!p.readable && " 🔒"}
+              </button>
+            </li>
+          ))}
+          {view.playlists.some((p) => !p.readable) && (
+            <li className="playlists-locked-heading" title={LOCKED_HELP}>
+              🔒 By other people <span className="hint">({view.playlists.filter((p) => !p.readable).length})</span>
+              <div className="hint">{viaSpotdl ? "Spotify doesn't share their tracks with this app. Click one to read it with spotDL (the first read can take several minutes)." : "Spotify doesn't share their tracks with this app."}</div>
+            </li>
+          )}
+          {view.playlists.filter((p) => !p.readable).map((p) => (
+            <li key={p.id}>
+              <button
+                className={`locked ${view.selected === p.id ? "active" : ""}`}
+                disabled={!viaSpotdl}
+                title={`${p.note ?? ""} — ${viaSpotdl ? "read with spotDL (slow the first time, then cached)" : LOCKED_HELP}`}
+                onClick={() => void streaming.openPlaylist(id, p.id)}
+              >
+                <span>🔒 {p.name}</span>
+                {p.trackCount ? <span className="count">{p.trackCount}</span> : null}
               </button>
             </li>
           ))}
           {view.playlists.length === 0 && !view.loading && <li className="hint">No playlists</li>}
         </ul>
-        <StreamingTracks view={view} />
+        <StreamingTracks view={view} onPrepare={id === "spotify" ? onPrepare : undefined} />
       </div>
     </div>
   );
@@ -835,8 +866,53 @@ function MatchBadge({ r }: { r: ResolutionResult | undefined }) {
   }
 }
 
-function StreamingTracks({ view }: { view: ProviderView }) {
-  const { platform, matching } = useApp();
+/** Per-row Spotify → Local download into the "Downloads" playlist, showing that track's live state. */
+function DownloadButton({ track }: { track: StreamingTrack }) {
+  const { spotifyLocal } = useApp();
+  useSpotifyLocal(); // re-render as the entry moves through its states
+  const e = spotifyLocal.downloadEntry(track.id);
+  const go = () => spotifyLocal.downloadTrack(track);
+  if (!e) {
+    return (
+      <button className="tiny sl-dl" onClick={go} title={`Download into the "Downloads" playlist (library → watched folder → download providers). ${PERMISSION_REMINDER}`}>
+        ⇩ Download
+      </button>
+    );
+  }
+  const busy = e.state === "pending" || e.state === "matching" || e.state === "importing" || e.state === "downloading";
+  const label =
+    e.state === "downloading" ? `⇩ ${Math.round((e.progress ?? 0) * 100)}%`
+    : busy ? "⇩ …"
+    : PLAYABLE_STATES.has(e.state) ? "✓ Downloaded"
+    : e.state === "needs-review" ? "? Review"
+    : e.state === "awaiting-file" ? "⏳ Retry"
+    : "✕ Retry";
+  const retry = e.state === "failed" || e.state === "cancelled" || e.state === "awaiting-file";
+  return (
+    <button
+      className={`tiny sl-dl st-${e.state}`}
+      disabled={busy || PLAYABLE_STATES.has(e.state) || e.state === "needs-review"}
+      onClick={retry ? go : undefined}
+      title={`${STATE_LABEL[e.state]}${e.detail ? ` — ${e.detail}` : ""}${e.state === "needs-review" ? " (open Spotify → Local → Downloads to choose)" : ""}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function StreamingTracks({ view, onPrepare }: { view: ProviderView; onPrepare?: () => void }) {
+  const { platform, matching, spotifyLocal } = useApp();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  useEffect(() => setPicked(new Set()), [view.selected]);
+  const prepare = () => {
+    if (!onPrepare) return;
+    if (view.selected === "search") {
+      const chosen: StreamingTrack[] = view.tracks.filter((t) => picked.has(t.id));
+      if (!chosen.length) return;
+      spotifyLocal.previewSelection(chosen, `Spotify picks ${new Date().toLocaleDateString()}`);
+    } else if (view.selected) void spotifyLocal.preview(view.selected === "__liked__" ? { type: "liked", id: "__liked__" } : { type: "playlist", id: view.selected });
+    onPrepare();
+  };
   const engineState = useEngineState();
   useMatchingTick();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -847,7 +923,15 @@ function StreamingTracks({ view }: { view: ProviderView }) {
     if (view.tracks.length) void matching.resolveList(view.tracks);
   }, [view.tracks, matching]);
 
-  if (view.loading) return <div className="provider-msg">Loading…</div>;
+  if (view.loading) {
+    const theirs = view.playlists.find((p) => p.id === view.selected)?.note;
+    return (
+      <div className="provider-msg">
+        Loading…
+        {theirs && <p className="hint">{theirs}: Spotify doesn't share other people's playlists with this app, so the desktop app reads it with your installed spotDL. The first time can take a few minutes for a big playlist; after that it opens instantly.</p>}
+      </div>
+    );
+  }
   if (!view.selected) return <div className="provider-msg">Choose a playlist or search.</div>;
   const results = view.tracks.map((t) => matching.resultFor(t));
   const sum = summarize(results);
@@ -877,10 +961,22 @@ function StreamingTracks({ view }: { view: ProviderView }) {
         >
           {resolving ? "Resolving…" : "⟳ Resolve playlist"}
         </button>
+        {onPrepare && (
+          <button
+            className="primary"
+            disabled={view.selected === "search" && picked.size === 0}
+            title={view.selected === "search" ? "Tick the tracks to prepare as a local playlist" : "Create a local playlist of real files in this playlist's order"}
+            onClick={prepare}
+          >
+            ⇄ Prepare Local Playlist{view.selected === "search" ? ` (${picked.size})` : ""}
+          </button>
+        )}
       </div>
+      {onPrepare && <p className="sl-permission sl-permission-compact">⚖ ⇩ Download saves a track into your “Downloads” playlist. {PERMISSION_REMINDER}</p>}
       <table>
         <thead>
           <tr>
+            {onPrepare && view.selected === "search" && <th />}
             <th />
             <th>Title</th>
             <th>Artist</th>
@@ -904,6 +1000,16 @@ function StreamingTracks({ view }: { view: ProviderView }) {
                 }}
                 onDoubleClick={() => matching.inspect(t)}
               >
+                {onPrepare && view.selected === "search" && (
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${t.title} for a local playlist`}
+                      checked={picked.has(t.id)}
+                      onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(t.id); else n.delete(t.id); return n; })}
+                    />
+                  </td>
+                )}
                 <td>{t.artworkUrl ? <img className="art" src={t.artworkUrl} alt="" loading="lazy" /> : null}</td>
                 <td>{t.title}</td>
                 <td>{t.artist}</td>
@@ -928,6 +1034,7 @@ function StreamingTracks({ view }: { view: ProviderView }) {
                       → {String.fromCharCode(65 + deck)}
                     </button>
                   ))}
+                  {onPrepare && t.provider === "spotify" && <DownloadButton track={t} />}
                   {t.externalUrl && (
                     <button className="tiny" title="Open in the service's own app" onClick={() => platform.openExternal(t.externalUrl!)}>
                       ↗

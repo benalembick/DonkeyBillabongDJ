@@ -11,6 +11,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { registerStreamingIpc } from "./streaming/ipc";
+import { registerAcquireIpc } from "./acquire/ipc";
 import { registerStemIpc } from "./stems/host";
 import { registerLightingIpc } from "./lighting/ipc";
 import { registerUpdater } from "./updater";
@@ -31,6 +32,7 @@ import { runMovementSmoke } from "./movementSmoke";
 import { runDeskLinkSmoke } from "./deskLinkSmoke";
 import { runTransitionSmoke } from "./transitionSmoke";
 import { runTrainingSmoke } from "./trainingSmoke";
+import { dropWatchedFile, runSpotifyLocalSmoke, spotifyLocalFixtures } from "./spotifyLocalSmoke";
 import { runLooksSmoke } from "./looksSmoke";
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".flac", ".ogg", ".opus", ".aif", ".aiff"]);
@@ -248,6 +250,8 @@ function runSmokeTest(win: BrowserWindow): void {
         // plays ~1.5 s through the real output device and reports playhead/levels.
         const track = JSON.stringify(process.env.DBDJ_SMOKE_TRACK ?? "");
         const autoFixtures = process.env.DBDJ_SMOKE_AUTODJ ? await autoDJFixtures() : null;
+        const slFixtures = process.env.DBDJ_SMOKE_SPOTIFY_LOCAL ? await spotifyLocalFixtures() : null;
+        if (slFixtures) void dropWatchedFile(win, slFixtures.watchDir);
         if (process.env.DBDJ_SMOKE_KNOBS) smokeKnobs = await runKnobSmoke(win).catch((e) => ({ error: String(e) }));
         if (process.env.DBDJ_SMOKE_SCRATCH) smokeScratch = await runScratchSmoke(win, process.env.DBDJ_SMOKE_SCRATCH).catch((e) => ({ error: String(e) }));
         if (process.env.DBDJ_SMOKE_KEYLOCK) smokeKeylock = await runKeylockSmoke(win, process.env.DBDJ_SMOKE_KEYLOCK).catch((e) => ({ error: String(e) }));
@@ -686,9 +690,11 @@ function runSmokeTest(win: BrowserWindow): void {
           checks.stillOnAppAfterNavigationAttempt = !!document.querySelector(".topbar");
           const clickSel = ${JSON.stringify(process.env.DBDJ_SMOKE_BROWSER_CLICK ?? "")};
           const autoDJ = ${process.env.DBDJ_SMOKE_AUTODJ ? `await (${runAutoDJSmoke.toString()})(a, ${JSON.stringify(autoFixtures)})` : "null"};
+          const spotifyLocal = ${slFixtures ? `await (${runSpotifyLocalSmoke.toString()})(a, ${JSON.stringify(slFixtures)})` : "null"};
           if (clickSel) { document.querySelector(clickSel)?.click(); await sleep(1500); }
           return {
             autoDJ,
+            spotifyLocal,
             stems,
             demo,
             isolation,
@@ -842,6 +848,7 @@ app.whenReady().then(() => {
   ses.setDevicePermissionHandler((details) => details.deviceType === "serial");
   registerIpc();
   registerStreamingIpc();
+  void registerAcquireIpc();
   registerLightingIpc();
   registerUpdater();
   void registerStemIpc();

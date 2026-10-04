@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { TrackInfo } from "../core/engine/types";
-import { PlaylistStore } from "../library/PlaylistStore";
+import { PlaylistStore, type Playlist } from "../library/PlaylistStore";
 import type { AutoDJSettings } from "../autodj/transition";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 import { ArtTile } from "./ArtTile";
 import { compatibility } from "../analysis/discovery";
 import { useMashipProjects } from "./MashipsPanel";
+import { LinkedPlaylistBanner } from "./SpotifyLocalPanel";
 
 export const TRACK_REFS = "application/x-dbdj-track-refs";
 const PLAYLIST_MOVE = "application/x-dbdj-playlist-move";
@@ -43,26 +44,37 @@ export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQu
   const maships = useMashipProjects();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  // Pinned at the top: Downloads (Spotify → Local per-track downloads) and Mashups (rendered mashups).
+  const downloadsId = app.spotifyLocal.downloadsJob()?.playlistId;
+  const downloads = state.playlists.find((p) => p.id === downloadsId) ?? state.playlists.find((p) => p.name === "Downloads");
+  const mashups = state.playlists.find((p) => p.name === "Mashups");
+  const pinned = new Set([downloads?.id, mashups?.id]);
+  const item = (p: Playlist, icon?: string) => <button data-source="playlist" key={p.id} className={`${selected === p.id ? "active" : ""}${icon ? " pinned-playlist" : ""}`} title="Drop library tracks or local files here" onClick={() => onOpen(p.id)}
+    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+    onDrop={(e) => {
+      e.preventDefault(); e.stopPropagation();
+      const refs = draggedRefs(e.dataTransfer).filter((r) => !!app.library.getByRef(r));
+      app.playlists.addTracks(p.id, refs);
+      const files = [...e.dataTransfer.files];
+      if (files.length) void app.platform.refsFromDrop(files).then(async (rows) => { await app.addFiles(rows); app.playlists.addTracks(p.id, rows.map((r) => r.ref)); }).catch((err) => app.log.warn("library", String(err)));
+    }}><span>{icon && <span className="nav-icon" aria-hidden>{icon}</span>}{p.name}</span><span className="count">{p.refs.length}</span></button>;
   return <>
     <button className="browser-heading browser-section-link" onClick={() => onArea("playlists")}>PLAYLISTS <span>›</span></button>
-    <button disabled={!state.loaded} onClick={() => setCreating(true)}>+ Create New Playlist</button>
+    <button data-source="auto-dj" className="pinned-playlist auto-dj-nav" onClick={onQueue}><span><span className="nav-icon" aria-hidden>↝</span>Auto DJ Queue</span><span className={`auto-status ${auto.status.toLowerCase()}`}>{auto.status}</span></button>
+    {downloads && item(downloads, "⇩")}
+    {mashups && item(mashups, "⚡")}
+    <button className="create-playlist-btn" disabled={!state.loaded} onClick={() => setCreating(true)}><span><span className="nav-icon" aria-hidden>✚</span>Create New Playlist</span></button>
     {creating && <form className="playlist-create" onSubmit={(e) => { e.preventDefault(); const p = app.playlists.create(name); setCreating(false); setName(""); onOpen(p.id); }}>
-      <input autoFocus aria-label="Playlist name" placeholder="Playlist name" value={name} onChange={(e) => setName(e.target.value)} />
-      <button type="submit">Create</button><button type="button" onClick={() => setCreating(false)}>Cancel</button>
+      <input autoFocus aria-label="Playlist name" placeholder="Playlist name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") setCreating(false); }} />
+      <div className="playlist-create-actions">
+        <button type="submit" className="primary">✓ Create</button>
+        <button type="button" className="cancel" onClick={() => { setCreating(false); setName(""); }}>✕ Cancel</button>
+      </div>
     </form>}
-    {state.playlists.map((p) => <button data-source="playlist" key={p.id} className={selected === p.id ? "active" : ""} title="Drop library tracks or local files here" onClick={() => onOpen(p.id)}
-      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
-      onDrop={(e) => {
-        e.preventDefault(); e.stopPropagation();
-        const refs = draggedRefs(e.dataTransfer).filter((r) => !!app.library.getByRef(r));
-        app.playlists.addTracks(p.id, refs);
-        const files = [...e.dataTransfer.files];
-        if (files.length) void app.platform.refsFromDrop(files).then(async (rows) => { await app.addFiles(rows); app.playlists.addTracks(p.id, rows.map((r) => r.ref)); }).catch((err) => app.log.warn("library", String(err)));
-      }}>{p.name}<span className="count">{p.refs.length}</span></button>)}
-    <button data-source="auto-dj" onClick={onQueue}>Auto DJ Queue <span className={`auto-status ${auto.status.toLowerCase()}`}>{auto.status}</span></button>
+    {state.playlists.filter((p) => !pinned.has(p.id)).map((p) => item(p))}
     <button className="browser-heading browser-section-link" onClick={() => onArea("mashups")}>MASHUP PROJECTS <span>›</span></button>
-    <button data-source="auto-mashups" className={mashipsSelected === "auto" ? "active" : ""} onClick={() => onMaships("auto")}>Auto Mashups <span className="count">{maships.recipes.filter((r) => !r.manual).length}</span></button>
-    <button data-source="manual-mashups" className={mashipsSelected === "manual" ? "active" : ""} onClick={() => onMaships("manual")}>Manual Mashups <span className="count">{maships.recipes.filter((r) => !!r.manual).length}</span></button>
+    <button data-source="auto-mashups" className={mashipsSelected === "auto" ? "active" : ""} onClick={() => onMaships("auto")}><span><span className="nav-icon" aria-hidden>⚡</span>Auto Mashups</span><span className="count">{maships.recipes.filter((r) => !r.manual).length}</span></button>
+    <button data-source="manual-mashups" className={mashipsSelected === "manual" ? "active" : ""} onClick={() => onMaships("manual")}><span><span className="nav-icon" aria-hidden>✎</span>Manual Mashups</span><span className="count">{maships.recipes.filter((r) => !!r.manual).length}</span></button>
   </>;
 }
 
@@ -133,7 +145,7 @@ export function TrackDetails({ track, onClose }: { track: TrackInfo; onClose: ()
   return <div className="playlist-track-info"><ArtTile track={track} size={64} /><div><b>{track.title}</b><p>{track.artist} · {track.album}</p><span>{track.genre} · {track.bpm ?? "?"} BPM · {track.key ?? "Unknown key"} · {duration(track.durationMs)}</span>{track.unavailableReason && <p>{track.unavailableReason}</p>}</div><button onClick={onClose}>Close</button></div>;
 }
 
-export function PlaylistView({ id, onOpen, onQueue }: { id: string; onOpen: (id: string) => void; onQueue: () => void }) {
+export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: string; onOpen: (id: string) => void; onQueue: () => void; onOpenSpotifyLocal?: (jobId: string) => void }) {
   const app = useApp();
   const { playlists, library, engine } = app;
   const ps = usePlaylists();
@@ -196,6 +208,7 @@ export function PlaylistView({ id, onOpen, onQueue }: { id: string; onOpen: (id:
       <button className="primary" disabled={!p.refs.length} onClick={() => { void app.autoDJ.start(id); onQueue(); }}>▶ START AUTO DJ</button>
       <button disabled={!selected.length} onClick={() => { void app.autoDJ.start(id, selected[0]); onQueue(); }}>Start from selected</button>
     </div>
+    {onOpenSpotifyLocal && <LinkedPlaylistBanner playlistId={id} onOpen={onOpenSpotifyLocal} />}
     <AutoSettings />
     <AutoDJControls onQueue={onQueue} />
     <div className="toolbar"><button onClick={() => setSelected(p.refs)}>Select all</button><span>{selected.length} selected</span><button disabled={!selected.length} onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); }}>Remove from playlist</button><PlaylistActions refs={selected} /></div>
@@ -203,7 +216,7 @@ export function PlaylistView({ id, onOpen, onQueue }: { id: string; onOpen: (id:
     <div className="table-wrap"><table className="tracks"><thead><tr><th /><th>Title</th><th>Artist</th><th>Album</th><th>Genre</th><th className="num">BPM</th><th>Key</th><th>Camelot</th><th className="num">Energy</th><th className="num">Match</th><th className="num">Time</th><th>Rating</th><th>Source</th><th>Added</th><th>Load</th></tr></thead><tbody>
       {p.refs.map((ref, i) => {
         const track = library.getByRef(ref);
-        return <tr key={ref} className={selected.includes(ref) ? "selected" : ""} draggable onClick={(e) => select(ref, e)}
+        return <tr key={`${i}:${ref}`} className={selected.includes(ref) ? "selected" : ""} draggable onClick={(e) => select(ref, e)}
           onDoubleClick={() => { const deck = decks.findIndex((d) => !d.playing); if (track && deck >= 0) void engine.loadTrack(deck, track); }}
           onDragStart={(e) => { e.dataTransfer.setData(PLAYLIST_MOVE, JSON.stringify({ id, from: i })); e.dataTransfer.setData(TRACK_REFS, JSON.stringify(selected.includes(ref) ? selected : [ref])); if (track) e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(track)); e.dataTransfer.effectAllowed = "copyMove"; }}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, i)}

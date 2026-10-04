@@ -20,6 +20,7 @@ npm install
 | `npm run smoke` | Builds, launches Electron headless-ish, prints a JSON health report (audio, MIDI, errors) and exits. Add `DBDJ_SMOKE_TRACK=/path/file.wav` to also check real playback |
 | `DBDJ_SMOKE_AUDIUS="tech house" npm run smoke` | Live Audius end-to-end: search → controller LOAD A → play, tempo, jog, EQ, filter, crossfader, hot cue, seek via simulated DDJ-SB MIDI (plays audio briefly) |
 | `DBDJ_SMOKE_SPOTIFY_AUDIUS=1 npm run smoke` | Live Smart Match: Spotify-shaped metadata → Audius (positive + a rejected cover case) |
+| `DBDJ_SMOKE_SPOTIFY_LOCAL=1 npm run smoke` | Spotify → Local with generated audio: library reuse, a real watched folder (.part → rename), import + analysis while a deck plays (playhead sampled for stalls), Auto DJ, persistence, job table |
 | `DBDJ_SMOKE_ISOLATION=/path/60s.wav npm run smoke` | Local deck keeps playing while an Audius load fails on the other deck |
 | `npm test` | Unit tests (Vitest): engine logic, mixer and jog maths, mapping runtime, DDJ-SB mapping integrity, Mixxx importer |
 | `MIXXX_MAPPING=/path/Pioneer-DDJ-SB.midi.xml npm test` | Also runs the importer against a real Mixxx mapping |

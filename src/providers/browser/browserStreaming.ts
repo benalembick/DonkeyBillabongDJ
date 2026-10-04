@@ -112,5 +112,6 @@ export function createBrowserStreaming(): StreamingBridge {
     playlists: (id) => clients[id].playlists(),
     playlistTracks: (id, pid) => clients[id].playlistTracks(pid),
     search: (id, q) => clients[id].search(q),
+    spotifySource: (ref) => clients.spotify.resolveSource(ref),
   };
 }

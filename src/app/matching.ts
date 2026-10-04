@@ -112,10 +112,20 @@ export class MatchingService extends Emitter<{ change: void; prompt: MatchPrompt
       lastTracks = s.tracks;
       if (this.reindexTimer) clearTimeout(this.reindexTimer);
       this.reindexTimer = setTimeout(() => {
+        this.reindexTimer = null;
         this.local.reindex(s.tracks);
         this.reresolveCurrent();
       }, 300);
     });
+  }
+
+  /** Apply a pending (debounced) library re-index now — for callers about to match against the library. */
+  flushIndex(): void {
+    if (!this.reindexTimer) return;
+    clearTimeout(this.reindexTimer);
+    this.reindexTimer = null;
+    this.local.reindex(this.library.getState().tracks);
+    this.reresolveCurrent();
   }
 
   // ─────────────── settings ───────────────

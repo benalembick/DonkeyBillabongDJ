@@ -108,7 +108,9 @@ export class StreamingStore extends Emitter<{ change: Record<StreamingProviderId
 
   async loadPlaylists(id: StreamingProviderId): Promise<void> {
     const playlists = await this.run(id, (b) => b.playlists(id));
-    if (playlists) this.patch(id, { playlists });
+    if (!playlists) return;
+    this.patch(id, { playlists });
+    this.log.info("streaming", `${PROVIDER_NAMES[id]}: ${playlists.length} playlists loaded`);
   }
 
   async openPlaylist(id: StreamingProviderId, playlistId: string): Promise<void> {

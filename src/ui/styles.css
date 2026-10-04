@@ -75,8 +75,49 @@ select { padding: 2px 4px; }
 /* Local playlists and the temporary Auto DJ runtime queue. */
 .playlist-view, .auto-queue { min-height: 0; }
 .playlist-toolbar, .playlist-view > .toolbar, .auto-queue > .toolbar { flex-wrap: wrap; flex-shrink: 0; }
-.playlist-create { padding: 4px; }
+.history-tabs { display: inline-flex; gap: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.history-tabs button { border: 0; border-radius: 0; background: transparent; }
+.history-tabs button.active { background: var(--accent); color: #fff; font-weight: 800; }
+.training-history td { vertical-align: top; }
+.training-history-detail td { background: var(--panel-2); }
+.playlist-create { padding: 4px; display: flex; flex-direction: column; gap: 6px; }
 .playlist-create input { width: 100%; min-width: 0; }
+.playlist-create-actions { display: flex; gap: 6px; }
+.playlist-create-actions button { flex: 1; justify-content: center; font-weight: 800; }
+.playlist-create-actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.playlist-create-actions .cancel { background: transparent; border-color: #ff4d4d88; color: var(--danger); }
+/* Playlist sidebar: pinned entries and the create button stand out */
+.nav-icon { display: inline-block; width: 1.4em; text-align: center; margin-right: 4px; font-weight: 900; }
+.browser-sources .pinned-playlist { font-weight: 700; border-left: 3px solid var(--deck-a); }
+.browser-sources .auto-dj-nav { border-left-color: var(--ok); }
+.browser-sources .auto-dj-nav .nav-icon { color: var(--ok); }
+.browser-sources .pinned-playlist[data-source="playlist"] .nav-icon { color: var(--deck-a); }
+/* Collection items: same style as the pinned playlists, each with its own colour */
+.browser-sources [data-source="local-all"], .browser-sources [data-source="local-recent"], .browser-sources [data-source="local-rated"], .browser-sources [data-source="practice"] { font-weight: 700; border-left: 3px solid var(--c); }
+.browser-sources [data-source="local-all"] { --c: var(--deck-a); }
+.browser-sources [data-source="local-recent"] { --c: var(--hotcue); }
+.browser-sources [data-source="local-rated"] { --c: var(--cue); }
+.browser-sources [data-source="practice"] { --c: #ff5fa2; }
+.browser-sources [data-source^="local-"] .nav-icon, .browser-sources [data-source="practice"] .nav-icon { color: var(--c); }
+/* Mashup projects and streaming items, same style */
+.browser-sources :is([data-source="auto-mashups"], [data-source="manual-mashups"], [data-source="spotify"], [data-source="spotify-local"], [data-source="apple-music"], [data-source="audius"]) { font-weight: 700; border-left: 3px solid var(--c); }
+.browser-sources :is([data-source="auto-mashups"], [data-source="manual-mashups"], [data-source="spotify"], [data-source="spotify-local"], [data-source="apple-music"], [data-source="audius"]) .nav-icon { color: var(--c); }
+.browser-sources [data-source="auto-mashups"] { --c: var(--deck-b); }
+.browser-sources [data-source="manual-mashups"] { --c: #2dd4bf; }
+.browser-sources [data-source="spotify"] { --c: #1ed760; }
+.browser-sources [data-source="spotify-local"] { --c: #7dd3fc; }
+.browser-sources [data-source="apple-music"] { --c: #fa586a; }
+.browser-sources [data-source="audius"] { --c: #a78bfa; }
+.nav-status { font-weight: 600; white-space: nowrap; }
+/* Spotify playlists Spotify won't share with the app */
+.playlists-locked-heading { margin: 10px 0 2px; padding: 6px 8px 2px; border-top: 1px solid var(--line); font-weight: 800; color: var(--muted); list-style: none; }
+.playlists-locked-heading .hint { font-weight: 400; }
+.playlists button.locked, .sl-picks button.locked { color: var(--muted); }
+.playlists button.locked:disabled, .sl-picks button.locked:disabled { opacity: 0.55; cursor: not-allowed; }
+.nav-status.on { color: var(--ok); }
+.browser-sources .create-playlist-btn { background: #2d8cff1f; border: 1px dashed var(--accent); color: var(--deck-a-strong); font-weight: 800; margin: 4px 0; }
+.browser-sources .create-playlist-btn:hover:not(:disabled) { background: #2d8cff38; }
+.browser-sources .create-playlist-btn .nav-icon { color: var(--accent); }
 .auto-settings { padding: 6px 10px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .auto-settings summary { cursor: pointer; color: var(--muted); }
 .auto-settings .toolbar { flex-wrap: wrap; padding-left: 0; }
@@ -938,3 +979,55 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .about-train h3 { margin: 0 0 4px; color: #ffe2a0; font-size: 13px; }
 .about-train span { color: #c4d0de; font-size: 12px; }
 @media (max-width: 1100px) { .tr-cols { grid-template-columns: 1fr; } }
+
+/* ── Spotify → Local ── */
+.sl { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding: 4px 2px; }
+.sl-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sl-head h3 { margin: 0; }
+.sl-head > button { margin-left: auto; }
+.sl-note { background: #2d8cff14; border: 1px solid #2d8cff55; border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+.sl-split { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 10px; flex: 1; min-height: 0; }
+.sl-jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; overflow: auto; }
+.sl-jobs button { width: 100%; text-align: left; background: transparent; border-color: transparent; padding: 4px 8px; }
+.sl-jobs button.active { background: var(--panel-2); border-color: var(--line); }
+.sl-body { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.sl-new .row, .sl-review .row, .sl-draft .row, .sl-settings .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.sl-new input.wide, .sl-review input.wide { flex: 1; min-width: 240px; padding: 5px 8px; }
+.sl-picks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px; }
+.sl-picks button { width: 100%; text-align: left; }
+.sl-form { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.sl-form input:not([type]) { min-width: 260px; padding: 4px 8px; margin-left: 6px; }
+.sl-preview { max-height: 40vh; }
+.sl-job-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sl-job-head h4 { margin: 0; }
+.sl-progress { height: 6px; background: var(--panel-3); border-radius: 3px; overflow: hidden; }
+.sl-progress > div { height: 100%; background: var(--ok); transition: width 0.3s; }
+.sl-counts { margin: 2px 0; font-size: 12px; }
+.sl-actions { flex-wrap: wrap; gap: 6px; }
+.sl-table td { vertical-align: top; }
+.sl-badge { display: inline-block; white-space: nowrap; font-weight: 800; font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); }
+.st-ready .sl-badge, .st-analysing .sl-badge { color: var(--ok); border-color: #3ddc9766; }
+.st-needs-review .sl-badge, .st-awaiting-file .sl-badge { color: var(--warn); border-color: #ffb02066; }
+.st-failed .sl-badge { color: var(--danger); border-color: #ff4d4d66; }
+.st-cancelled .sl-badge { color: var(--muted); }
+.st-matching .sl-badge, .st-downloading .sl-badge, .st-importing .sl-badge { color: var(--accent); border-color: #2d8cff66; }
+.sl-state { min-width: 170px; max-width: 360px; }
+.sl-state .hint { white-space: normal; overflow-wrap: anywhere; }
+.sl-review { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.sl-review ul { margin: 4px 0; padding-left: 18px; }
+.sl-review details { display: inline-block; margin-left: 8px; }
+.sl-lib-results { list-style: none; padding: 0; }
+.sl-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.sl-settings h4 { margin: 4px 0; }
+.sl-settings code { background: var(--panel-3); padding: 2px 6px; border-radius: 4px; font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sl-providers { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.sl-thresholds input { width: 56px; }
+.sl-linked { background: #1ed76010; border: 1px solid #1ed76044; border-radius: 6px; padding: 6px 10px; font-size: 12px; margin: 4px 0; }
+.sl-refresh { width: min(720px, calc(100vw - 32px)); }
+.sl-refresh ul { max-height: 30vh; overflow: auto; }
+.sl-permission-compact { font-size: 11px; padding: 3px 8px; }
+.sl-dl { white-space: nowrap; min-width: 86px; }
+.sl-dl.st-ready, .sl-dl.st-analysing { color: var(--ok); }
+.sl-dl.st-failed { color: var(--danger); }
+.sl-dl.st-needs-review, .sl-dl.st-awaiting-file { color: var(--warn); }
+.sl-permission { margin: 4px 0; padding: 6px 10px; border: 1px solid #ffb02066; border-left: 3px solid var(--warn); border-radius: 6px; background: #ffb0200d; font-size: 12px; }

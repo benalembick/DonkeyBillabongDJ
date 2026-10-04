@@ -181,6 +181,11 @@ export class SmartTrackResolver extends Emitter<{ resolved: ResolutionResult; ma
     return this.record({ ...this.finish(req, [scored], []), status: "resolved", playable: true, method: "manual", userConfirmed: true });
   }
 
+  /** Record an automatic (not user-confirmed) match made outside resolve(), e.g. a watched-folder file. */
+  async recordMatch(req: TrackIdentity, candidate: SourceCandidate, method: "isrc" | "metadata"): Promise<void> {
+    await this.remember(req, this.score(req, candidate), method, false);
+  }
+
   async clearMapping(req: TrackIdentity): Promise<void> {
     const key = identityKey(req);
     this.mappings.delete(key);

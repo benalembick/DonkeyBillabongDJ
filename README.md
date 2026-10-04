@@ -22,7 +22,7 @@ Loading music:
 - Library → **+ Add files… / + Add folder…**, then double-click a row, drag it onto a deck, or use the **→ A / → B** buttons.
 - DDJ-SB: turn the browse encoder, then press **LOAD A/B**.
 
-Streaming: Library → MUSIC → **Spotify** or **Apple Music** walks you through connecting your account. **Smart Match** then finds each Spotify/Apple track in your own library (by ISRC, then title, artist, version and length) and loads *your file*, or the same recording from **Audius** (free, playable in the decks) (see [docs/STREAMING-INTEGRATIONS.md](docs/STREAMING-INTEGRATIONS.md)).
+Streaming: Library → MUSIC → **Spotify** or **Apple Music** walks you through connecting your account. **Smart Match** then finds each Spotify/Apple track in your own library (by ISRC, then title, artist, version and length) and loads *your file*, or the same recording from **Audius** (free, playable in the decks) (see [docs/STREAMING-INTEGRATIONS.md](docs/STREAMING-INTEGRATIONS.md)). **Spotify → Local** turns a Spotify playlist, track or search selection into a local playlist of real files in the same order: it reuses your library, picks up files your converter saves into a watched folder, and can download missing tracks through Audius or your installed spotDL (only download tracks you have permission to), while ready tracks are already playable and queueable in Auto DJ (see [docs/SPOTIFY-LOCAL.md](docs/SPOTIFY-LOCAL.md)).
 
 ## What works now (Phase 1)
 
@@ -78,6 +78,7 @@ Choose a layout in the top bar. Your choice, the library height and the waveform
 - [Audius integration](docs/AUDIUS-INTEGRATION.md): free streaming source that plays in the decks, with a tested DJ capability matrix
 - [Streaming providers](docs/STREAMING-PROVIDERS.md): which service does what (metadata vs playable audio)
 - [Smart Metadata Matching](docs/SMART-METADATA-MATCHING.md): Spotify/Apple Music playlists resolved to your own files (ISRC + metadata scoring)
+- [Spotify → Local](docs/SPOTIFY-LOCAL.md): Spotify playlists prepared as local playlists (library reuse, watched download folder, authorised providers, Auto DJ)
 - [STEMS](docs/STEMS.md): stem separation architecture, model, acceleration, measured speed, cache, controls
 - [Development](docs/DEVELOPMENT.md): running, building macOS / Windows, layout, conventions
 - [Hardware test plan](docs/HARDWARE-TEST-PLAN.md) and the generated [DDJ-SB test matrix](docs/DDJ-SB-TEST-MATRIX.md)

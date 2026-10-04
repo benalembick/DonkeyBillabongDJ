@@ -159,7 +159,7 @@ No provider functionality is faked. Unavailable adapters return no candidates, a
 
 ## 9. API and authentication requirements
 
-- **Spotify:** your own app in the Developer Dashboard (Client ID, PKCE, redirect `http://127.0.0.1:43821/callback` on desktop and `http://127.0.0.1:5173/` for the web version). Scopes: `user-read-private playlist-read-private playlist-read-collaborative user-library-read`. Playlist items are only returned for playlists you own or collaborate on.
+- **Spotify:** your own app in the Developer Dashboard (Client ID, PKCE, redirect `http://127.0.0.1:43821/callback` on desktop and `http://127.0.0.1:5173/` for the web version). Scopes: `user-read-private playlist-read-private playlist-read-collaborative user-library-read`. All playlists are listed; for apps created under Spotify's 2026 rules, items are only returned for playlists you own or collaborate on (older apps get them all).
 - **Apple Music:** Apple Developer Program membership, a MusicKit key (.p8), and Team ID + Key ID, which the app uses to sign an ES256 developer token. The user token comes from MusicKit JS sign-in.
 - **Beatport / Beatsource / SoundCloud:** a partner agreement would be required for DJ playback. For SoundCloud metadata only, an approved API application.
 

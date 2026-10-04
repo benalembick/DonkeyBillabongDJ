@@ -64,6 +64,16 @@ export class PlaylistStore extends Emitter<{ change: PlaylistState }> {
     this.update(id, (p) => ({ ...p, refs: dedupe(refs) }));
   }
 
+  /**
+   * Replace the list keeping intentional repeats (Spotify-linked playlists mirror the source
+   * order, where a track may appear twice). No-op when nothing changed.
+   */
+  setOrderedRefs(id: string, refs: string[]): void {
+    const p = this.get(id);
+    if (!p || (p.refs.length === refs.length && p.refs.every((r, i) => r === refs[i]))) return;
+    this.update(id, (x) => ({ ...x, refs: [...refs] }));
+  }
+
   create(name: string, refs: string[] = []): Playlist {
     const now = Date.now();
     const p: Playlist = { id: newId(), name: uniqueName(name.trim() || "New Playlist", this.state.playlists), refs: dedupe(refs), createdAt: now, updatedAt: now };

@@ -82,6 +82,35 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
       return () => ipcRenderer.removeListener("dbdj:dmx:input", h);
     },
   },
+  acquire: {
+    config: () => ipcRenderer.invoke("dbdj:acquire:config"),
+    pickDestination: () => ipcRenderer.invoke("dbdj:acquire:pickDestination"),
+    pickWatchFolder: () => ipcRenderer.invoke("dbdj:acquire:pickWatchFolder"),
+    setWatching: (on: boolean) => ipcRenderer.invoke("dbdj:acquire:setWatching", on),
+    rescan: () => ipcRenderer.invoke("dbdj:acquire:rescan"),
+    download: (req: unknown) => ipcRenderer.invoke("dbdj:acquire:download", req),
+    toolStatus: (id: string, force?: boolean) => ipcRenderer.invoke("dbdj:acquire:toolStatus", id, force),
+    cancelDownload: (id: string) => ipcRenderer.invoke("dbdj:acquire:cancelDownload", id),
+    probe: (p: string) => ipcRenderer.invoke("dbdj:acquire:probe", p),
+    loadJobs: () => ipcRenderer.invoke("dbdj:acquire:jobs:load"),
+    saveJob: (job: unknown) => ipcRenderer.invoke("dbdj:acquire:jobs:save", job),
+    removeJob: (id: string) => ipcRenderer.invoke("dbdj:acquire:jobs:remove", id),
+    onFile: (cb: (f: unknown) => void) => {
+      const h = (_e: unknown, f: unknown) => cb(f);
+      ipcRenderer.on("dbdj:acquire:file", h);
+      return () => ipcRenderer.removeListener("dbdj:acquire:file", h);
+    },
+    onWatchStatus: (cb: (s: unknown) => void) => {
+      const h = (_e: unknown, s: unknown) => cb(s);
+      ipcRenderer.on("dbdj:acquire:watchStatus", h);
+      return () => ipcRenderer.removeListener("dbdj:acquire:watchStatus", h);
+    },
+    onProgress: (cb: (id: string, p: number) => void) => {
+      const h = (_e: unknown, id: string, p: number) => cb(id, p);
+      ipcRenderer.on("dbdj:acquire:progress", h);
+      return () => ipcRenderer.removeListener("dbdj:acquire:progress", h);
+    },
+  },
   updates: {
     status: () => ipcRenderer.invoke("dbdj:update:status"),
     check: () => ipcRenderer.invoke("dbdj:update:check"),
@@ -102,6 +131,7 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
     playlists: (id: string) => ipcRenderer.invoke("dbdj:stream:playlists", id),
     playlistTracks: (id: string, playlistId: string) => ipcRenderer.invoke("dbdj:stream:playlistTracks", id, playlistId),
     search: (id: string, q: string) => ipcRenderer.invoke("dbdj:stream:search", id, q),
+    spotifySource: (ref: unknown) => ipcRenderer.invoke("dbdj:stream:spotifySource", ref),
   },
 });
 

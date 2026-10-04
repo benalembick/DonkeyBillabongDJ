@@ -93,7 +93,8 @@ function open(): DatabaseSync {
 function migrate(d: DatabaseSync): void {
   d.exec(`CREATE TABLE IF NOT EXISTS track_preparation (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS track_waveforms (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS mashup_recipes (id TEXT PRIMARY KEY, data TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS mashup_recipes (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS import_jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);`);
   const cols = (d.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("rating")) d.exec("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("artwork_read")) d.exec("ALTER TABLE tracks ADD COLUMN artwork_read INTEGER NOT NULL DEFAULT 0");
@@ -216,4 +217,16 @@ export function putMapping(m: MappingRow): void {
 
 export function removeMapping(key: string): void {
   open().prepare("DELETE FROM track_resolutions WHERE key = ?").run(key);
+}
+
+/** Spotify → Local jobs (one row per linked playlist; entries and provenance as JSON). */
+export function loadImportJobs(): unknown[] {
+  return (open().prepare("SELECT data FROM import_jobs ORDER BY updated_at").all() as { data: string }[]).map((r) => JSON.parse(r.data));
+}
+export function saveImportJob(job: { id?: unknown; entries?: unknown; updatedAt?: unknown }): void {
+  if (!job || typeof job.id !== "string" || !/^job_[a-z0-9_]+$/i.test(job.id) || !Array.isArray(job.entries)) throw new Error("Invalid import job");
+  open().prepare("INSERT INTO import_jobs(id,data,updated_at) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").run(job.id, JSON.stringify(job), Number(job.updatedAt) || Date.now());
+}
+export function removeImportJob(id: string): void {
+  open().prepare("DELETE FROM import_jobs WHERE id=?").run(id);
 }

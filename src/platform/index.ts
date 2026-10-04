@@ -11,6 +11,8 @@ import type { TagResult } from "../library/tags";
 import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackResolver";
 import type { SourceId } from "../matching/sources";
 import type { UpdateStatus } from "./updates";
+import type { SpotifyRef } from "../acquire/spotifyRef";
+import type { AcquireConfig, AudioQuality, DownloadResult, ImportJob, SpotifySourceResult, WatchedFile, WatchStatus } from "../acquire/types";
 import { LocalStorageStore } from "../providers/web";
 import type { StemBridge } from "../stems/StemService";
 import type { LightingBridge } from "../lighting/LightingService";
@@ -39,6 +41,8 @@ export interface StreamingBridge {
   playlists(id: StreamingProviderId): Promise<StreamingPlaylist[]>;
   playlistTracks(id: StreamingProviderId, playlistId: string): Promise<StreamingTrack[]>;
   search(id: StreamingProviderId, q: string): Promise<StreamingTrack[]>;
+  /** Spotify → Local: a playlist / liked songs / track as ordered entries. */
+  spotifySource?(ref: SpotifyRef): Promise<SpotifySourceResult>;
 }
 
 /** Shape exposed by electron/preload.ts as window.dbdjDesktop. */
@@ -81,6 +85,27 @@ export interface DesktopBridge {
   stems: StemBridge;
   lighting?: LightingBridge;
   updates?: UpdateBridge;
+  acquire?: AcquireBridge;
+}
+
+/** Spotify → Local desktop services (electron/acquire). */
+export interface AcquireBridge {
+  config(): Promise<{ config: AcquireConfig; watch: WatchStatus; platform?: string }>;
+  pickDestination(): Promise<{ config: AcquireConfig; watch: WatchStatus }>;
+  pickWatchFolder(): Promise<{ config: AcquireConfig; watch: WatchStatus }>;
+  setWatching(on: boolean): Promise<{ config: AcquireConfig; watch: WatchStatus }>;
+  rescan(): Promise<WatchStatus>;
+  download(req: { id: string; provider: string; candidateId: string; url: string; name: string; expectedDurationMs: number | null; toleranceS: number }): Promise<DownloadResult>;
+  cancelDownload(id: string): Promise<void>;
+  /** External download tool installed on this computer (e.g. spotDL). */
+  toolStatus?(id: string, force?: boolean): Promise<{ available: boolean; version?: string; reason?: string; setup?: string }>;
+  probe(path: string): Promise<{ ok: boolean; quality?: AudioQuality; error?: string }>;
+  loadJobs(): Promise<ImportJob[]>;
+  saveJob(job: ImportJob): Promise<void>;
+  removeJob(id: string): Promise<void>;
+  onFile(cb: (f: WatchedFile) => void): () => void;
+  onWatchStatus(cb: (s: WatchStatus) => void): () => void;
+  onProgress(cb: (id: string, p: number) => void): () => void;
 }
 
 /** App updates (electron/updater.ts). */
@@ -205,6 +230,25 @@ export interface Platform {
   /** Playlists: SQLite on desktop, localStorage in the browser. */
   playlists: PlaylistPersistence;
   mappingStorage: MappingStorage;
+  /** Spotify → Local jobs: SQLite on desktop, localStorage in the browser. */
+  importJobs: ImportJobPersistence;
+}
+
+export interface ImportJobPersistence {
+  load(): Promise<ImportJob[]>;
+  save(job: ImportJob): Promise<void>;
+  remove(id: string): Promise<void>;
+}
+
+/** Browser: jobs in localStorage (file references don't survive a reload; links and matches do). */
+class LocalStorageImportJobs implements ImportJobPersistence {
+  private key = "dbdj.spotifyLocal.jobs.v1";
+  private read(): Record<string, ImportJob> {
+    try { return JSON.parse(localStorage.getItem(this.key) ?? "{}"); } catch { return {}; }
+  }
+  async load(): Promise<ImportJob[]> { return Object.values(this.read()).sort((a, b) => a.createdAt - b.createdAt); }
+  async save(job: ImportJob): Promise<void> { const all = this.read(); all[job.id] = job; localStorage.setItem(this.key, JSON.stringify(all)); }
+  async remove(id: string): Promise<void> { const all = this.read(); delete all[id]; localStorage.setItem(this.key, JSON.stringify(all)); }
 }
 
 function rowToTrack(r: TrackRow): TrackInfo {
@@ -358,6 +402,11 @@ class DesktopPlatform implements Platform {
     const db = this.bridge.db, fallback = new LocalStorageMashups();
     return { list: () => typeof db.loadMashupRecipes === "function" ? db.loadMashupRecipes() : fallback.list(), save: (r) => typeof db.saveMashupRecipe === "function" ? db.saveMashupRecipe(r) : fallback.save(r), remove: (id) => typeof db.removeMashupRecipe === "function" ? db.removeMashupRecipe(id) : fallback.remove(id) };
   }
+  get importJobs(): ImportJobPersistence {
+    const a = this.bridge.acquire;
+    if (!a) return new LocalStorageImportJobs();
+    return { load: () => a.loadJobs(), save: (j) => a.saveJob(j), remove: (id) => a.removeJob(id) };
+  }
   get mappingStorage(): MappingStorage {
     const db = this.bridge.db;
     return {
@@ -399,6 +448,7 @@ class BrowserPlatform implements Platform {
   readonly mashups: MashupPersistence = new LocalStorageMashups();
   readonly mappingStorage: MappingStorage = new LocalStorageMappings();
   readonly playlists: PlaylistPersistence = new LocalStoragePlaylists();
+  readonly importJobs: ImportJobPersistence = new LocalStorageImportJobs();
 
   async readTags(refs: string[]): Promise<TagResult[]> {
     const { parseBlob, selectCover } = await import("music-metadata");

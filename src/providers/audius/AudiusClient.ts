@@ -38,6 +38,8 @@ export interface AudiusTrack {
   remixOf: boolean;
   /** Stream is open to API apps (not gated / premium / opted out). */
   streamable: boolean;
+  /** The artist enabled downloads and they are not gated (follow / purchase / NFT). */
+  downloadable: boolean;
   unavailableReason?: string;
 }
 
@@ -246,6 +248,11 @@ export class AudiusClient extends Emitter<{ stats: AudiusStats }> {
     return (r.data ?? []).map(mapTrack);
   }
 
+  /** Artist-enabled download of the original upload (only valid when the track is `downloadable`). */
+  downloadUrl(trackId: string): string {
+    return this.url(`/v1/tracks/${encodeURIComponent(trackId)}/download`, { original: "true" });
+  }
+
   streamUrl(trackId: string): string {
     return this.url(`/v1/tracks/${encodeURIComponent(trackId)}/stream`);
   }
@@ -335,6 +342,8 @@ function sleep(ms: number): Promise<void> {
 export function mapTrack(t: Json): AudiusTrack {
   const gated = !!t.is_stream_gated || (t.stream_conditions != null && Object.keys(t.stream_conditions).length > 0);
   const streamable = t.is_streamable !== false && t.access?.stream !== false && !gated && t.is_available !== false && !t.is_delete;
+  const downloadGated = !!t.is_download_gated || (t.download_conditions != null && Object.keys(t.download_conditions).length > 0);
+  const downloadable = (t.is_downloadable === true || t.downloadable === true) && t.access?.download !== false && !downloadGated && t.is_available !== false && !t.is_delete;
   return {
     id: String(t.id),
     title: String(t.title ?? ""),
@@ -356,6 +365,7 @@ export function mapTrack(t: Json): AudiusTrack {
     coverOf: t.cover_original_song_title ? { title: String(t.cover_original_song_title), artist: String(t.cover_original_artist ?? "") } : undefined,
     remixOf: !!t.remix_of?.tracks?.length,
     streamable,
+    downloadable,
     unavailableReason: streamable ? undefined : gated ? "Gated (premium / follow / purchase) — not streamable via the API" : "Not available for API streaming",
   };
 }

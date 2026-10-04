@@ -47,7 +47,7 @@ Open **Library → MUSIC → Spotify / Apple Music**. Both need the desktop app.
    - the app owner needs Premium;
    - at most 5 users, each added under *User Management*;
    - search returns at most 10 results per page (we fetch 3 pages);
-   - playlist tracks are only returned for playlists you own or collaborate on, so other playlists show 🔒.
+   - playlist tracks are only returned for playlists you own or collaborate on (Spotify answers 403 otherwise). The app lists viewable playlists first and other people's below them with 🔒; with spotDL installed, a locked one can still be read through spotDL (slow the first time, then cached), see [SPOTIFY-LOCAL.md](SPOTIFY-LOCAL.md#spotify-access-limits).
 
 ### Apple Music
 
@@ -76,7 +76,7 @@ The same Spotify and Apple Music clients (`src/providers/spotify`, `src/provider
 - Spotify and Apple Music appear under **MUSIC** in the browser, with a source badge (SPOTIFY or APPLE MUSIC) on every row.
 - Rows that are not loadable show a lock icon. Dragging one onto a deck shows the provider's `restriction` text instead of loading.
 - Provider network errors are shown in the provider pane only. They never block local decks, since provider calls are async and isolated.
-- Useful legitimate features: import a Spotify or Apple Music playlist as a **"find locally" playlist** that matches tracks in the local library by artist and title (ISRC where available).
+- Useful legitimate features: import a Spotify or Apple Music playlist as a **"find locally" playlist** that matches tracks in the local library by artist and title (ISRC where available). Implemented for Spotify as **Spotify → Local**: see [SPOTIFY-LOCAL.md](SPOTIFY-LOCAL.md).
 
 ## Adding a provider
 

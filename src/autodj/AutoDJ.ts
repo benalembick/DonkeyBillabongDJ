@@ -81,7 +81,9 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   }
   dispose() { this.stop(); this.unsub.forEach((f) => f()); }
   private arrange(refs: string[], first?: string): string[] {
-    let rest = refs.filter((r) => r !== first);
+    // Only the starting entry is pinned; intentional repeats of that track stay in the list.
+    const at = first === undefined ? -1 : refs.indexOf(first);
+    let rest = at < 0 ? refs.slice() : [...refs.slice(0, at), ...refs.slice(at + 1)];
     if (this.state.settings.shuffle) for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
     if (this.state.settings.keyAware) {
       const ordered: string[] = first ? [first] : rest.splice(0, 1);

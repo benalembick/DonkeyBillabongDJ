@@ -9,11 +9,15 @@
  * Endpoints follow the February 2026 Development Mode changes.
  */
 import type { ProviderStatus, SpotifyConfig, StreamingPlaylist, StreamingTrack } from "../streamingTypes";
+import type { JobSource, SourceTrack, SpotifySourceResult } from "../../acquire/types";
 import { b64url, fetchJson, randomToken, sha256, type KeyValueStore } from "../web";
 
 const SCOPES = ["user-read-private", "playlist-read-private", "playlist-read-collaborative", "user-library-read"];
 const API = "https://api.spotify.com/v1";
 const STORE_KEY = "spotify";
+/** Shown only when Spotify actually refuses a playlist's tracks (it depends on the app's access level). */
+const RESTRICTED =
+  "Spotify didn't return this playlist's tracks to this app. Newer Spotify developer apps can only read playlists the account owns or collaborates on — copy its tracks into one of your playlists in Spotify (select all → Add to playlist → New playlist) and open that copy.";
 
 interface Tokens {
   access: string;
@@ -141,56 +145,179 @@ export class SpotifyClient {
     await this.persist();
   }
 
-  private async api(pathOrUrl: string, retried = false): Promise<Json> {
+  private async api(pathOrUrl: string, retried = false, rateLimited = 0): Promise<Json> {
     await this.load();
     if (!this.state.tokens) throw new Error("Spotify is not connected.");
     if (Date.now() > this.state.tokens.expiresAt - 60_000) await this.refresh();
     const url = pathOrUrl.startsWith("http") ? pathOrUrl : API + pathOrUrl;
+    if (!url.startsWith(API + "/")) throw new Error("Unexpected Spotify API URL.");
     const r = await fetchJson<Json>(url, { headers: { Authorization: `Bearer ${this.state.tokens!.access}` } });
     if (r.status === 401 && !retried) {
       await this.refresh();
-      return this.api(pathOrUrl, true);
+      return this.api(pathOrUrl, true, rateLimited);
     }
-    if (r.status === 429) throw new Error(`Spotify rate limit — retry in ${r.headers.get("retry-after") ?? "a few"} s.`);
+    if (r.status === 429) {
+      // Honour Retry-After a couple of times (capped), then give up with the wait time.
+      const wait = Number(r.headers.get("retry-after")) || 2;
+      if (rateLimited < 2 && wait <= 30) {
+        await new Promise((res) => setTimeout(res, wait * 1000));
+        return this.api(pathOrUrl, retried, rateLimited + 1);
+      }
+      throw new Error(`Spotify rate limit — retry in ${wait} s.`);
+    }
     if (r.status === 403) throw new Error(r.body?.error?.message ?? "Spotify refused this request (403). Development-mode apps can only use a limited set of endpoints.");
     if (r.status >= 400) throw new Error(r.body?.error?.message ?? `Spotify error ${r.status}`);
     return r.body;
   }
 
+  /** Every playlist in the user's library (owned, followed and shared), all pages. */
   async playlists(): Promise<StreamingPlaylist[]> {
     const out: StreamingPlaylist[] = [{ id: "__liked__", name: "Liked Songs", trackCount: 0, readable: true }];
     let next: string | null = "/me/playlists?limit=50";
-    while (next && out.length < 300) {
+    let reported = 0;
+    while (next && out.length < 5000) {
       const page: Json = await this.api(next);
+      if (typeof page?.total === "number") reported = page.total;
       for (const p of page.items ?? []) {
-        if (!p) continue;
+        if (!p?.id) continue;
         const own = p.owner?.id === this.state.user?.id || p.collaborative;
         out.push({
           id: p.id,
           name: p.name,
           trackCount: p.items?.total ?? p.tracks?.total ?? 0,
           artworkUrl: p.images?.[p.images.length - 1]?.url ?? p.images?.[0]?.url,
+          // Spotify (2026 rules, verified: 403) only returns tracks of playlists you own or collaborate on.
           readable: !!own,
-          note: own ? undefined : "Spotify only returns tracks of playlists you own or collaborate on.",
+          note: own ? undefined : `By ${p.owner?.display_name ?? p.owner?.id ?? "someone else"}`,
         });
       }
       next = page.next;
     }
-    return out;
+    // Never silently show "Liked Songs" only when Spotify said there are playlists.
+    if (reported > 0 && out.length === 1) throw new Error(`Spotify reported ${reported} playlists but none could be read — press ↻ to try again.`);
+    // Viewable playlists first (Spotify's order kept within each group).
+    return [...out.filter((p) => p.readable), ...out.filter((p) => !p.readable)];
+  }
+
+  private playlistFallback: ((playlistId: string) => Promise<SourceTrack[]>) | null = null;
+
+  /**
+   * Desktop: when Spotify won't return a playlist's tracks to this app (playlists by other
+   * people, for apps under the 2026 rules), read them another way (spotDL's own Spotify access).
+   */
+  setPlaylistFallback(fn: ((playlistId: string) => Promise<SourceTrack[]>) | null): void {
+    this.playlistFallback = fn;
+  }
+
+  /** Items via Spotify, or via the fallback when Spotify refuses this playlist. */
+  private async itemsOrFallback(id: string, query: string): Promise<{ items: Json[] } | { tracks: SourceTrack[] }> {
+    try {
+      return { items: await this.playlistItems(id, query) };
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== RESTRICTED || !this.playlistFallback) throw e;
+      try {
+        return { tracks: await this.playlistFallback(id) };
+      } catch (f) {
+        throw new Error(`${RESTRICTED} Reading it with spotDL also failed: ${f instanceof Error ? f.message : String(f)}`);
+      }
+    }
   }
 
   async playlistTracks(id: string): Promise<StreamingTrack[]> {
-    const out: StreamingTrack[] = [];
-    let next: string | null = id === "__liked__" ? "/me/tracks?limit=50" : `/playlists/${encodeURIComponent(id)}/items?limit=50`;
-    while (next && out.length < 1000) {
-      const page: Json = await this.api(next);
-      for (const entry of page.items ?? []) {
-        const t = mapSpotifyTrack(entry?.item ?? entry?.track);
-        if (t) out.push(t);
+    if (id === "__liked__") {
+      const out: StreamingTrack[] = [];
+      let next: string | null = "/me/tracks?limit=50";
+      while (next && out.length < 10_000) {
+        const page: Json = await this.api(next);
+        for (const entry of page.items ?? []) {
+          const t = mapSpotifyTrack(entry?.track ?? entry?.item);
+          if (t) out.push(t);
+        }
+        next = page.next;
       }
-      next = page.next;
+      return out;
     }
-    return out;
+    const got = await this.itemsOrFallback(id, "limit=50");
+    if ("tracks" in got) return got.tracks.filter((t) => t.id).map(sourceToStreaming);
+    return got.items.map((entry) => mapSpotifyTrack(entry?.item ?? entry?.track)).filter((t): t is StreamingTrack => !!t);
+  }
+
+  /**
+   * All raw items of a playlist, every page. Uses /items (2026) and falls back to /tracks for
+   * apps that don't have the new endpoint. Throws an explanation only when Spotify actually
+   * refuses or returns the playlist without its track list.
+   */
+  private async playlistItems(id: string, query: string): Promise<Json[]> {
+    const base = `/playlists/${encodeURIComponent(id)}`;
+    const items: Json[] = [];
+    let next: string | null = `${base}/items?${query}`;
+    let fellBack = false;
+    while (next && items.length < 10_000) {
+      let page: Json;
+      try {
+        page = await this.api(next);
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        if (!fellBack && items.length === 0 && /404|not found|invalid|unknown/i.test(m)) {
+          fellBack = true;
+          next = `${base}/tracks?${query}`;
+          continue;
+        }
+        if (/403|refused|forbidden/i.test(m)) throw new Error(RESTRICTED);
+        throw e;
+      }
+      if (!Array.isArray(page?.items)) throw new Error(RESTRICTED);
+      items.push(...page.items);
+      next = page.next ?? null;
+    }
+    return items;
+  }
+
+  /**
+   * Spotify → Local: a playlist, Liked Songs or one track as ordered entries, keeping
+   * repeats, removed tracks, podcast episodes and Spotify "local file" entries in place.
+   * Development Mode only returns playlist items for playlists the user owns or collaborates on.
+   */
+  async resolveSource(ref: { type: "playlist" | "track" | "liked"; id: string }): Promise<SpotifySourceResult> {
+    await this.load();
+    if (!this.state.tokens) throw new Error("Spotify isn't connected — open Library → Spotify and connect your account first.");
+    if (ref.type === "track") {
+      const t: Json = await this.api(`/tracks/${encodeURIComponent(ref.id)}`).catch((e) => {
+        throw new Error(/404|not found|invalid/i.test(String(e)) ? "Spotify couldn't find that track." : String(e instanceof Error ? e.message : e));
+      });
+      const track = toSourceTrack(t);
+      return {
+        source: { kind: "track", spotifyId: ref.id, name: `${track.artists.join(", ")} – ${track.title}`, owner: null, url: track.url, snapshotId: null },
+        entries: [{ kind: "track", track, addedAt: null }],
+      };
+    }
+    const entries: SpotifySourceResult["entries"] = [];
+    let next: string | null;
+    let source: JobSource;
+    if (ref.type === "liked") {
+      source = { kind: "liked", spotifyId: "__liked__", name: "Liked Songs", owner: this.state.user?.name ?? null, url: "https://open.spotify.com/collection/tracks", snapshotId: null };
+      next = "/me/tracks?limit=50";
+    } else {
+      let meta: Json;
+      try {
+        meta = await this.api(`/playlists/${encodeURIComponent(ref.id)}?fields=id,name,owner(id,display_name),snapshot_id,collaborative,external_urls`);
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        throw new Error(/not found|404/i.test(m) ? "Spotify couldn't find that playlist — it may be private, deleted, or a Spotify-generated mix this app can't read." : m);
+      }
+      source = { kind: "playlist", spotifyId: ref.id, name: String(meta.name ?? "Spotify playlist"), owner: meta.owner?.display_name ?? meta.owner?.id ?? null, url: meta.external_urls?.spotify ?? null, snapshotId: meta.snapshot_id ?? null };
+      // Ask for the tracks whoever owns it; Spotify decides what this app may read.
+      const got = await this.itemsOrFallback(ref.id, "limit=50&market=from_token&additional_types=track,episode");
+      if ("tracks" in got) for (const track of got.tracks) entries.push({ kind: track.id ? "track" : "unavailable", track, addedAt: null });
+      else for (const entry of got.items) entries.push(mapPlaylistEntry(entry));
+      return { source, entries };
+    }
+    while (next && entries.length < 10_000) {
+      const page: Json = await this.api(next);
+      for (const entry of page.items ?? []) entries.push(mapPlaylistEntry(entry));
+      next = page.next ?? null;
+    }
+    return { source, entries };
   }
 
   async search(q: string): Promise<StreamingTrack[]> {
@@ -228,4 +355,46 @@ export function mapSpotifyTrack(t: Json): StreamingTrack | null {
     isrc: t.external_ids?.isrc,
     externalUrl: t.external_urls?.spotify,
   };
+}
+
+export function sourceToStreaming(t: SourceTrack): StreamingTrack {
+  return {
+    provider: "spotify",
+    id: t.id ?? "",
+    title: t.title,
+    artist: t.artists.join(", "),
+    artists: t.artists,
+    album: t.album,
+    durationMs: t.durationMs ?? 0,
+    explicit: t.explicit ?? undefined,
+    isrc: t.isrc ?? undefined,
+    externalUrl: t.url ?? undefined,
+  };
+}
+
+/** Spotify track object → source metadata (missing fields stay null; nothing is guessed). */
+export function toSourceTrack(t: Json): SourceTrack {
+  const artists = (t?.artists ?? []).map((a: Json) => String(a?.name ?? "")).filter(Boolean);
+  return {
+    id: typeof t?.id === "string" && t.id ? t.id : null,
+    uri: typeof t?.uri === "string" ? t.uri : null,
+    title: String(t?.name ?? ""),
+    artists,
+    album: String(t?.album?.name ?? ""),
+    durationMs: typeof t?.duration_ms === "number" && t.duration_ms > 0 ? t.duration_ms : null,
+    explicit: typeof t?.explicit === "boolean" ? t.explicit : null,
+    isrc: typeof t?.external_ids?.isrc === "string" && t.external_ids.isrc ? t.external_ids.isrc : null,
+    url: t?.external_urls?.spotify ?? null,
+  };
+}
+
+/** One playlist / saved-tracks item → entry kind + metadata. */
+export function mapPlaylistEntry(entry: Json): SpotifySourceResult["entries"][number] {
+  const item = entry?.item ?? entry?.track ?? null;
+  const addedAt = typeof entry?.added_at === "string" ? entry.added_at : null;
+  if (!item) return { kind: "unavailable", track: { id: null, uri: null, title: "Removed from Spotify", artists: [], album: "", durationMs: null, explicit: null, isrc: null, url: null }, addedAt };
+  if (item.type === "episode") return { kind: "episode", track: { ...toSourceTrack(item), album: String(item.show?.name ?? ""), artists: item.show?.publisher ? [String(item.show.publisher)] : [] }, addedAt };
+  if (entry?.is_local || item.is_local) return { kind: "spotify-local-file", track: { ...toSourceTrack(item), id: null }, addedAt };
+  const track = toSourceTrack(item);
+  return { kind: item.is_playable === false || !track.id ? "unavailable" : "track", track, addedAt };
 }
