@@ -75,6 +75,8 @@
       ],
       "category": "public.app-category.music",
       "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Used only if you choose the microphone as the Lighting sound-to-light source."
       },

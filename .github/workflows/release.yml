@@ -53,7 +53,12 @@ jobs:
           # Log outside the project: a file growing in the app folder during packaging made the
           # macOS universal merge fail ("Can't reconcile two non-macho files build.log").
           LOG="$RUNNER_TEMP/electron-builder.log"
-          if ! npx electron-builder ${{ matrix.target }} --publish never 2>&1 | tee "$LOG"; then
+          # macOS without a Developer ID: sign ad-hoc. Unsigned, the bundle keeps Electron's own
+          # signature, which packaging invalidates — macOS then can't remember privacy choices and
+          # asks for the microphone again on every request ("Allow" never sticks).
+          EXTRA=""
+          if [ "${{ matrix.target }}" = "--mac" ] && [ -z "${CSC_LINK:-}" ]; then EXTRA="-c.mac.identity=-"; fi
+          if ! npx electron-builder ${{ matrix.target }} $EXTRA --publish never 2>&1 | tee "$LOG"; then
             # Surface the failure as public annotations (job logs need repo access to read).
             grep -E "⨯|rror|failed|Exception" "$LOG" | tail -25 | while IFS= read -r line; do echo "::error title=electron-builder::${line}"; done
             exit 1
@@ -68,6 +73,14 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+      - name: Verify macOS code signature
+        if: matrix.target == '--mac'
+        shell: bash
+        run: |
+          # A broken signature makes macOS re-ask for the microphone on every request.
+          APP="$(find release -maxdepth 2 -name '*.app' -type d | head -1)"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements - "$APP" | grep -q com.apple.security.device.audio-input
       - name: List output
         shell: bash
         run: ls -la release

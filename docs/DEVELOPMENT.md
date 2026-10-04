@@ -52,7 +52,7 @@ The browser version's **⬇ Get the desktop app** button links to the *latest Gi
 
 For distribution without warnings:
 
-- **macOS**: set `CSC_LINK`/`CSC_KEY_PASSWORD` (Developer ID certificate) and `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` for notarisation. `hardenedRuntime` is already enabled in `package.json`.
+- **macOS**: set `CSC_LINK`/`CSC_KEY_PASSWORD` (Developer ID certificate) and `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` for notarisation. `hardenedRuntime` is already enabled in `package.json`, with entitlements in `build/entitlements.mac.plist` (incl. microphone for the Lighting mic source). Without a certificate the workflow signs ad-hoc (`-c.mac.identity=-`) and checks the signature: an unsigned bundle has a broken signature, and macOS then re-asks for the microphone on every request. For a local unsigned build do the same: `npx electron-builder --mac -c.mac.identity=-`.
 - **Windows**: set `CSC_LINK` to a code-signing certificate, or SmartScreen will warn.
 
 ## Project layout
