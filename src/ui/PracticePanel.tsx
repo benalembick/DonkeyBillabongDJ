@@ -14,8 +14,108 @@ export function PracticePanel({ initialView = "practice" }: { initialView?: "pra
   const [helpOpen,setHelpOpen]=useState(false);
   const matches=useMemo(()=>state.trackA?app.library.getState().tracks.filter(t=>t.ref!==state.trackA!.ref&&!t.unavailableReason&&t.source==="local").map(track=>({track,match:compatibility(state.trackA!,track,app.preparation.forRef(state.trackA!.ref),app.preparation.forRef(track.ref))})).sort((a,b)=>b.match.score-a.match.score).slice(0,8):[],[state.trackA,app.library,app.preparation]);
   const avg=state.history.length?Math.round(state.history.reduce((n,x)=>n+x.scores.overall,0)/state.history.length):0,best=Math.max(0,...state.history.map(x=>x.scores.overall));
-  if(history)return <div className="practice"><div className="toolbar"><b>PRACTICE HISTORY</b><button onClick={()=>setHistory(false)}>Back to Practice</button><span>Average Score: <b>{avg}%</b></span><span>Personal Best: <b>{best}%</b></span></div><div className="table-wrap"><table className="tracks"><thead><tr><th>Date</th><th>Track A</th><th>Track B</th><th>Overall</th><th>Beat Matching</th><th>Timing</th><th>Transition</th><th>EQ Balance</th></tr></thead><tbody>{[...state.history].reverse().map(x=><tr key={x.id}><td>{new Date(x.date).toLocaleString()}</td><td>{x.trackATitle}</td><td>{x.trackBTitle}</td><td><b>{x.scores.overall}%</b></td><td>{x.scores.beatMatching}%</td><td>{x.scores.timing}%</td><td>{x.scores.transition}%</td><td>{x.scores.eqBalance}%</td></tr>)}</tbody></table></div></div>;
-  if(state.status==="intro")return <div className="practice intro"><h2>DJ PRACTICE MODE</h2><p>Test your mixing skills. We'll give you a random track. Choose another track and mix it in. When you're finished, we'll analyse your mix and show you where you nailed it and where you can improve.</p><div className="practice-options"><label>Difficulty <select value={state.difficulty} onChange={e=>p.setDifficulty(e.target.value as typeof state.difficulty)}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option><option value="custom">Custom</option></select></label><label>Practice from playlist <select value={state.playlistId??""} onChange={e=>p.setPlaylist(e.target.value||null)}><option value="">All local tracks</option>{playlists.playlists.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></div>{state.difficulty==="custom"&&<div className="practice-assists">{([['showBpm','Display BPM'],['showKey','Display key'],['showBeatgrid','Display beatgrid'],['allowSync','Allow Sync']] as const).map(([k,l])=><label key={k}><input type="checkbox" checked={state.assists[k]} onChange={e=>p.setAssists({[k]:e.target.checked})}/>{l}</label>)}</div>}<div className="toolbar"><button className="primary" onClick={()=>void p.start()}>START PRACTICE</button><button onClick={()=>setHistory(true)}>PRACTICE HISTORY ({state.history.length})</button></div></div>;
+  if(history)return <PracticeHistory onBack={()=>setHistory(false)} avg={avg} best={best} />;
+  if(state.status==="intro")return <div className="practice intro"><h2>DJ PRACTICE MODE</h2><p>Test your mixing skills. We'll give you a random track. Choose another track and mix it in. When you're finished, we'll analyse your mix and show you where you nailed it and where you can improve.</p><div className="practice-options"><label>Difficulty <select value={state.difficulty} onChange={e=>p.setDifficulty(e.target.value as typeof state.difficulty)}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option><option value="custom">Custom</option></select></label><label>Practice from playlist <select value={state.playlistId??""} onChange={e=>p.setPlaylist(e.target.value||null)}><option value="">All local tracks</option>{playlists.playlists.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label></div>{state.difficulty==="custom"&&<div className="practice-assists">{([['showBpm','Display BPM'],['showKey','Display key'],['showBeatgrid','Display beatgrid'],['allowSync','Allow Sync']] as const).map(([k,l])=><label key={k}><input type="checkbox" checked={state.assists[k]} onChange={e=>p.setAssists({[k]:e.target.checked})}/>{l}</label>)}</div>}<div className="toolbar"><button className="primary" onClick={()=>void p.start()}>START PRACTICE</button><button onClick={()=>setHistory(true)}>PRACTICE HISTORY ({state.history.length + app.training.history().length})</button></div></div>;
   if(r)return <div className="practice results"><div className="toolbar"><b>PRACTICE RESULTS</b><span>{r.trackATitle} <b>mixed into</b> {r.trackBTitle}</span><button onClick={()=>void p.retry()}>TRY AGAIN</button><button className="primary" onClick={()=>void p.newChallenge()}>NEW CHALLENGE</button><button onClick={()=>setHistory(true)}>PRACTICE HISTORY</button></div><div className="practice-score-overall">Overall Score <strong>{r.scores.overall}%</strong>{r.helpPenalty&&<em>Includes −{r.helpPenalty} match-help penalty</em>}</div><div className="practice-scores">{scoreRows.map(([k,l])=><div key={k}><span>{l}</span><meter min="0" max="100" value={r.scores[k]}/><b>{r.scores[k]}%</b></div>)}</div><div className="practice-coach"><section><h3>What went well</h3>{r.strengths.map((x,i)=><p key={i}>✓ {x}</p>)}</section><section><h3>What to improve</h3>{r.improvements.map((x,i)=><p key={i}>△ {x}</p>)}</section></div><h3>Performance timeline</h3><div className="practice-timeline">{r.events.map((e,i)=><button key={i} title={e.detail} onClick={()=>p.replay(e.at)}><i/><time>{time(e.at)}</time><span>{e.label}</span>{e.detail&&<small>{e.detail}</small>}</button>)}</div></div>;
+  return <PracticeActive state={state} helpOpen={helpOpen} setHelpOpen={setHelpOpen} matches={matches} />;
+}
+
+/** Practice mixes and assessed DJ Training sessions, each with averages and personal bests. */
+function PracticeHistory({ onBack, avg, best }: { onBack: () => void; avg: number; best: number }) {
+  const app = useApp();
+  const practice = useFrameStore(useCallback((cb) => app.practice.on("change", cb), [app.practice]), () => app.practice.getState());
+  const training = useFrameStore(useCallback((cb) => app.training.on("change", cb), [app.training]), () => app.training.getState().progress);
+  const rows = useMemo(() => app.training.history(), [app.training, training]);
+  const [tab, setTab] = useState<"practice" | "training">("practice");
+  const [open, setOpen] = useState<number | null>(null);
+  const scored = rows.filter((r) => r.total !== null);
+  const tAvg = scored.length ? Math.round(scored.reduce((n, r) => n + (r.total ?? 0), 0) / scored.length) : 0;
+  const tBest = Math.max(0, ...scored.map((r) => r.total ?? 0));
+  return (
+    <div className="practice">
+      <div className="toolbar">
+        <b>PRACTICE HISTORY</b>
+        <button onClick={onBack}>Back to Practice</button>
+        <span className="history-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "practice"} className={tab === "practice" ? "active" : ""} onClick={() => setTab("practice")}>
+            Practice mixes ({practice.history.length})
+          </button>
+          <button role="tab" aria-selected={tab === "training"} className={tab === "training" ? "active" : ""} onClick={() => setTab("training")}>
+            DJ Training assessments ({rows.length})
+          </button>
+        </span>
+        {tab === "practice" ? (
+          <>
+            <span>Average Score: <b>{avg}%</b></span>
+            <span>Personal Best: <b>{best}%</b></span>
+          </>
+        ) : (
+          <>
+            <span>Average Score: <b>{tAvg}%</b></span>
+            <span>Personal Best: <b>{tBest}%</b></span>
+            <span>Passed: <b>{rows.filter((r) => r.passed).length}/{rows.length}</b></span>
+          </>
+        )}
+      </div>
+      <div className="table-wrap">
+        {tab === "practice" ? (
+          <table className="tracks">
+            <thead><tr><th>Date</th><th>Track A</th><th>Track B</th><th>Overall</th><th>Beat Matching</th><th>Timing</th><th>Transition</th><th>EQ Balance</th></tr></thead>
+            <tbody>{[...practice.history].reverse().map((x) => <tr key={x.id}><td>{new Date(x.date).toLocaleString()}</td><td>{x.trackATitle}</td><td>{x.trackBTitle}</td><td><b>{x.scores.overall}%</b></td><td>{x.scores.beatMatching}%</td><td>{x.scores.timing}%</td><td>{x.scores.transition}%</td><td>{x.scores.eqBalance}%</td></tr>)}</tbody>
+          </table>
+        ) : rows.length === 0 ? (
+          <p className="hint">No assessed DJ Training sessions yet. Finish an assessed attempt in DJ Training and it's recorded here.</p>
+        ) : (
+          <table className="tracks training-history">
+            <thead><tr><th>Date</th><th>Lesson</th><th>Track A</th><th>Track B</th><th>Score</th><th>Result</th><th>Scores</th><th /></tr></thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <TrainingRow key={`${r.lessonId}:${r.date}`} r={r} open={open === i} onToggle={() => setOpen(open === i ? null : i)} />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TrainingRow({ r, open, onToggle }: { r: ReturnType<ReturnType<typeof useApp>["training"]["history"]>[number]; open: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <tr>
+        <td>{new Date(r.date).toLocaleString()}</td>
+        <td><b>{r.lessonTitle}</b></td>
+        <td>{r.a || "—"}</td>
+        <td>{r.b || "—"}</td>
+        <td><b>{r.total === null ? "—" : `${r.total}%`}</b></td>
+        <td className={r.passed ? "ok-text" : "warn"}>{r.passed ? "✓ Passed" : "✕ Below pass mark"}</td>
+        <td className="hint">{r.metrics.map((m) => `${m.label} ${m.score === null ? "n/a" : `${m.score}%`}`).join(" · ")}</td>
+        <td><button className="tiny" onClick={onToggle}>{open ? "Hide" : "Details"}</button></td>
+      </tr>
+      {open && (
+        <tr className="training-history-detail">
+          <td colSpan={8}>
+            <div className="practice-coach">
+              <section>
+                <h3>Measured</h3>
+                {r.metrics.map((m) => <p key={m.id}><b>{m.label}</b>: {m.score === null ? "not measured" : `${m.score}%`}{m.value ? ` — ${m.value}` : ""}</p>)}
+              </section>
+              <section>
+                <h3>What went well</h3>
+                {r.strengths?.length ? r.strengths.map((x, i) => <p key={i}>✓ {x}</p>) : <p className="hint">Not recorded for sessions before this version.</p>}
+                <h3>What to improve</h3>
+                {r.improvements?.length ? r.improvements.map((x, i) => <p key={i}>△ {x}</p>) : <p className="hint">—</p>}
+              </section>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function PracticeActive({ state, helpOpen, setHelpOpen, matches }: { state: ReturnType<ReturnType<typeof useApp>["practice"]["getState"]>; helpOpen: boolean; setHelpOpen: (v: boolean) => void; matches: { track: import("../core/engine/types").TrackInfo; match: ReturnType<typeof compatibility> }[] }) {
+  const app = useApp(), p = app.practice;
   return <div className="practice active"><div className="toolbar"><b>DJ PRACTICE MODE · {state.status==="transition"?"TRANSITION DETECTED":"IN PROGRESS"}</b><button onClick={()=>p.finish()} disabled={!state.trackB}>FINISH MIX</button><button onClick={()=>void p.newChallenge()}>New Challenge</button><button className="match-help" onClick={()=>{p.useMatchHelp();setHelpOpen(true)}}>HELP ME FIND A MATCH</button>{state.helpUsed&&<span className="penalty-note">−10 point assistance penalty</span>}</div><div className="practice-instruction"><div><small>STARTING TRACK · DECK A</small><strong>{state.trackA?.artist} — {state.trackA?.title}</strong></div><span>→</span><div><small>YOUR SELECTION · DECK B</small><strong>{state.trackB?`${state.trackB.artist} — ${state.trackB.title}`:"Choose a suitable library track and load it onto Deck B"}</strong></div></div><p className="hint">Use the normal decks, mixer, STEMS, EQ, filters, loops and effects. Practice Mode observes without controlling your transition.{!state.assists.allowSync&&" Sync is disabled for this challenge."}</p>{helpOpen&&<div className="modal-backdrop"><div className="modal practice-matches"><button className="modal-close" onClick={()=>setHelpOpen(false)}>×</button><h2>Suggested Matches</h2><p className="hint">Ranked using BPM, harmonic key, energy, genre and analysed structure. Using assistance deducts 10 points from the final score.</p><div className="match-suggestions">{matches.map(({track,match})=><div key={track.ref}><strong>{match.score}%</strong><span><b>{track.artist} — {track.title}</b><small>{track.bpm?.toFixed(1)??"—"} BPM · {track.camelot??track.key??"Key unknown"} · Energy {track.energy??"—"}</small><small>{match.reasons.slice(0,3).join(" · ")}</small></span><button className="primary" onClick={()=>{void app.engine.loadTrack(1,track,"manual");setHelpOpen(false)}}>LOAD TO DECK B</button></div>)}</div></div></div>}</div>;
 }

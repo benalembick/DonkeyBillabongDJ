@@ -312,6 +312,11 @@ describe("training sessions (real engine, fake audio)", () => {
     expect(t.getState().phase).toBe("results");
     expect(t.getState().result!.metrics.find((m) => m.id === "tempo")!.value).toBe("Tracks never played together");
     expect(t.getState().progress.beatmatch!.attempts).toHaveLength(1);
+    // Recorded for Practice History with the full breakdown.
+    const [row] = t.history();
+    expect(row).toMatchObject({ lessonId: "beatmatch", lessonTitle: "Manual Beatmatching", passed: false, a: "A", b: "B" });
+    expect(row.metrics.find((m) => m.id === "tempo")?.value).toBe("Tracks never played together");
+    expect(Array.isArray(row.improvements)).toBe(true);
     await t.retry();
     expect(t.getState().phase).toBe("assess");
     expect(engine.getState().decks[1].rate).toBeCloseTo((120 / 124) * (1 - 0.025), 6); // second offset

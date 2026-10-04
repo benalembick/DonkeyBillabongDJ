@@ -28,10 +28,23 @@ export const PASS_MARK = 60;
 export interface Attempt {
   date: number;
   total: number | null;
-  metrics: { id: string; label: string; score: number | null }[];
+  /** `value` (what was measured) is stored from this version on; older records have only scores. */
+  metrics: { id: string; label: string; score: number | null; value?: string }[];
   a: string;
   b: string;
+  passed?: boolean;
+  strengths?: string[];
+  improvements?: string[];
 }
+
+/** One assessed training session, as listed in Practice History. */
+export interface TrainingHistoryRow extends Attempt {
+  lessonId: LessonId;
+  lessonTitle: string;
+}
+
+/** Assessed attempts kept per lesson (the full record shown in Practice History). */
+const MAX_ATTEMPTS = 100;
 export interface LessonProgress {
   completed: boolean;
   best: number | null;
@@ -561,12 +574,32 @@ export class TrainingService extends Emitter<{ change: TrainingState }> {
     const pb = this.s.bRef ? this.d.preparation.forRef(this.s.bRef) : undefined;
     const result = scoreAttempt({ lesson: id, samples: this.samples, events: this.events, ex: this.ex!, keys: id === "harmonic" ? { a: pa?.key ?? a?.key ?? null, b: pb?.key ?? b?.key ?? null, uncertain: (pa?.keyConfidence ?? 0) < 0.35 || (pb?.keyConfidence ?? 0) < 0.35 } : undefined });
     const prev = this.s.progress[id] ?? { completed: false, best: null, attempts: [], practised: false };
-    const attempt: Attempt = { date: result.date, total: result.total, metrics: result.metrics.map((m) => ({ id: m.id, label: m.label, score: m.score })), a: a?.title ?? "", b: b?.title ?? "" };
+    const attempt: Attempt = {
+      date: result.date,
+      total: result.total,
+      metrics: result.metrics.map((m) => ({ id: m.id, label: m.label, score: m.score, value: m.value })),
+      a: a?.title ?? "",
+      b: b?.title ?? "",
+      passed: (result.total ?? 0) >= PASS_MARK,
+      strengths: result.strengths,
+      improvements: result.improvements,
+    };
     const best = result.total === null ? prev.best : Math.max(prev.best ?? 0, result.total);
-    this.save({ ...this.s.progress, [id]: { ...prev, completed: prev.completed || (result.total ?? 0) >= PASS_MARK, best, attempts: [...prev.attempts, attempt].slice(-20) } });
+    this.save({ ...this.s.progress, [id]: { ...prev, completed: prev.completed || (result.total ?? 0) >= PASS_MARK, best, attempts: [...prev.attempts, attempt].slice(-MAX_ATTEMPTS) } });
     this.d.engine.lockSync(null);
     if (typeof document !== "undefined") document.documentElement.removeAttribute("data-train-hl");
     this.set({ phase: "results", result, highlights: [], hints: [], meter: null, counter: null, message: null });
+  }
+
+  /** Every assessed session across all lessons, newest first (for Practice History). */
+  history(): TrainingHistoryRow[] {
+    const rows: TrainingHistoryRow[] = [];
+    for (const [id, p] of Object.entries(this.s.progress) as [LessonId, LessonProgress | undefined][]) {
+      if (!p) continue;
+      const title = LESSONS.find((l) => l.id === id)?.title ?? id;
+      for (const a of p.attempts) rows.push({ ...a, passed: a.passed ?? (a.total ?? 0) >= PASS_MARK, lessonId: id, lessonTitle: title });
+    }
+    return rows.sort((x, y) => y.date - x.date);
   }
 
   private markPractised(id: LessonId): void {
