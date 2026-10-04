@@ -18,6 +18,8 @@ export interface CoachCtx {
   tempoDownIsFaster: boolean;
   /** An FX unit is assigned to Track A's deck with an ECHO slot. */
   echoReadyOnA: boolean;
+  /** Set when no DJ controller is connected: keys bound to Track B's jog ring (null = unbound). */
+  keyboard?: { nudgeBack: string | null; nudgeForward: string | null } | null;
 }
 
 const both = (s: Sample) => s.a.playing && s.b.playing;
@@ -36,11 +38,25 @@ const entryAPos = (ctx: CoachCtx) => {
   return first ? aPositionAtBEntry(first, ctx.ex.bCue) : ev.aPos;
 };
 const aOutSince = (ctx: CoachCtx) => { const ev = bStart(ctx); return !!ev && ctx.s.t > ev.t + 1 && held(ctx, 1, (x) => x.a.volume < 0.08); };
-const phraseTapHits = (ctx: CoachCtx) => {
-  const g = ctx.ex.aGrid;
-  if (!g) return 0;
-  return ctx.events.filter((e) => e.kind === "tap" && Math.abs(nearestPhrase(g, e.aPos - ctx.ex.latencyMs / 1000, ctx.ex.aPhraseOffset).errorBeats) <= 1).length;
-};
+/** A phrase tap counts when it's within this many beats of a phrase start (heard position). */
+const TAP_WINDOW_BEATS = 1;
+
+/** Verdict on a "Phrase!" tap made at Track A position `aPos` (corrected for output latency). */
+export function judgeTap(ex: Exercise, aPos: number): { hit: boolean; text: string } | null {
+  const g = ex.aGrid;
+  if (!g) return null;
+  const err = nearestPhrase(g, aPos - ex.latencyMs / 1000, ex.aPhraseOffset).errorBeats;
+  const late = err > 0;
+  if (Math.abs(err) <= TAP_WINDOW_BEATS) {
+    const ms = Math.round(Math.abs(err) * beatLen(g) * 1000);
+    return { hit: true, text: ms <= 40 ? "On the phrase" : `On the phrase (${ms} ms ${late ? "late" : "early"})` };
+  }
+  const bars = Math.round(Math.abs(err) / BEATS_PER_BAR);
+  const off = bars >= 1 ? `${bars} bar${bars > 1 ? "s" : ""}` : `${Math.round(Math.abs(err))} beats`;
+  return { hit: false, text: `${off} ${late ? "after" : "before"} a phrase start — phrases are 8 bars; tap on the 1 when the counter shows bar 1` };
+}
+
+const phraseTapHits = (ctx: CoachCtx) => ctx.events.filter((e) => e.kind === "tap" && judgeTap(ctx.ex, e.aPos)?.hit).length;
 const swapped = (ctx: CoachCtx) => !!bStart(ctx) && ctx.recent.some((x) => x.b.eqLow > 0.4 && x.b.eqLow > x.a.eqLow && x.a.eqLow < 0.35);
 const togetherBars = (ctx: CoachCtx) => {
   const g = ctx.ex.aGrid;
@@ -106,13 +122,20 @@ export function hints(step: number, ctx: CoachCtx): string[] {
   const dBpm = s.a.bpm !== null && s.b.bpm !== null ? s.b.bpm - s.a.bpm : null;
   const slower = ctx.tempoDownIsFaster ? "up" : "down";
   const faster = ctx.tempoDownIsFaster ? "down" : "up";
+  const kb = ctx.keyboard;
   const tempoHint = () => {
     if (!both(s) || dBpm === null) return;
-    if (Math.abs(dBpm) >= 0.05) out.push(`Incoming track is running ${Math.abs(dBpm) < 0.5 ? "slightly " : ""}${dBpm > 0 ? "fast" : "slow"} (${dBpm > 0 ? "+" : "−"}${Math.abs(dBpm).toFixed(2)} BPM) — move Track B's tempo fader ${dBpm > 0 ? slower : faster} a little.`);
+    if (Math.abs(dBpm) >= 0.05) out.push(`Incoming track is running ${Math.abs(dBpm) < 0.5 ? "slightly " : ""}${dBpm > 0 ? "fast" : "slow"} (${dBpm > 0 ? "+" : "−"}${Math.abs(dBpm).toFixed(2)} BPM) — move Track B's tempo fader ${dBpm > 0 ? slower : faster} a little${kb ? ` (or scroll the mouse wheel ${dBpm > 0 ? slower : faster} over it for fine steps)` : ""}.`);
   };
   const phaseHint = () => {
     if (!both(s) || s.phaseMs === null || (dBpm !== null && Math.abs(dBpm) >= 0.15)) return;
-    if (Math.abs(s.phaseMs) > 15) out.push(`Track B is ${Math.round(Math.abs(s.phaseMs))} ms ${s.phaseMs > 0 ? "ahead — nudge it back (jog wheel anticlockwise / pitch bend −)" : "behind — nudge it forward (jog wheel clockwise / pitch bend +)"}.`);
+    if (Math.abs(s.phaseMs) <= 15) return;
+    const ms = Math.round(Math.abs(s.phaseMs));
+    const ahead = s.phaseMs > 0;
+    if (kb) {
+      const key = ahead ? kb.nudgeBack : kb.nudgeForward;
+      out.push(`Track B is ${ms} ms ${ahead ? "ahead — nudge it back" : "behind — nudge it forward"}: ${key ? `hold ${key}, or ` : ""}drag Track B's on-screen jog wheel ${ahead ? "anticlockwise" : "clockwise"} (scrolling over it works too).`);
+    } else out.push(`Track B is ${ms} ms ${ahead ? "ahead — nudge it back (jog wheel anticlockwise / pitch bend −)" : "behind — nudge it forward (jog wheel clockwise / pitch bend +)"}.`);
   };
   const countIn = (label: string, target: "phrase" | "bar") => {
     if (!g || !ctx.assists.has("countIn") || !s.a.playing || bStart(ctx)) return;
@@ -131,6 +154,7 @@ export function hints(step: number, ctx: CoachCtx): string[] {
       if (step === 0) out.push("Press PLAY on Track A to begin.");
       if (step === 1) out.push("Press PLAY on Track B right on one of Track A's kicks (beat 1 is best).");
       if (step >= 2) tempoHint();
+      if (step === 2 && both(s) && dBpm !== null && Math.abs(dBpm) >= 0.15) out.push("Nudging only shifts Track B for a moment — it doesn't change its speed. Match the tempo with the fader first, then line up the beats.");
       if (step >= 3 || (dBpm !== null && Math.abs(dBpm) < 0.05)) phaseHint();
       break;
     case "phrase":

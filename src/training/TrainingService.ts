@@ -17,7 +17,7 @@ import type { LibraryStore } from "../library/LibraryStore";
 import type { PreparationStore } from "../preparation/PreparationStore";
 import { matchTempo, timeAtBar, type Grid } from "../transitions/planner";
 import { lesson, LESSONS, type AssistId, type LessonId } from "./curriculum";
-import { hints, phraseCounter, stepControls, stepDone, type CoachCtx } from "./coach";
+import { hints, judgeTap, phraseCounter, stepControls, stepDone, type CoachCtx } from "./coach";
 import { aPositionAtBEntry, phaseMs, xfGain, type DeckSample, type Exercise, type FxSample, type Sample, type TrainingEvent } from "./measure";
 import { harmonicChoices, readiness, suggestPairs, type Candidate, type PairSuggestion } from "./pairs";
 import { scoreAttempt, type LessonResult } from "./scoring";
@@ -56,6 +56,8 @@ export interface TrainingState {
   paused: boolean;
   step: number;
   hints: string[];
+  /** Feedback on the latest "Phrase!" tap (n counts taps, so the UI can re-flash on each). Verdicts only with hints on. */
+  lastTap: { n: number; hit: boolean | null; text: string; hits: number } | null;
   counter: string | null;
   meter: { tempoDiff: number | null; phaseMs: number | null } | null;
   highlights: string[];
@@ -78,6 +80,10 @@ interface Deps {
   preparation: PreparationStore;
   analysis: AnalysisService;
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
+  /** True when no mapped DJ controller is connected (hints then name keys and on-screen controls). */
+  keyboardOnly?: () => boolean;
+  /** KeyboardEvent.code bound to `action` with a value of the same sign, or null. */
+  keyFor?: (action: string, value: number) => string | null;
 }
 
 interface Snapshot {
@@ -110,7 +116,7 @@ export class TrainingService extends Emitter<{ change: TrainingState }> {
     this.storage = d.storage !== undefined ? d.storage : (() => { try { return globalThis.localStorage ?? null; } catch { return null; } })();
     this.s = {
       phase: "dashboard", lessonId: null, aRef: null, bRef: null, cutOn: "phrase", choices: [], suggestions: [], readiness: { a: [], b: [] }, analysing: {},
-      blocked: null, paused: false, step: 0, hints: [], counter: null, meter: null, highlights: [], assists: [], result: null,
+      blocked: null, paused: false, step: 0, hints: [], lastTap: null, counter: null, meter: null, highlights: [], assists: [], result: null,
       progress: this.load(), message: null, latencyMs: 0,
     };
     // Phrase taps from any input (panel button, MIDI mapping, keyboard binding).
@@ -266,7 +272,7 @@ export class TrainingService extends Emitter<{ change: TrainingState }> {
     this.pausedTotal = 0;
     this.doneAt = null;
     this.prevPlaying = [false, false];
-    this.set({ phase: mode, step: 0, hints: [], result: null, paused: false, assists, message: mode === "practice" ? "Guided practice — press PLAY on Track A when you're ready." : "Assessed attempt — assists are reduced. Press PLAY on Track A when you're ready." });
+    this.set({ phase: mode, step: 0, hints: [], lastTap: null, result: null, paused: false, assists, message: mode === "practice" ? "Guided practice — press PLAY on Track A when you're ready." : "Assessed attempt — assists are reduced. Press PLAY on Track A when you're ready." });
     this.startLoop();
     if (mode === "practice") this.markPractised(id);
   }
@@ -362,7 +368,14 @@ export class TrainingService extends Emitter<{ change: TrainingState }> {
 
   tap(): void {
     if (this.s.phase !== "practice" && this.s.phase !== "assess") return;
-    this.events.push({ t: this.now(), kind: "tap", aPos: this.d.engine.getPosition(0) });
+    const n = (this.s.lastTap?.n ?? 0) + 1;
+    if (!this.d.engine.getState().decks[0]?.playing || !this.ex) return this.set({ lastTap: { n, hit: null, text: "Track A isn't playing — press PLAY on Track A, then tap on the phrase starts.", hits: this.s.lastTap?.hits ?? 0 } });
+    const aPos = this.d.engine.getPosition(0);
+    this.events.push({ t: this.now(), kind: "tap", aPos });
+    const verdict = judgeTap(this.ex, aPos);
+    const hits = this.events.filter((e) => e.kind === "tap" && judgeTap(this.ex!, e.aPos)?.hit).length;
+    const showVerdict = this.s.assists.includes("hints") && verdict;
+    this.set({ lastTap: { n, hit: showVerdict ? verdict.hit : null, text: showVerdict ? verdict.text : "Tap recorded.", hits } });
   }
 
   async nextLesson(): Promise<void> {
@@ -386,7 +399,7 @@ export class TrainingService extends Emitter<{ change: TrainingState }> {
     this.stopLoop();
     this.d.engine.lockSync(null);
     if (typeof document !== "undefined") document.documentElement.removeAttribute("data-train-hl");
-    this.set({ highlights: [], hints: [], meter: null, counter: null, paused: false });
+    this.set({ highlights: [], hints: [], lastTap: null, meter: null, counter: null, paused: false });
   }
 
   // ─────────────────────────── snapshot / restore ───────────────────────────
@@ -470,6 +483,12 @@ export class TrainingService extends Emitter<{ change: TrainingState }> {
     return { t: this.now(), a, b, phaseMs: ga && gb && a.playing && b.playing && a.bpm ? phaseMs(ga, gb, a.pos, b.pos, a.bpm) : null, fx };
   }
 
+  private keyboardControls(): CoachCtx["keyboard"] {
+    if (!this.d.keyboardOnly?.()) return null;
+    const label = (code: string | null | undefined) => (code ? code.replace(/^(Key|Digit)/, "") : null);
+    return { nudgeBack: label(this.d.keyFor?.("deck2.jog.ring", -1)), nudgeForward: label(this.d.keyFor?.("deck2.jog.ring", 1)) };
+  }
+
   private tick(): void {
     const id = this.s.lessonId;
     if (!id || !this.ex) return;
@@ -488,6 +507,7 @@ export class TrainingService extends Emitter<{ change: TrainingState }> {
     const ctx: CoachCtx = {
       lesson: id, s, recent: this.samples.filter((x) => x.t > s.t - this.lookBack(s)), events: this.events, ex: this.ex, assists: new Set(this.s.assists),
       tempoDownIsFaster: this.d.engine.getSettings().tempoDownIsFaster, echoReadyOnA: st.fx.some((u) => u.decks[0] && u.slots.some((x) => x.type === "echo") && u.mix >= 0.45 && u.mix <= 0.75),
+      keyboard: this.keyboardControls(),
     };
     let step = this.s.step;
     const total = lesson(id).steps.length;

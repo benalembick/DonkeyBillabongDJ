@@ -134,7 +134,10 @@ export function createApp(): App {
   void playlists.load();
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
   const transitions = new TransitionService({ engine, bus, library, preparation, analysis, stems, log, readAudio: (ref) => platform.readAudio(ref) });
-  const training = new TrainingService({ engine, bus, audio, library, preparation, analysis });
+  const training = new TrainingService({ engine, bus, audio, library, preparation, analysis,
+    // Coaching names the keyboard/mouse controls when no mapped controller is connected.
+    keyboardOnly: () => !controllers.getControllers().some((c) => c.connected && c.mappingId),
+    keyFor: (action, value) => keyboard.getKeymap().find((k) => k.action === action && !k.shift && !k.ctrl && !k.alt && Math.sign(k.value ?? 1) === Math.sign(value))?.code ?? null });
   const lighting = new LightingService({ bus, log, dj: engine, audio, sections: (deck) => analysis.get(deck)?.sections ?? null, bridge: platform.kind === "desktop" ? (window.dbdjDesktop?.lighting ?? null) : null });
   void lighting.start();
   const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis, stemAvailable: (ref) => stems.index()[ref] === "complete",

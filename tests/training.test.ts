@@ -156,6 +156,15 @@ describe("coaching", () => {
     const ahead = { t: 10, a: deck({ pos: 10 }), b: deck({ pos: 10.02 }), phaseMs: 20, fx: [] } as Sample;
     expect(hints(3, ctx(ahead)).join(" ")).toMatch(/20 ms ahead — nudge it back/);
   });
+  it("names keys and on-screen controls when no controller is connected", () => {
+    const kb = { keyboard: { nudgeBack: "J", nudgeForward: "L" } };
+    const ahead = { t: 10, a: deck({ pos: 10 }), b: deck({ pos: 10.02 }), phaseMs: 20, fx: [] } as Sample;
+    expect(hints(3, ctx(ahead, kb)).join(" ")).toMatch(/20 ms ahead — nudge it back: hold J, or drag Track B's on-screen jog wheel anticlockwise/);
+    const slow = { t: 10, a: deck({ pos: 10 }), b: deck({ pos: 10, bpm: 116.8 }), phaseMs: 0, fx: [] } as Sample;
+    const said = hints(2, ctx(slow, kb)).join(" ");
+    expect(said).toMatch(/fader down a little \(or scroll the mouse wheel down over it for fine steps\)/);
+    expect(said).toMatch(/Nudging only shifts Track B for a moment/);
+  });
   it("tells you to wait for the next phrase and spots bar-not-phrase entries", () => {
     const s = { t: 1, a: deck({ pos: 18 }), b: deck({ playing: false, volume: 0 }), phaseMs: null, fx: [] } as Sample;
     expect(hints(2, ctx(s, { lesson: "phrase", events: [] })).join(" ")).toMatch(/Wait for the next phrase — 7 bars to go/);
@@ -314,6 +323,36 @@ describe("training sessions (real engine, fake audio)", () => {
     expect(t.suggestedNext()).toBe("beatmatch"); // not passed yet
     t.resetProgress();
     expect(make().getState().progress).toEqual({});
+  });
+
+  it("phrase taps from the panel button advance the phrase lesson", async () => {
+    const t = make();
+    t.selectLesson("phrase");
+    t.setTrack("a", "/a.mp3");
+    t.setTrack("b", "/b.mp3");
+    await engine.loadTrack(0, tracks[0]);
+    await engine.loadTrack(1, tracks[1]);
+    withGrids();
+    await t.start("practice");
+    t.tap();
+    expect(t.getState().lastTap?.text).toMatch(/Track A isn't playing/);
+    bus.send("deck1.play");
+    await sleep(40);
+    expect(t.getState().step).toBe(1);
+    // 120 BPM from 0 s: phrases start at 16 s and 32 s.
+    audio.positions[0] = 10;
+    t.tap();
+    expect(t.getState().lastTap).toMatchObject({ hit: false, hits: 0 });
+    expect(t.getState().lastTap?.text).toMatch(/^3 bars before a phrase start/);
+    audio.positions[0] = 16.05;
+    t.tap();
+    expect(t.getState().lastTap).toMatchObject({ hit: true, hits: 1, text: "On the phrase (50 ms late)" });
+    await sleep(40);
+    audio.positions[0] = 32.1;
+    t.tap();
+    await sleep(40);
+    expect(t.getState().step).toBeGreaterThanOrEqual(3);
+    await t.exit();
   });
 
   it("every lesson has content, steps and assists", () => {

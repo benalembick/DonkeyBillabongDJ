@@ -3,7 +3,7 @@
  *  - "full": header, overview, hot-cue pads, transport, loop section, jog display, tempo fader.
  *  - "compact": header, overview, one row of transport/pads/tempo (Classic layout).
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { deckLetter, STEM_LABELS, STEM_NAMES } from "../core/actions";
 import { LOOP_SIZES } from "../core/engine/DJEngine";
 import { useApp, useEngineState, useSend } from "./context";
@@ -53,12 +53,50 @@ function Clock({ deck, big }: { deck: number; big?: boolean }) {
   );
 }
 
-/** Jog display: rotates with the track (33⅓ rpm), shows BPM, pitch and touch state. */
+/** Mouse-wheel notches in an event (trackpads give fractions); preventDefault needs a non-passive listener. */
+function useWheelNotches(ref: React.RefObject<HTMLElement | null>, onNotches: (notches: number, e: WheelEvent) => void) {
+  const cb = useRef(onNotches);
+  cb.current = onNotches;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY || e.deltaX; // Shift+wheel scrolls horizontally in Chromium
+      const notches = -delta / (e.deltaMode === 1 ? 3 : e.deltaMode === 2 ? 0.1 : 100);
+      if (notches) cb.current(notches, e);
+    };
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => el.removeEventListener("wheel", wheel);
+  }, [ref]);
+}
+
+/** Ring ticks per wheel notch on the on-screen jog — the same as one A/D/J/L key press. */
+const WHEEL_JOG_TICKS = 8;
+
+/**
+ * Jog display: rotates with the track (33⅓ rpm), shows BPM, pitch and touch state.
+ * Without a controller it is also a jog wheel: dragging round it or scrolling over it sends
+ * ring ticks (nudge while playing, fine positioning while paused) — never touch/scratch.
+ */
 function JogDisplay({ deck, size }: { deck: number; size: number }) {
   const { engine } = useApp();
+  const send = useSend();
+  const root = useRef<HTMLDivElement>(null);
   const needle = useRef<SVGLineElement>(null);
   const bpmRef = useRef<HTMLSpanElement>(null);
+  const lastAngle = useRef<number | null>(null);
   const d = useEngineState().decks[deck];
+  const ring = `deck${deck + 1}.jog.ring`;
+  useWheelNotches(root, (n) => send(ring, n * WHEEL_JOG_TICKS));
+  /** Pointer angle in degrees (clockwise from 12 o'clock), or null too close to the centre to be stable. */
+  const angleOf = (e: React.PointerEvent) => {
+    const r = root.current!.getBoundingClientRect();
+    const x = e.clientX - (r.left + r.width / 2);
+    const y = e.clientY - (r.top + r.height / 2);
+    if (Math.hypot(x, y) < r.width * 0.12) return null;
+    return (Math.atan2(x, -y) * 180) / Math.PI;
+  };
   useAnimationFrame(() => {
     const pos = engine.getPosition(deck);
     const deg = ((pos / 1.8) * 360) % 360;
@@ -68,7 +106,29 @@ function JogDisplay({ deck, size }: { deck: number; size: number }) {
   });
   const pct = (d.rate - 1) * 100;
   return (
-    <div data-train={`jog-${deckLetter(deck)}`} className={`jog ${d.jogTouched ? "touched" : ""} ${d.playing ? "playing" : ""}`} style={size ? { width: size, height: size } : undefined} title={`Jog ticks: ${engine.getJogTicks(deck)}`}>
+    <div
+      ref={root}
+      data-train={`jog-${deckLetter(deck)}`}
+      className={`jog ${d.jogTouched ? "touched" : ""} ${d.playing ? "playing" : ""}`}
+      style={size ? { width: size, height: size } : undefined}
+      title={`Drag round or scroll to nudge (playing) or fine-position (paused). Jog ticks: ${engine.getJogTicks(deck)}`}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        lastAngle.current = angleOf(e);
+      }}
+      onPointerMove={(e) => {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+        const a = angleOf(e);
+        const prev = lastAngle.current;
+        lastAngle.current = a;
+        if (a === null || prev === null) return;
+        const deg = ((a - prev + 540) % 360) - 180; // shortest way round
+        if (deg) send(ring, (deg / 360) * engine.getSettings().jog.ticksPerRevolution);
+      }}
+      onPointerUp={() => (lastAngle.current = null)}
+      onPointerCancel={() => (lastAngle.current = null)}
+    >
       <svg viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="46" className="jog-ring" />
         <circle cx="50" cy="50" r="40" className="jog-inner" />
@@ -87,18 +147,37 @@ function JogDisplay({ deck, size }: { deck: number; size: number }) {
   );
 }
 
+/** Tempo slider travel per wheel notch: 0.002 = 0.04% of pitch at ±10 (≈0.05 BPM at 128). */
+const TEMPO_WHEEL_STEP = 0.002;
+const TEMPO_WHEEL_FINE = 0.0005;
+/** Just outside the engine's centre detent (|bipolar| < 0.005 → 0.0025 slider units). */
+const TEMPO_DETENT = 0.0026;
+
 function TempoFader({ deck, vertical }: { deck: number; vertical: boolean }) {
   const { engine } = useApp();
   const send = useSend();
   const d = useEngineState().decks[deck];
   const p = `deck${deck + 1}`;
-  const value = 0.5 + (d.tempo / 2) * (engine.getSettings().tempoDownIsFaster ? 1 : -1);
+  const sliderValue = (tempo: number) => 0.5 + (tempo / 2) * (engine.getSettings().tempoDownIsFaster ? 1 : -1);
+  const value = sliderValue(d.tempo);
+  const fader = useRef<HTMLInputElement>(null);
+  // Fine control with the mouse wheel: scrolling moves the handle the same way; Shift = finer.
+  useWheelNotches(fader, (n, e) => {
+    const cur = sliderValue(engine.getState().decks[deck].tempo);
+    let next = Math.min(1, Math.max(0, cur + n * (e.shiftKey ? TEMPO_WHEEL_FINE : TEMPO_WHEEL_STEP)));
+    // Inside the engine's centre detent: step out of it going away from 0%, land on 0% coming back.
+    if (Math.abs(next - 0.5) < TEMPO_DETENT && next !== 0.5) {
+      next = Math.abs(next - 0.5) > Math.abs(cur - 0.5) || cur === 0.5 ? 0.5 + Math.sign(next - 0.5) * TEMPO_DETENT : 0.5;
+    }
+    send(`${p}.tempo`, next);
+  });
   return (
     <div className={`tempo ${vertical ? "vertical" : ""}`} data-train={`tempo-${deckLetter(deck)}`}>
       <button className="tiny" onClick={() => send(`${p}.tempo.range`)} title="Pitch range">
         {RANGE_LABEL[String(d.tempoRange)]}
       </button>
       <input
+        ref={fader}
         type="range"
         min={0}
         max={1}
@@ -107,7 +186,7 @@ function TempoFader({ deck, vertical }: { deck: number; vertical: boolean }) {
         className={vertical ? "vfader tempo-fader" : "tempo-fader"}
         onChange={(e) => send(`${p}.tempo`, Number(e.target.value))}
         onDoubleClick={() => send(`${p}.tempo.reset`)}
-        title="Tempo (double-click to reset)"
+        title="Tempo (scroll for fine steps, Shift+scroll finer; double-click to reset)"
       />
       <button className="tiny" onClick={() => send(`${p}.tempo.reset`)} title="Reset tempo">
         0

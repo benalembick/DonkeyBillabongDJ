@@ -49,7 +49,7 @@ Choose a layout in the top bar. Your choice, the library height and the waveform
 | **CLASSIC** | Slim stacked waveforms, compact decks and a bigger library |
 
 - **Waveforms:** 3-band colour (blue low, orange mid, white high) with an estimated beat grid (bar lines every 4 beats), cue and hot-cue markers, and a bar counter. Scroll to zoom; drag to move a paused track. They are drawn from cached tiles, so every layout holds 60 fps at 1080p.
-- **Decks:** artwork, title and artist, source badges, BPM, key, remaining and elapsed time, overview waveform, 8 colour-coded hot cues, CUE and PLAY, VINYL, KEY LOCK, a jog display, and the tempo fader with range. Loops and SYNC are shown but marked *soon*.
+- **Decks:** artwork, title and artist, source badges, BPM, key, remaining and elapsed time, overview waveform, 8 colour-coded hot cues, CUE and PLAY, VINYL, KEY LOCK, a jog wheel you can drag round or scroll over (nudge while playing, fine positioning while paused), and the tempo fader with range (scroll over it for fine steps, Shift+scroll finer). Loops and SYNC are shown but marked *soon*.
 - **Mixer:** TRIM, HI, MID and LOW with kills, FILTER, headphone CUE, channel faders with meters, master and headphone section, crossfader.
 - **FX bar:** two units with Echo, Delay, Reverb, Flanger and Filter. Each has a beat-synced time, LEVEL, parameter, deck assignment and ON. The DDJ-SB FX buttons and knob drive the same controls.
 - **Library:** Collection (All Tracks, Recently Added, Top Rated) and Streaming (Spotify, Apple Music, Audius). Columns sort, search filters, and star ratings are saved. The DDJ-SB browse knob follows the on-screen order.

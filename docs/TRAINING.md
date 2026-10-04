@@ -33,7 +33,7 @@ Pass mark: 60. Each metric shows its value and how it was scored; metrics withou
 ## What is (and isn't) measured
 
 - Only engine data: deck positions from the audio clock, playback rate, beat grids, mixer and FX settings. No perceptual audio analysis — "level continuity" and "effect level" use fader/knob positions and say so.
-- Inputs: mouse, keyboard and DJ controllers all drive the engine through the same command bus, and training observes the engine state, so every input source works. `training.tap` is a mappable action.
+- Inputs: mouse, keyboard and DJ controllers all drive the engine through the same command bus, and training observes the engine state, so every input source works. `training.tap` is a mappable action. With no mapped controller connected, hints name the keyboard and on-screen controls instead (e.g. "hold J, or drag Track B's on-screen jog wheel anticlockwise"; "scroll the mouse wheel down over the fader for fine steps").
 - **Latency:** both decks pass through the same output latency, so musical alignment (B's entry against A's beats) is measured directly on the audio clock. B's entry is computed exactly from a later sample: `A position − (B position − cue) / B rate × A rate`. Phrase taps are reactions to what was heard, so they're corrected by the output latency. Fader/FX timings are sampled every 15 ms.
 - **Analysis confidence:** uncertain grids add a note to timing metrics; grids and phrase markers can be corrected (Transitions page / deck grid editing). Phrases are 8 bars from the grid's first bar and phrase offset — every bar is not a phrase.
 

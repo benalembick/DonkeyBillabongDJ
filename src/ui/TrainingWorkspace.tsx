@@ -275,6 +275,12 @@ function Coach({ s, svc, l }: { s: TrainingState; svc: TrainingService; l: Lesso
             ))}
           </ol>
           {l.id === "phrase" && <button className="tr-tap" onClick={() => svc.tap()}>Phrase! <small>(tap on the 1 of a new phrase — also mappable as “Training: tap a phrase start”)</small></button>}
+          {l.id === "phrase" && s.lastTap && (
+            <p key={s.lastTap.n} className={`tr-tap-result ${s.lastTap.hit === true ? "hit" : s.lastTap.hit === false ? "miss" : ""}`}>
+              {s.lastTap.hit === true ? "✓" : s.lastTap.hit === false ? "✗" : "•"} {s.lastTap.text}
+              {s.lastTap.hit !== null && <small> — {Math.min(s.lastTap.hits, 2)} of 2 on time</small>}
+            </p>
+          )}
         </div>
         <div className="tr-col">
           {s.counter && <div className="tr-box tr-counter">⏲ {s.counter}</div>}
