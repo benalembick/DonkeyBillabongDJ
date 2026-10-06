@@ -19,6 +19,19 @@ export interface KeyBinding {
   repeat?: boolean;
 }
 
+/** Compact, user-facing label for shortcut hints in controls and menus. */
+export function keyBindingLabel(binding: KeyBinding): string {
+  const key = binding.code === "Space" ? "Space"
+    : binding.code.startsWith("Key") ? binding.code.slice(3)
+    : binding.code.startsWith("Digit") ? binding.code.slice(5)
+    : binding.code === "ArrowUp" ? "↑"
+    : binding.code === "ArrowDown" ? "↓"
+    : binding.code === "ArrowLeft" ? "←"
+    : binding.code === "ArrowRight" ? "→"
+    : binding.code.replace(/([a-z])([A-Z])/g, "$1 $2");
+  return [...(binding.ctrl ? ["Ctrl/Cmd"] : []), ...(binding.alt ? ["Alt"] : []), ...(binding.shift ? ["Shift"] : []), key].join("+");
+}
+
 export const DEFAULT_KEYMAP: KeyBinding[] = [
   { code: "Space", action: "deck1.play" },
   { code: "Space", shift: true, action: "deck2.play" },

@@ -1,7 +1,7 @@
 /** Icons for the main navigation (top bar): drawn in the button's colour, 24 px. */
 import type { ReactNode } from "react";
 
-export type NavArea = "collections" | "playlists" | "mashups" | "transitions" | "practice" | "streaming" | "lighting";
+export type NavArea = "collections" | "playlists" | "mashups" | "transitions" | "practice" | "streaming" | "lighting" | "production";
 
 const PATHS: Record<NavArea, ReactNode> = {
   // Music library: a note.
@@ -22,6 +22,7 @@ const PATHS: Record<NavArea, ReactNode> = {
   ),
   // Lightning: mashups.
   mashups: <path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z" />,
+  production: <><path d="M3 5v14M7 8v8M11 3v18M15 7v10M19 5v14M22 9v6" /><path d="M1 12h22" /></>,
   // Two tracks crossing: transitions.
   transitions: (
     <>
@@ -58,6 +59,17 @@ export function NavIcon({ area }: { area: NavArea }) {
   return (
     <svg className="nav-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {PATHS[area]}
+    </svg>
+  );
+}
+
+/** A compact two-track save icon for the header's Manual Mashup action. */
+export function SaveMashupIcon() {
+  return (
+    <svg className="manual-mashup-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 5h10M4 9h7M4 15h7M4 19h10" />
+      <path d="M16 4v11m0 0-3-3m3 3 3-3" />
+      <path d="M13 20h6" />
     </svg>
   );
 }

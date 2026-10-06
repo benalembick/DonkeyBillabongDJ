@@ -10,6 +10,7 @@ import { describeMidi } from "../controllers/midi/message";
 import type { ControllerMapping } from "../controllers/mapping/schema";
 import { useApp } from "./context";
 import { useTick } from "./hooks";
+import { keyBindingLabel } from "../input/keyboard";
 
 const FEED_MAX = 250;
 
@@ -117,7 +118,7 @@ export function MidiMonitor() {
 type Verdict = "pass" | "fail" | undefined;
 
 export function ControllerTest() {
-  const { controllers } = useApp();
+  const { controllers, keyboard } = useApp();
   // Re-render at a fixed low rate; hits accumulate in a ref (jog wheels send hundreds of messages/s).
   useTick(150);
   const mapping: ControllerMapping | null = controllers.getActiveMapping() ?? controllers.getMappings()[0] ?? null;
@@ -198,11 +199,13 @@ export function ControllerTest() {
               const recent = h && now - h.last < 1200;
               const v = verdicts[c.id];
               const actions = mapping.inputs.filter((b) => b.control === c.id).map((b) => b.action);
+              const shortcuts = [...new Set(keyboard.getKeymap().filter((binding) => actions.includes(binding.action)).map(keyBindingLabel))];
               const unimplemented = actions.filter((a) => catalog.get(a)?.implemented === false);
               return (
                 <div key={c.id} className={`ctrl ${h ? "seen" : ""} ${recent ? "active" : ""} ${v ?? ""}`} title={actions.join("\n")}>
                   <span className="ctrl-state">{v === "pass" ? "✓" : v === "fail" ? "✗" : h ? "●" : "○"}</span>
                   <span className="ctrl-label">{c.label}</span>
+                  {shortcuts.length > 0 && <span className="ctrl-shortcuts" aria-label={`Keyboard shortcuts: ${shortcuts.join(", ")}`} title={`Keyboard: ${shortcuts.join(", ")}`}>{shortcuts.map((shortcut) => <kbd key={shortcut}>{shortcut}</kbd>)}</span>}
                   {unimplemented.length === actions.length && actions.length > 0 && <span className="tag">not implemented yet</span>}
                   <span className="ctrl-count">{h?.count ?? ""}</span>
                   <button className="tiny" onClick={() => setVerdicts((x) => ({ ...x, [c.id]: x[c.id] === "pass" ? undefined : "pass" }))}>✓</button>

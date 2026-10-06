@@ -38,6 +38,11 @@ import { LiveMashupService } from "../mashup/LiveMashupService";
 import { PracticeService } from "../practice/PracticeService";
 import { SpotifyLocalService, type FileCheck } from "../acquire/SpotifyLocalService";
 import { AudiusAcquisition, informationalProviders, SpotDLAcquisition, type Downloader } from "../acquire/providers";
+import { ProductionStudio } from "../production/ProductionStudio";
+import { VocalStudio } from "../production/vocal/VocalStudio";
+import { VocalPitch } from "../production/vocal/VocalPitch";
+import { LiveLooper } from "../production/looper/LiveLooper";
+import { TeachLoopService } from "../teachloop/TeachLoopService";
 
 export interface App {
   bus: CommandBus;
@@ -67,6 +72,16 @@ export interface App {
   audius: AudiusStore;
   /** Which list the controller's browse encoder / LOAD buttons act on. */
   browser: BrowserRouter;
+  /** Core DAW project, transport, recording and rendering service. */
+  production: ProductionStudio;
+  /** Vocal Studio (recording, takes, monitoring) on top of Production Studio. */
+  vocal: VocalStudio;
+  /** Vocal Studio pitch correction (Phase 2). */
+  pitch: VocalPitch;
+  /** Live Looper (Production Studio → LOOPER). */
+  looper: LiveLooper;
+  /** Learn → Teach Me: Live Looping — isolated lesson sandbox (its own ProductionStudio + LiveLooper, pad-only). */
+  teachLoop: TeachLoopService;
   /** Set a local track's star rating (persisted). */
   setRating(ref: string, rating: number): Promise<void>;
   /** Add files to the library and optionally load the first one into a deck. */
@@ -137,6 +152,32 @@ export function createApp(): App {
   const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
   void playlists.load();
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
+  const production = new ProductionStudio(audio, platform, stems);
+  const vocal = new VocalStudio(audio, production);
+  const pitch = new VocalPitch(production);
+  vocal.onTakeRecorded = (_track, takeId) => void pitch.analyseTake(takeId);
+  const looper = new LiveLooper(audio, production, vocal);
+  const teachLoop = new TeachLoopService(audio, platform, stems);
+  // Sampler pads: press/release (gate pads play while held), load the Sampler editor's sample, eject.
+  // Pads 1-16 address the current bank (A-D); a release goes to the pad that was pressed even if the bank changed.
+  const padInBank = (s: number) => production.getState().project.sampler.bank * 16 + s - 1;
+  const pressedPad = new Map<number, number>();
+  for (let s = 1; s <= 16; s++) {
+    const warn = (err: unknown) => log.warn("sampler", `Pad ${s}: ${err instanceof Error ? err.message : String(err)}`);
+    bus.handle(`sampler${s}.play`, (v) => {
+      const pad = v > 0 ? padInBank(s) : pressedPad.get(s) ?? padInBank(s);
+      if (v > 0) pressedPad.set(s, pad); else pressedPad.delete(s);
+      try { if (v > 0) production.padDown(pad); else production.padUp(pad); } catch (err) { warn(err); }
+    });
+    bus.handle(`sampler${s}.stop`, (v) => { if (v > 0) production.stopPad(padInBank(s)); });
+    bus.handle(`sampler${s}.load`, (v) => { if (v > 0) production.assignSamplerToPad(padInBank(s)); });
+    bus.handle(`sampler${s}.eject`, (v) => { if (v > 0) { production.stopPad(padInBank(s)); production.clearSamplerPad(padInBank(s)); } });
+  }
+  ["a", "b", "c", "d"].forEach((bank, i) => bus.handle(`sampler.bank.${bank}`, (v) => { if (v > 0) production.setSamplerBank(i); }));
+  bus.handle("sampler.bank.next", (v) => { if (v > 0) production.setSamplerBank(production.getState().project.sampler.bank + 1); });
+  bus.handle("sampler.bank.prev", (v) => { if (v > 0) production.setSamplerBank(production.getState().project.sampler.bank - 1); });
+  bus.handle("sampler.stopall", (v) => { if (v > 0) production.stopAllPads(); });
+  bus.handle("sampler.volume", (v) => production.setPadVolume(v * 1.5));
   const transitions = new TransitionService({ engine, bus, library, preparation, analysis, stems, log, readAudio: (ref) => platform.readAudio(ref) });
   const training = new TrainingService({ engine, bus, audio, library, preparation, analysis,
     // Coaching names the keyboard/mouse controls when no mapped controller is connected.
@@ -152,6 +193,8 @@ export function createApp(): App {
   } });
   const practice = new PracticeService({ engine, bus, audio, library, playlists, preparation });
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
+  // MIDI keyboards and drum controllers without a DJ mapping play the Sampler pads / chromatic instrument.
+  controllers.on("monitor", (entry) => { if (!entry.mapping && entry.message.deviceId !== "simulator") production.handleSamplerMidi(entry.message); });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
   const matching = new MatchingService({ engine, log, library, storage: platform.mappingStorage, remoteSources: [new AudiusSource(audiusClient)] });
@@ -357,6 +400,11 @@ export function createApp(): App {
     spotifyLocal,
     audius: audiusStore,
     browser,
+    production,
+    vocal,
+    pitch,
+    looper,
+    teachLoop,
     setRating: async (ref, rating) => {
       const t = library.setRating(ref, rating);
       if (t) await platform.library?.save([t]).catch((err) => log.warn("library", `Library database: ${String(err)}`));

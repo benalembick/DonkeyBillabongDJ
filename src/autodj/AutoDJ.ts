@@ -176,6 +176,12 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     await this.prepare();
   }
   add(refs: string[]) { this.set({ upcoming: [...this.state.upcoming, ...refs.filter((r) => !!this.o.library.getByRef(r))] }); if (this.state.status === "ACTIVE") void this.prepare(); }
+  /** Add tracks to the front of the editable queue, preserving their selected order. */
+  playNextRefs(refs: string[]) {
+    const playable = refs.filter((r) => !!this.o.library.getByRef(r));
+    if (!playable.length || this.state.status === "TRANSITIONING" || this.fade) return;
+    this.editUpcoming([...playable, ...this.state.upcoming]);
+  }
   private editUpcoming(refs: string[]) {
     if (this.state.status === "TRANSITIONING" || this.fade) return;
     if (refs[0] !== this.state.upcoming[0]) { this.cancelLoad(); this.prepared = null; }

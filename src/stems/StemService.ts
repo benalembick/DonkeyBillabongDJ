@@ -91,6 +91,7 @@ type Events = {
   status: StemServiceStatus;
   envelopes: { deck: number };
   index: Record<string, "complete" | "partial">;
+  libraryError: { ref: string; message: string };
 };
 
 export interface StemServiceStatus {
@@ -198,6 +199,25 @@ export class StemService extends Emitter<Events> {
     return this.idx;
   }
   renderData(ref: string) { if (!this.bridge || typeof this.bridge.renderData !== "function") return Promise.reject(new Error("Restart DonkeyBillabongDJ to enable offline rendering")); return this.bridge.renderData(ref); }
+
+  /** Ensure a local track has a complete cached separation, then return renderable STEM PCM. */
+  async prepareForRender(track: TrackInfo, readAudio: (ref: string) => Promise<ArrayBuffer>): Promise<{ rate: number; total: number; pcm: ArrayBuffer }> {
+    await this.refresh();
+    if (track.source !== "local") throw new Error("Only authorised local audio files can be separated into Production Studio tracks");
+    if (!this.st.available) throw new Error(this.st.reason ?? "STEM separation is unavailable");
+    await this.refreshIndex();
+    if (this.idx[track.ref] !== "complete") {
+      this.analyse([track], readAudio);
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => { clearTimeout(timeout); offIndex(); offStatus(); offError(); };
+        const timeout = setTimeout(() => { cleanup(); reject(new Error("STEM separation timed out")); }, 2 * 60 * 60 * 1000);
+        const offIndex = this.on("index", (index) => { if (index[track.ref] === "complete") { cleanup(); resolve(); } });
+        const offStatus = this.on("status", (status) => { if (!status.available || status.worker.state === "error") { cleanup(); reject(new Error(status.worker.message ?? status.reason ?? "STEM separation failed")); } });
+        const offError = this.on("libraryError", (failure) => { if (failure.ref === track.ref) { cleanup(); reject(new Error(failure.message)); } });
+      });
+    }
+    return this.renderData(track.ref);
+  }
 
   async refresh(): Promise<void> {
     if (!this.bridge) return;
@@ -527,6 +547,7 @@ export class StemService extends Emitter<Events> {
           await this.refreshIndex();
         } catch (err) {
           this.log.warn("stems", `Couldn't analyse STEMS for ${ref.split(/[\\/]/).pop()}: ${String(err)}`);
+          this.emit("libraryError", { ref, message: err instanceof Error ? err.message : String(err) });
         }
       }
     } finally {

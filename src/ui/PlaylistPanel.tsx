@@ -8,6 +8,7 @@ import { ArtTile } from "./ArtTile";
 import { compatibility } from "../analysis/discovery";
 import { useMashipProjects } from "./MashipsPanel";
 import { LinkedPlaylistBanner } from "./SpotifyLocalPanel";
+import { TrackDiscoveryActions } from "./TrackDiscoveryActions";
 
 export const TRACK_REFS = "application/x-dbdj-track-refs";
 const PLAYLIST_MOVE = "application/x-dbdj-playlist-move";
@@ -37,19 +38,21 @@ export function useAutoDJ() {
   return useFrameStore(useCallback((cb) => autoDJ.on("change", cb), [autoDJ]), () => autoDJ.getState());
 }
 
-export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQueue, onArea }: { selected: string | null; mashipsSelected: "auto" | "manual" | null; onOpen: (id: string) => void; onMaships: (kind: "auto" | "manual") => void; onQueue: () => void; onArea: (area: "playlists" | "mashups") => void }) {
+export function PlaylistNav({ selected, mashipsSelected, learnSelected, activeArea, onOpen, onMaships, onLearn, onQueue, onArea, onManage }: { selected: string | null; mashipsSelected: "auto" | "manual" | null; learnSelected: "transitions" | "practice" | "history" | null; activeArea: "playlists" | "mashups" | "practice" | null; onOpen: (id: string) => void; onMaships: (kind: "auto" | "manual") => void; onLearn: (view: "transitions" | "training" | "practice" | "history") => void; onQueue: () => void; onArea: (area: "playlists" | "mashups" | "practice") => void; onManage: () => void }) {
   const app = useApp();
   const state = usePlaylists();
   const auto = useAutoDJ();
   const maships = useMashipProjects();
+  const practice = useFrameStore(useCallback((cb) => app.practice.on("change", cb), [app.practice]), () => app.practice.getState());
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [query, setQuery] = useState("");
   // Pinned at the top: Downloads (Spotify → Local per-track downloads) and Mashups (rendered mashups).
   const downloadsId = app.spotifyLocal.downloadsJob()?.playlistId;
   const downloads = state.playlists.find((p) => p.id === downloadsId) ?? state.playlists.find((p) => p.name === "Downloads");
   const mashups = state.playlists.find((p) => p.name === "Mashups");
   const pinned = new Set([downloads?.id, mashups?.id]);
-  const item = (p: Playlist, icon?: string) => <button data-source="playlist" key={p.id} className={`${selected === p.id ? "active" : ""}${icon ? " pinned-playlist" : ""}`} title="Drop library tracks or local files here" onClick={() => onOpen(p.id)}
+  const item = (p: Playlist, icon?: string, displayName = p.name) => <button data-source="playlist" key={p.id} className={`${selected === p.id ? "active" : ""}${icon ? " pinned-playlist" : ""}`} title="Drop library tracks or local files here" onClick={() => onOpen(p.id)}
     onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
     onDrop={(e) => {
       e.preventDefault(); e.stopPropagation();
@@ -57,13 +60,17 @@ export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQu
       app.playlists.addTracks(p.id, refs);
       const files = [...e.dataTransfer.files];
       if (files.length) void app.platform.refsFromDrop(files).then(async (rows) => { await app.addFiles(rows); app.playlists.addTracks(p.id, rows.map((r) => r.ref)); }).catch((err) => app.log.warn("library", String(err)));
-    }}><span>{icon && <span className="nav-icon" aria-hidden>{icon}</span>}{p.name}</span><span className="count">{p.refs.length}</span></button>;
+    }}><span>{icon && <span className="nav-icon" aria-hidden>{icon}</span>}{displayName}</span><span className="count">{p.refs.length}</span></button>;
   return <>
-    <button className="browser-heading browser-section-link" onClick={() => onArea("playlists")}>PLAYLISTS <span>›</span></button>
+    <div className="browser-heading-row">
+      <button data-nav-area="playlists" className={`browser-heading browser-section-link${activeArea === "playlists" ? " active" : ""}`} onClick={() => onArea("playlists")}>PLAYLISTS</button>
+      <button className="playlist-heading-manage" title="Manage playlists" aria-label="Manage playlists" onClick={onManage}><span aria-hidden>✎</span></button>
+    </div>
+    <input className="playlist-nav-search" aria-label="Search playlists" placeholder="Search playlists…" value={query} onChange={(e) => setQuery(e.target.value)} />
     <button data-source="auto-dj" className="pinned-playlist auto-dj-nav" onClick={onQueue}><span><span className="nav-icon" aria-hidden>↝</span>Auto DJ Queue</span><span className={`auto-status ${auto.status.toLowerCase()}`}>{auto.status}</span></button>
     {downloads && item(downloads, "⇩")}
-    {mashups && item(mashups, "⚡")}
-    <button className="create-playlist-btn" disabled={!state.loaded} onClick={() => setCreating(true)}><span><span className="nav-icon" aria-hidden>✚</span>Create New Playlist</span></button>
+    {mashups && item(mashups, "⚡", "Mashups Exported")}
+    <button className="create-playlist-btn" data-nav-end="playlists" disabled={!state.loaded} onClick={() => setCreating(true)}><span><span className="nav-icon" aria-hidden>✚</span>Create New Playlist</span></button>
     {creating && <form className="playlist-create" onSubmit={(e) => { e.preventDefault(); const p = app.playlists.create(name); setCreating(false); setName(""); onOpen(p.id); }}>
       <input autoFocus aria-label="Playlist name" placeholder="Playlist name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") setCreating(false); }} />
       <div className="playlist-create-actions">
@@ -71,10 +78,17 @@ export function PlaylistNav({ selected, mashipsSelected, onOpen, onMaships, onQu
         <button type="button" className="cancel" onClick={() => { setCreating(false); setName(""); }}>✕ Cancel</button>
       </div>
     </form>}
-    {state.playlists.filter((p) => !pinned.has(p.id)).map((p) => item(p))}
-    <button className="browser-heading browser-section-link" onClick={() => onArea("mashups")}>MASHUP PROJECTS <span>›</span></button>
+    {state.playlists.filter((p) => !pinned.has(p.id) && p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((p) => item(p))}
+    {!!query.trim() && !state.playlists.some((p) => !pinned.has(p.id) && p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) && <span className="playlist-nav-empty">No matching playlists</span>}
+    <button data-nav-area="practice" className={`browser-heading browser-section-link${activeArea === "practice" ? " active" : ""}`} onClick={() => onArea("practice")}>LEARN <span>›</span></button>
+    <button data-source="learn-transitions" className={learnSelected === "transitions" ? "active" : ""} onClick={() => onLearn("transitions")}><span><span className="nav-icon" aria-hidden>⇄</span>Transition Guides</span></button>
+    <button data-source="learn-training" onClick={() => onLearn("training")}><span><span className="nav-icon" aria-hidden>◇</span>DJ Training</span></button>
+    <button data-source="learn-practice" className={learnSelected === "practice" ? "active" : ""} onClick={() => onLearn("practice")}><span><span className="nav-icon" aria-hidden>▶</span>Practice Mode</span></button>
+    <button data-source="learn-history" data-nav-end="practice" className={learnSelected === "history" ? "active" : ""} onClick={() => onLearn("history")}><span><span className="nav-icon" aria-hidden>↗</span>Practice History</span><span className="count">{practice.history.length}</span></button>
+    <button data-nav-area="mashups" className={`browser-heading browser-section-link${activeArea === "mashups" ? " active" : ""}`} onClick={() => onArea("mashups")}>MASHUP PROJECTS <span>›</span></button>
     <button data-source="auto-mashups" className={mashipsSelected === "auto" ? "active" : ""} onClick={() => onMaships("auto")}><span><span className="nav-icon" aria-hidden>⚡</span>Auto Mashups</span><span className="count">{maships.recipes.filter((r) => !r.manual).length}</span></button>
     <button data-source="manual-mashups" className={mashipsSelected === "manual" ? "active" : ""} onClick={() => onMaships("manual")}><span><span className="nav-icon" aria-hidden>✎</span>Manual Mashups</span><span className="count">{maships.recipes.filter((r) => !!r.manual).length}</span></button>
+    <button className="create-mashup-nav" data-nav-end="mashups" onClick={() => window.dispatchEvent(new Event("dbdj:create-mashup"))}><span><span className="nav-icon" aria-hidden>＋</span>Create New Mashup</span></button>
   </>;
 }
 
@@ -92,7 +106,8 @@ export function PlaylistActions({ refs, onDone }: { refs: string[]; onDone?: () 
       <option value="__new">Create New Playlist</option>
       {state.playlists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
     </select>
-    {auto.playlistId && <button disabled={!refs.length} onClick={() => { autoDJ.add(refs); onDone?.(); }}>Add to Auto DJ Queue</button>}
+    <button disabled={!refs.length} onClick={() => { autoDJ.add(refs); onDone?.(); }}>Add to Auto DJ Queue</button>
+    <button disabled={!refs.length || auto.status === "TRANSITIONING"} onClick={() => { autoDJ.playNextRefs(refs); onDone?.(); }}>Play Next</button>
   </>;
 }
 
@@ -147,7 +162,8 @@ export function TrackDetails({ track, onClose }: { track: TrackInfo; onClose: ()
 
 export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: string; onOpen: (id: string) => void; onQueue: () => void; onOpenSpotifyLocal?: (jobId: string) => void }) {
   const app = useApp();
-  const { playlists, library, engine } = app;
+  const { playlists, library, engine, autoDJ } = app;
+  const { settings: autoSettings } = useAutoDJ();
   const ps = usePlaylists();
   useLibraryState();
   const decks = useEngineState().decks;
@@ -157,6 +173,8 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
   const [deleting, setDeleting] = useState(false);
   const [info, setInfo] = useState<TrackInfo | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState({ minBpm: "", maxBpm: "", key: "", genre: "", minEnergy: "", maxEnergy: "" });
   useEffect(() => { setSelected([]); setName(null); setDeleting(false); setInfo(null); }, [id]);
   useEffect(() => {
     const port = { moveSelection: (delta: number) => {
@@ -171,6 +189,21 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
   }, [app.browser, library, playlists, id, selected, p?.refs]);
   if (!p) return <div className="provider-msg">Create or choose a playlist to prepare your set.</div>;
   const sum = PlaylistStore.summary(p, (r) => library.getByRef(r) ?? undefined);
+  const q = query.trim().toLocaleLowerCase();
+  const visible = p.refs.map((ref, index) => ({ ref, index, track: library.getByRef(ref) })).filter(({ ref, track }) => {
+    if (!track) return !q || ref.toLocaleLowerCase().includes(q);
+    const text = [track.title, track.artist, track.genre, track.key, track.camelot, track.bpm, track.energy].join(" ").toLocaleLowerCase();
+    if (q && !text.includes(q)) return false;
+    const minBpm = Number(filters.minBpm), maxBpm = Number(filters.maxBpm), minEnergy = Number(filters.minEnergy), maxEnergy = Number(filters.maxEnergy);
+    if (filters.minBpm && (track.bpm == null || track.bpm < minBpm)) return false;
+    if (filters.maxBpm && (track.bpm == null || track.bpm > maxBpm)) return false;
+    if (filters.minEnergy && (track.energy == null || track.energy < minEnergy)) return false;
+    if (filters.maxEnergy && (track.energy == null || track.energy > maxEnergy)) return false;
+    if (filters.key && !`${track.key ?? ""} ${track.camelot ?? ""}`.toLocaleLowerCase().includes(filters.key.toLocaleLowerCase())) return false;
+    if (filters.genre && !(track.genre ?? "").toLocaleLowerCase().includes(filters.genre.toLocaleLowerCase())) return false;
+    return true;
+  });
+  const clearFilters = () => { setQuery(""); setFilters({ minBpm: "", maxBpm: "", key: "", genre: "", minEnergy: "", maxEnergy: "" }); };
   const importFiles = async (reconnect = false) => {
     try { const refs = await app.platform.pickAudioFiles(); await app.addFiles(refs); if (!reconnect) playlists.addTracks(id, refs.map((r) => r.ref)); }
     catch (err) { app.log.warn("library", String(err)); }
@@ -193,42 +226,56 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
     library.select(library.getState().tracks.findIndex((t) => t.ref === ref));
   };
   const reference = decks.find((deck) => deck.playing)?.track ?? library.getSelected();
+  const selectedTrack = selected.length ? library.getByRef(selected[0]) : null;
   const trackMatch = (track: TrackInfo) => reference && reference.ref !== track.ref ? compatibility(reference, track, app.preparation.forRef(reference.ref), app.preparation.forRef(track.ref)) : null;
   return <div className="library playlist-view" onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e)}>
     <div className="library-controls">
     <div className="toolbar playlist-toolbar">
-      {name === null ? <b>{p.name}</b> : <form onSubmit={(e) => { e.preventDefault(); playlists.rename(id, name); setName(null); }}><input aria-label="Rename playlist" autoFocus value={name} onChange={(e) => setName(e.target.value)} /><button>Save name</button><button type="button" onClick={() => setName(null)}>Cancel</button></form>}
+      {name === null ? <b className="playlist-title">{p.name}</b> : <form onSubmit={(e) => { e.preventDefault(); playlists.rename(id, name); setName(null); }}><input aria-label="Rename playlist" autoFocus value={name} onChange={(e) => setName(e.target.value)} /><button>Save name</button><button type="button" onClick={() => setName(null)}>Cancel</button></form>}
       <span>{sum.count} tracks · {duration(sum.durationMs)}{sum.missing ? ` · ${sum.missing} missing` : ""}</span>
       <button onClick={() => setName(p.name)}>Rename</button>
       <button onClick={() => { const copy = playlists.duplicate(id); if (copy) onOpen(copy.id); }}>Duplicate</button>
       <button onClick={() => setDeleting(true)}>Delete playlist</button>
-      {deleting && <span>Delete “{p.name}”? Files stay in your library. <button onClick={() => void playlists.remove(id)}>Delete</button><button onClick={() => setDeleting(false)}>Cancel</button></span>}
+      {deleting && <div className="playlist-delete-confirm playlist-delete-confirm-inline" role="alert"><strong>Delete “{p.name}”?</strong><span>Tracks and audio files stay in your library.</span><button className="danger delete-confirm-action" onClick={() => void playlists.remove(id)}>🗑 Delete playlist</button><button className="cancel prominent-cancel" onClick={() => setDeleting(false)}>✕ Cancel — keep playlist</button></div>}
       <button onClick={() => void importFiles()}>+ Add local files</button>
       {app.platform.kind === "browser" && <button onClick={() => void importFiles(true)}>Reconnect files</button>}
+      <TrackDiscoveryActions track={selectedTrack} tracks={library.getState().tracks} />
+      <button className={`shuffle-toggle${autoSettings.shuffle ? " active" : ""}`} aria-pressed={autoSettings.shuffle} title="Shuffle track order when Auto DJ starts or repeats this playlist" onClick={() => autoDJ.configure({ shuffle: !autoSettings.shuffle })}>🔀 Shuffle</button>
       <button className="primary" disabled={!p.refs.length} onClick={() => { void app.autoDJ.start(id); onQueue(); }}>▶ START AUTO DJ</button>
       <button disabled={!selected.length} onClick={() => { void app.autoDJ.start(id, selected[0]); onQueue(); }}>Start from selected</button>
+    </div>
+    <div className="playlist-filters" role="search" aria-label="Filter playlist tracks">
+      <input className="search-input" aria-label="Search playlist tracks" placeholder="Search title, artist, BPM, key, genre or energy…" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <input type="number" aria-label="Minimum BPM" placeholder="Min BPM" value={filters.minBpm} onChange={(e) => setFilters({ ...filters, minBpm: e.target.value })} />
+      <input type="number" aria-label="Maximum BPM" placeholder="Max BPM" value={filters.maxBpm} onChange={(e) => setFilters({ ...filters, maxBpm: e.target.value })} />
+      <input aria-label="Key" placeholder="Key" value={filters.key} onChange={(e) => setFilters({ ...filters, key: e.target.value })} />
+      <input aria-label="Genre" placeholder="Genre" value={filters.genre} onChange={(e) => setFilters({ ...filters, genre: e.target.value })} />
+      <input type="number" min="1" max="10" aria-label="Minimum energy" placeholder="Min energy" value={filters.minEnergy} onChange={(e) => setFilters({ ...filters, minEnergy: e.target.value })} />
+      <input type="number" min="1" max="10" aria-label="Maximum energy" placeholder="Max energy" value={filters.maxEnergy} onChange={(e) => setFilters({ ...filters, maxEnergy: e.target.value })} />
+      <button onClick={clearFilters}>Clear</button><span className="hint">{visible.length} of {p.refs.length} tracks</span>
     </div>
     {onOpenSpotifyLocal && <LinkedPlaylistBanner playlistId={id} onOpen={onOpenSpotifyLocal} />}
     <AutoSettings />
     <AutoDJControls onQueue={onQueue} />
-    <div className="toolbar"><button onClick={() => setSelected(p.refs)}>Select all</button><span>{selected.length} selected</span><button disabled={!selected.length} onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); }}>Remove from playlist</button><PlaylistActions refs={selected} /></div>
+    <div className="toolbar"><button onClick={() => setSelected(visible.map((x) => x.ref))}>Select visible</button><span>{selected.length} selected</span><button disabled={!selected.length} onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); }}>Remove from playlist</button><PlaylistActions refs={selected} /></div>
     </div>
     <div className="table-wrap"><table className="tracks"><thead><tr><th /><th>Title</th><th>Artist</th><th>Album</th><th>Genre</th><th className="num">BPM</th><th>Key</th><th>Camelot</th><th className="num">Energy</th><th className="num">Match</th><th className="num">Time</th><th>Rating</th><th>Source</th><th>Added</th><th>Load</th></tr></thead><tbody>
-      {p.refs.map((ref, i) => {
-        const track = library.getByRef(ref);
+      {visible.map(({ ref, index: i, track }) => {
         return <tr key={`${i}:${ref}`} className={selected.includes(ref) ? "selected" : ""} draggable onClick={(e) => select(ref, e)}
+          tabIndex={0} aria-selected={selected.includes(ref)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected([ref]); } if (e.key === "Delete") { playlists.removeAt(id, [i]); setSelected((s) => s.filter((r) => r !== ref)); } }}
           onDoubleClick={() => { const deck = decks.findIndex((d) => !d.playing); if (track && deck >= 0) void engine.loadTrack(deck, track); }}
           onDragStart={(e) => { e.dataTransfer.setData(PLAYLIST_MOVE, JSON.stringify({ id, from: i })); e.dataTransfer.setData(TRACK_REFS, JSON.stringify(selected.includes(ref) ? selected : [ref])); if (track) e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(track)); e.dataTransfer.effectAllowed = "copyMove"; }}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, i)}
           onContextMenu={(e) => { e.preventDefault(); if (!selected.includes(ref)) setSelected([ref]); setMenu({ x: e.clientX, y: e.clientY }); }}>
           <td>{track && <ArtTile track={track} size={22} />}</td><td className="title-cell">{track?.title ?? ref}{track?.unavailableReason && <span className="warn"> · Reconnect file</span>}</td><td>{track?.artist}</td><td>{track?.album}</td><td>{track?.genre ?? ""}</td><td className="num">{track?.bpm?.toFixed(1) ?? "—"}</td><td>{track?.key ?? "—"}</td><td>{track?.camelot ?? "—"}</td><td className="num" title={track?.analysisConfidence === undefined ? "Not analysed" : `${Math.round(track.analysisConfidence * 100)}% confidence`}>{track?.energy ?? "—"}</td><td className="num" title={track ? trackMatch(track)?.reasons.join(" · ") : ""}>{track ? trackMatch(track)?.score ?? "—" : "—"}{track && trackMatch(track) ? "%" : ""}</td><td className="num">{duration(track?.durationMs)}</td><td>{track && <PlaylistStars track={track} />}</td><td>{track && <span className="source-badge">LOCAL</span>}</td><td className="hint">{track?.addedAt ? new Date(track.addedAt).toLocaleDateString() : ""}</td>
-          <td className="row-actions" onClick={(e) => e.stopPropagation()}>{decks.map((d, deck) => <button key={deck} disabled={!track || d.playing || !!track.unavailableReason} onClick={() => track && void engine.loadTrack(deck, track)}>→ {deck ? "B" : "A"}</button>)}<button disabled={!track} onClick={() => setInfo(track)}>Info</button><button disabled={i === 0} onClick={() => playlists.move(id, i, i - 1)}>↑</button><button disabled={i === p.refs.length - 1} onClick={() => playlists.move(id, i, i + 2)}>↓</button><button onClick={() => playlists.removeAt(id, [i])}>Remove</button></td>
+          <td className="row-actions" onClick={(e) => e.stopPropagation()}>{decks.map((d, deck) => <button key={deck} aria-label={`Load ${track?.title ?? "track"} to Deck ${deck ? "B" : "A"}`} disabled={!track || d.playing || !!track.unavailableReason} onClick={() => track && void engine.loadTrack(deck, track)}>→ {deck ? "B" : "A"}</button>)}<button disabled={!track} onClick={() => setInfo(track)}>Info</button><button disabled={!track} onClick={() => app.autoDJ.playNextRefs([ref])}>Play Next</button><button disabled={!track} onClick={() => app.autoDJ.add([ref])}>Queue</button>{(!track || track.unavailableReason) && <button onClick={() => void importFiles(true)}>Locate…</button>}<button disabled={i === 0} onClick={() => playlists.move(id, i, i - 1)}>↑</button><button disabled={i === p.refs.length - 1} onClick={() => playlists.move(id, i, i + 2)}>↓</button><button onClick={() => playlists.removeAt(id, [i])}>Remove</button></td>
         </tr>;
       })}
+      {p.refs.length > 0 && visible.length === 0 && <tr><td colSpan={15} className="empty">No tracks match these filters. <button onClick={clearFilters}>Clear filters</button></td></tr>}
       <tr onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e)}><td colSpan={15} className="empty">{p.refs.length ? "Drop here to move to the end" : "Drop library tracks or local files here. Use Ctrl/⌘ or Shift to select multiple tracks."}</td></tr>
     </tbody></table></div>
     {info && <TrackDetails track={library.getByRef(info.ref) ?? info} onClose={() => setInfo(null)} />}
-    {menu && <div className="ctx-menu" style={{ left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 160) }}><PlaylistActions refs={selected} onDone={() => setMenu(null)} /><button onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); setMenu(null); }}>Remove from playlist</button><button onClick={() => setMenu(null)}>Close</button></div>}
+    {menu && <div className="ctx-menu" style={{ left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 190) }}><PlaylistActions refs={selected} onDone={() => setMenu(null)} />{selectedTrack && <TrackDiscoveryActions compact track={selectedTrack} tracks={library.getState().tracks} />}<hr/><button onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); setMenu(null); }}>Remove from playlist</button><button onClick={() => setMenu(null)}>Close</button></div>}
   </div>;
 }
 

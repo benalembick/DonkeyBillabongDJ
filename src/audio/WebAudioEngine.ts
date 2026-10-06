@@ -114,6 +114,27 @@ export class WebAudioEngine implements AudioEngine {
     return { sampleRate: b.sampleRate, channels: Array.from({ length: Math.min(2, b.numberOfChannels) }, (_, i) => b.getChannelData(i).slice()) };
   }
 
+  /** Shared output for Production Studio and other authorised internal sources. */
+  /**
+   * Vocal monitoring output: the headphone mix (4-channel routing, e.g. the DDJ-SB's phones on 3/4) so a live
+   * microphone never reaches the speakers; otherwise the main output (`headphones: false` — the UI warns).
+   */
+  async createMonitorOutput(): Promise<{ context: AudioContext; input: GainNode; headphones: boolean }> {
+    await this.start();
+    if (!this.ctx || !this.masterGain) throw new Error("Audio engine output is unavailable");
+    const input = this.ctx.createGain();
+    if (this.headLevel) { input.connect(this.headLevel); return { context: this.ctx, input, headphones: true }; }
+    input.connect(this.masterGain); return { context: this.ctx, input, headphones: false };
+  }
+
+  async createProductionOutput(): Promise<{ context: AudioContext; input: GainNode }> {
+    await this.start();
+    if (!this.ctx || !this.masterGain) throw new Error("Audio engine output is unavailable");
+    const input = this.ctx.createGain();
+    input.connect(this.masterGain);
+    return { context: this.ctx, input };
+  }
+
   // ─────────────────────────── lifecycle ───────────────────────────
 
   start(): Promise<void> {

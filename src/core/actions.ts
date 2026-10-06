@@ -132,12 +132,18 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
     for (let d = 1; d <= deckCount; d++) add(`fx.unit${u}.assign.deck${d}`, `FX${u} assign deck ${deckLetter(d - 1)}`, "button", G);
     add(`fx.unit${u}.target.next`, `FX${u} target (deck / single stem)`, "button", G);
   }
-  for (let s = 1; s <= 4; s++) {
-    add(`sampler${s}.play`, `Sampler ${s} play`, "button", "Sampler", false);
-    add(`sampler${s}.stop`, `Sampler ${s} stop`, "button", "Sampler", false);
-    add(`sampler${s}.load`, `Sampler ${s} load`, "button", "Sampler", false);
-    add(`sampler${s}.eject`, `Sampler ${s} eject`, "button", "Sampler", false);
+  // Sampler pads 1-16 (Production Studio → Sampler), playable from the DJ screen and controllers.
+  for (let s = 1; s <= 16; s++) {
+    add(`sampler${s}.play`, `Sampler pad ${s} play (current bank)`, "button", "Sampler");
+    add(`sampler${s}.stop`, `Sampler pad ${s} stop`, "button", "Sampler");
+    add(`sampler${s}.load`, `Sampler pad ${s} load (Sampler editor sample)`, "button", "Sampler");
+    add(`sampler${s}.eject`, `Sampler pad ${s} eject`, "button", "Sampler");
   }
+  add("sampler.stopall", "Sampler stop all pads", "button", "Sampler");
+  for (const bank of ["a", "b", "c", "d"]) add(`sampler.bank.${bank}`, `Sampler pad bank ${bank.toUpperCase()}`, "button", "Sampler");
+  add("sampler.bank.next", "Sampler next pad bank", "button", "Sampler");
+  add("sampler.bank.prev", "Sampler previous pad bank", "button", "Sampler");
+  add("sampler.volume", "Sampler pad volume", "absolute", "Sampler");
   // Lighting (stable ids so a DDJ-SB / MIDI controller can be mapped to them)
   add("lighting.blackout", "Lighting blackout (toggle)", "button", "Lighting");
   add("lighting.master", "Lighting master brightness", "absolute", "Lighting");

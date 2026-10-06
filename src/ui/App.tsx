@@ -7,8 +7,7 @@ import { ControllerTest, LiveEvents, MidiMonitor } from "./ControllerPanels";
 import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
 import { UpdateBadge } from "./Updates";
-import { NavIcon } from "./NavIcons";
-import { TransitionWorkspace } from "./TransitionWorkspace";
+import { NavIcon, SaveMashupIcon } from "./NavIcons";
 import { TrainingWorkspace } from "./TrainingWorkspace";
 import { useFrameStore, useTick } from "./hooks";
 import { LibraryPanel, type MainBrowserArea } from "./LibraryPanel";
@@ -16,12 +15,15 @@ import { MatchDialogHost } from "./MatchDialog";
 import { Mixer } from "./Mixer";
 import { Diagnostics, Settings } from "./SystemPanels";
 import { FxBar } from "./FxBar";
+import { LiveSamplerBar } from "./LiveSamplerBar";
 import { getLayout, setLayout, useLayout, zoom, type LayoutMode } from "./layout";
 import { WaveformStack } from "./Waveforms";
 import brandLogo from "../assets/donkey-billabong-dj-logo.png";
 import { About } from "./About";
 import { WaveStylePicker } from "./WaveStylePicker";
 import { LightingWorkspace } from "./lighting/LightingWorkspace";
+import { ProductionStudioWorkspace } from "./ProductionStudioWorkspace";
+import { TeachLoopWorkspace } from "./TeachLoopWorkspace";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -153,7 +155,8 @@ function LayoutSwitch() {
         </div>}
       </div>
       <button className="manual-mashup-save" disabled={!canSave || saving} title="Save the current tracks, positions, tempo, STEMS, mixer, filters and effects as an editable Mashup Project" onClick={() => void saveManual()}>
-        {saving ? "SAVING…" : "SAVE MANUAL MASHUP"}
+        <SaveMashupIcon />
+        <span>{saving ? "SAVING…" : "SAVE MANUAL MASHUP"}</span>
       </button>
     </div>
   );
@@ -192,13 +195,14 @@ function ToolsOverlay({ tab, setTab, onClose }: { tab: ToolTab; setTab: (t: Tool
 }
 
 /** Drag handle between the performance area and the library (height saved per layout). */
-function Splitter({ mode }: { mode: LayoutMode }) {
+function Splitter({ mode, maximized, onToggleMaximize }: { mode: LayoutMode; maximized: boolean; onToggleMaximize: () => void }) {
   const start = useRef<{ y: number; h: number } | null>(null);
   return (
     <div
-      className="splitter"
-      title="Drag to resize the library"
+      className={`splitter${maximized ? " maximized" : ""}`}
+      title={maximized ? "Bottom panel is maximized" : "Drag to resize the bottom panel"}
       onPointerDown={(e) => {
+        if (maximized || e.target !== e.currentTarget) return;
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
         start.current = { y: e.clientY, h: getLayout().libraryHeight[mode] };
       }}
@@ -209,7 +213,7 @@ function Splitter({ mode }: { mode: LayoutMode }) {
         setLayout({ libraryHeight: { ...getLayout().libraryHeight, [mode]: Math.round(h) } });
       }}
       onPointerUp={() => (start.current = null)}
-    />
+    ><button className="panel-maximize" aria-label={maximized ? "Restore bottom panel" : "Maximize bottom panel"} aria-pressed={maximized} title={maximized ? "Restore bottom panel" : "Maximize bottom panel"} onPointerDown={(e)=>e.stopPropagation()} onClick={onToggleMaximize}><span aria-hidden>{maximized ? "▣" : "□"}</span>{maximized ? " Restore" : " Maximize"}</button></div>
   );
 }
 
@@ -241,6 +245,7 @@ function Stage({ mode }: { mode: LayoutMode }) {
 
 function Shell() {
   const [tool, setTool] = useState<ToolTab | null>(null);
+  const [lowerMaximized, setLowerMaximized] = useState(false);
   // Other parts of the UI (About page, Practice home) can open an area: dispatch "dbdj:navigate".
   useEffect(() => {
     const go = (e: Event) => {
@@ -251,15 +256,21 @@ function Shell() {
     window.addEventListener("dbdj:navigate", go);
     return () => window.removeEventListener("dbdj:navigate", go);
   }, []);
-  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting" | "transitions" | "training"; id: number }>({ area: "collections", id: 0 });
+  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting" | "transitions" | "training" | "production" | "teachloop"; id: number }>({ area: "collections", id: 0 });
   const libraryNavigation = useRef<{ area: MainBrowserArea; id: number }>({ area: "collections", id: 0 });
-  if (navigation.area !== "lighting" && navigation.area !== "transitions" && navigation.area !== "training") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
+  if (navigation.area !== "lighting" && navigation.area !== "training" && navigation.area !== "production" && navigation.area !== "teachloop") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
   const app = useApp();
   const { platform } = app;
   const layout = useLayout();
   useEffect(() => {
     document.title = "Donkey Billabong DJ";
   }, []);
+  useEffect(() => {
+    if (!lowerMaximized) return;
+    const restore = (e: KeyboardEvent) => { if (e.key === "Escape") setLowerMaximized(false); };
+    window.addEventListener("keydown", restore);
+    return () => window.removeEventListener("keydown", restore);
+  }, [lowerMaximized]);
 
   // Files dropped anywhere that isn't a deck or the library are added to the library.
   useEffect(() => {
@@ -284,13 +295,13 @@ function Shell() {
   }, [platform, app]);
 
   return (
-    <div className={`app layout-${layout.mode}`} style={{ ["--lib-h" as string]: `${layout.libraryHeight[layout.mode]}px` }}>
+    <div className={`app layout-${layout.mode}${lowerMaximized ? " lower-maximized" : ""}`} style={{ ["--lib-h" as string]: `${layout.libraryHeight[layout.mode]}px` }}>
       <header className="topbar">
         <div className="brand">
           <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={800} height={267} draggable={false} />
         </div>
         <nav className="main-navigation" aria-label="Main browser areas">
-          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["transitions","Transitions"],["practice","Practice Mode"],["streaming","Streaming"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
+          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["production","Production Studio"],["practice","Learn"],["streaming","Streaming"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area||(area==="practice"&&(navigation.area==="transitions"||navigation.area==="training"))?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
         </nav>
         <LayoutSwitch />
         <div className="statuses">
@@ -302,18 +313,23 @@ function Shell() {
           <button className="status utility-button" onClick={() => setTool("About")}><span aria-hidden="true">ⓘ</span> About</button>
         </div>
       </header>
-      <Boundary name="FX"><FxBar /></Boundary>
+      {navigation.area === "production" ? <Boundary name="Production Studio"><ProductionStudioWorkspace /></Boundary> : <>
+      <div className="top-tools">
+        <Boundary name="FX"><FxBar /></Boundary>
+        <Boundary name="Sampler"><LiveSamplerBar /></Boundary>
+      </div>
       <Stage mode={layout.mode} />
-      {layout.mode !== "classic" && <Splitter mode={layout.mode} />}
+      <Splitter mode={layout.mode} maximized={lowerMaximized} onToggleMaximize={() => setLowerMaximized((v) => !v)} />
       <section className="lower">
         {/* The library stays mounted (hidden) while Lighting is open, so it comes back exactly as it was. */}
-        <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "transitions" || navigation.area === "training"}>
+        <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "training" || navigation.area === "teachloop"}>
           <Boundary name="Library"><LibraryPanel navigation={libraryNavigation.current} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} /></Boundary>
         </div>
         {navigation.area === "lighting" && <Boundary name="Lighting"><LightingWorkspace /></Boundary>}
-        {navigation.area === "transitions" && <Boundary name="Transitions"><TransitionWorkspace /></Boundary>}
         {navigation.area === "training" && <Boundary name="Training"><TrainingWorkspace /></Boundary>}
+        {navigation.area === "teachloop" && <Boundary name="Teach Me: Live Looping"><TeachLoopWorkspace /></Boundary>}
       </section>
+      </>}
       {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}
       <Toasts />
       <MatchDialogHost />

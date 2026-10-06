@@ -17,7 +17,7 @@ export async function runTransitionSmoke(win: BrowserWindow, files: string): Pro
     const name = (p) => p.split(/[\\\\/]/).pop();
     await app.addFiles([{ ref: ${JSON.stringify(a)}, name: name(${JSON.stringify(a)}) }, { ref: ${JSON.stringify(b)}, name: name(${JSON.stringify(b)}) }]);
     app.analysis.cancelBatch();
-    document.querySelector('.main-navigation button[title="Transitions"]')?.click();
+    document.querySelector<HTMLElement>('[data-source="learn-transitions"]')?.click();
     await sleep(300);
     t.setTrack("out", ${JSON.stringify(a)});
     t.setTrack("in", ${JSON.stringify(b)});

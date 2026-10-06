@@ -225,6 +225,13 @@ describe("Auto DJ", () => {
     expect(engine.getState().decks[1].track?.ref).toBe("b");
   });
 
+  it("adds selected playlist tracks to play next in their selected order", async () => {
+    const { auto, playlist } = await setup();
+    await auto.start(playlist.id);
+    auto.playNextRefs(["d", "c"]);
+    expect(auto.getState().upcoming).toEqual(["d", "c", "b", "c"]);
+  });
+
   it("restart recovers a session stopped during a transition to one controlled outgoing deck", async () => {
     const { auto, playlist, audio, engine } = await setup();
     await auto.start(playlist.id); auto.skip();
