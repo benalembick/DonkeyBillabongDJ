@@ -12,7 +12,7 @@ import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackRe
 import type { SourceId } from "../matching/sources";
 import type { UpdateStatus } from "./updates";
 import type { SpotifyRef } from "../acquire/spotifyRef";
-import type { AcquireConfig, AudioQuality, DownloadResult, ImportJob, SpotifySourceResult, WatchedFile, WatchStatus } from "../acquire/types";
+import type { AcquisitionCapabilities, AcquireConfig, AudioQuality, CaptureSource, ConversionProgress, ConversionRequest, ConversionResult, DownloadResult, ImportJob, SpotifySourceResult, WatchedFile, WatchStatus } from "../acquire/types";
 import { LocalStorageStore } from "../providers/web";
 import type { StemBridge } from "../stems/StemService";
 import type { LightingBridge } from "../lighting/LightingService";
@@ -90,6 +90,16 @@ export interface DesktopBridge {
 
 /** Spotify → Local desktop services (electron/acquire). */
 export interface AcquireBridge {
+  capabilities(): Promise<AcquisitionCapabilities>;
+  pickConversionFiles(): Promise<string[]>;
+  pickConversionDestination(): Promise<string | null>;
+  convert(req: ConversionRequest): Promise<ConversionResult>;
+  cancelConversion(id: string): Promise<void>;
+  captureSources(): Promise<CaptureSource[]>;
+  startRecording(sourceId: string): Promise<void>;
+  stopRecording(): Promise<{ path: string; name: string } | null>;
+  recordingActive(): Promise<boolean>;
+  onConversionProgress(cb: (p: ConversionProgress) => void): () => void;
   config(): Promise<{ config: AcquireConfig; watch: WatchStatus; platform?: string }>;
   pickDestination(): Promise<{ config: AcquireConfig; watch: WatchStatus }>;
   pickWatchFolder(): Promise<{ config: AcquireConfig; watch: WatchStatus }>;
@@ -138,6 +148,7 @@ export interface TrackRow {
   /** Cached cover art URL (dbdj-art://…). */
   artwork?: string | null;
   artwork_read?: number;
+  lyrics?: string | null;
 }
 export interface PlaylistRow {
   id: string;
@@ -269,6 +280,7 @@ function rowToTrack(r: TrackRow): TrackInfo {
     rating: r.rating ?? 0,
     addedAt: r.added_at,
     artworkUrl: r.artwork ?? undefined,
+    lyrics: r.lyrics ?? undefined,
   };
 }
 
@@ -289,6 +301,7 @@ function trackToRow(t: TrackInfo): TrackRow {
     added_at: t.addedAt ?? Date.now(),
     rating: t.rating ?? 0,
     artwork: t.artworkUrl?.startsWith("dbdj-art://") ? t.artworkUrl : null,
+    lyrics: t.lyrics ?? null,
   };
 }
 
@@ -476,6 +489,7 @@ class BrowserPlatform implements Platform {
           key: c.key,
           genre: c.genre?.[0],
           year: c.year,
+          lyrics: c.lyrics?.filter(Boolean).join("\n\n"),
         });
       } catch (err) {
         out.push({ ref, ok: false, error: String(err) });

@@ -21,6 +21,8 @@ export interface TrackInfo {
   key: string | null;
   durationMs?: number;
   artworkUrl?: string;
+  /** Embedded lyrics, when supplied by the audio file/provider with reuse permission. */
+  lyrics?: string;
   externalUrl?: string;
   isrc?: string | null;
   genre?: string;

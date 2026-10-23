@@ -26,8 +26,9 @@ import type { StreamingTrack } from "../providers/streamingTypes";
 import { TransitionWorkspace } from "./TransitionWorkspace";
 import { TrackDiscoveryActions } from "./TrackDiscoveryActions";
 import { ManualMashupWizard } from "./ManualMashupWizard";
+import { AudioSourcesWorkspace } from "./AudioSourcesWorkspace";
 
-type Source = "local" | "audius" | "playlist" | "practice" | "transitions" | "auto-mashups" | "manual-mashups" | "queue" | "spotify-local" | StreamingProviderId;
+type Source = "local" | "audius" | "playlist" | "practice" | "transitions" | "auto-mashups" | "manual-mashups" | "queue" | "spotify-local" | "converter" | "recorder" | StreamingProviderId;
 export type MainBrowserArea = "collections" | "playlists" | "mashups" | "practice" | "streaming" | "transitions";
 
 function fmtDuration(ms?: number): string {
@@ -133,14 +134,16 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
         {item("local", <><span><span className="nav-icon" aria-hidden>⏱</span>Recently Added</span><span className="count">{recent}</span></>, "recent")}
         {item("local", <><span><span className="nav-icon" aria-hidden>★</span>Top Rated</span><span className="count">{rated}</span></>, "rated", "collections")}
         <PlaylistNav selected={!home && source === "playlist" ? playlistId : null} mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} learnSelected={!home && source === "transitions" ? "transitions" : !home && source === "practice" ? practiceView : null} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onOpen={openPlaylist} onMaships={openMaships} onLearn={(view) => { if (view === "training") window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: "training" })); else if (view === "transitions") { open("transitions"); onNavigateArea?.("transitions"); } else { setPracticeView(view); open("practice"); } }} onQueue={openQueue} onArea={(area) => { setPlaylistManagerOpen(false); setHome(area); onNavigateArea?.(area); }} onManage={() => { setPlaylistManagerOpen(true); setHome("playlists"); onNavigateArea?.("playlists"); }} />
-        <button data-nav-area="streaming" className={`browser-heading browser-section-link${activeArea === "streaming" ? " active" : ""}`} onClick={() => { setHome("streaming"); onNavigateArea?.("streaming"); }}>STREAMING <span>›</span></button>
+        <button data-nav-area="streaming" className={`browser-heading browser-section-link${activeArea === "streaming" ? " active" : ""}`} onClick={() => { setHome("streaming"); onNavigateArea?.("streaming"); }}>AUDIO SOURCES <span>›</span></button>
         {item("spotify", <>{label("◉", "Spotify")}{status(streams.spotify)}</>)}
         {item("spotify-local", <>{label("⇄", "Spotify → Local")}</>)}
         {item("apple-music", <>{label("♪", "Apple Music")}{status(streams["apple-music"])}</>)}
-        {item("audius", <>{label("◎", "Audius")}<span className={`count nav-status${audiusState.connection === "ok" ? " on" : ""}`} title={audiusState.connection === "error" ? "Can't reach Audius" : "Free streaming"}>{audiusState.connection === "ok" ? "● free" : audiusState.connection === "error" ? "▲ offline" : "○ free"}</span></>, undefined, "streaming")}
+        {item("audius", <>{label("◎", "Audius")}<span className={`count nav-status${audiusState.connection === "ok" ? " on" : ""}`} title={audiusState.connection === "error" ? "Can't reach Audius" : "Free streaming"}>{audiusState.connection === "ok" ? "● free" : audiusState.connection === "error" ? "▲ offline" : "○ free"}</span></>)}
+        {item("converter", <>{label("⇩", "High Speed Converter")}</>)}
+        {item("recorder", <>{label("●", "App Recorder")}</>, undefined, "streaming")}
       </nav>
       <div className="browser-body">
-        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setPlaylistManagerOpen(false); setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} managingPlaylists={playlistManagerOpen} setManagingPlaylists={setPlaylistManagerOpen} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "transitions" ? <TransitionWorkspace /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}
+        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setPlaylistManagerOpen(false); setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} managingPlaylists={playlistManagerOpen} setManagingPlaylists={setPlaylistManagerOpen} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "transitions" ? <TransitionWorkspace /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : source === "converter" || source === "recorder" ? <AudioSourcesWorkspace mode={source} /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}
       </div>
       {creatingMashup && <ManualMashupWizard onClose={() => setCreatingMashup(false)} />}
     </div>
@@ -181,7 +184,7 @@ function SectionHome({ area, open, openPlaylist, openPractice, managingPlaylists
   }
   else if(area==="mashups"){title="MASHUP PROJECTS";tiles=<><Tile icon="＋" title="Create New Mashup" detail="Choose two tracks and build a manual mashup step by step" onClick={()=>window.dispatchEvent(new Event("dbdj:create-mashup"))} accent="#39dca0" featured/><Tile icon="⚡" title="Auto Mashups" detail={`${mashups.recipes.filter(r=>!r.manual).length} saved projects`} onClick={()=>open("auto-mashups")} accent="#ff9f43"/><Tile icon="🎚" title="Manual Mashups" detail={`${mashups.recipes.filter(r=>!!r.manual).length} saved deck setups`} onClick={()=>open("manual-mashups")} accent="#d16cff"/></>}
   else if(area==="practice"){title="LEARN";tiles=<><Tile icon="⇄" title="Transition Guides" detail="Plan and rehearse transitions using both tracks' beat grids, phrases, energy and vocals" onClick={()=>open("transitions")} accent="#ff6bd6"/><Tile icon="◇" title="DJ Training Curriculum" detail="Seven guided lessons, from beatmatching to effects transitions" onClick={()=>window.dispatchEvent(new CustomEvent("dbdj:navigate",{detail:"training"}))} accent="#ffd166"/><Tile icon="🎓" title="Teach Me: Live Looping" detail="Hands-on lessons in the real Looper engine — no microphone needed" onClick={()=>window.dispatchEvent(new CustomEvent("dbdj:navigate",{detail:"teachloop"}))} accent="#ff9f43"/><Tile icon="▶" title="Start or Continue Practice" detail="Choose difficulty and begin a mixing challenge" onClick={()=>openPractice("practice")} accent="#39dca0"/><Tile icon="↗" title="Practice History" detail={`${practice.history.length} sessions · review your progress`} onClick={()=>openPractice("history")} accent="#4ca8ff"/></>}
-  else {title="STREAMING";tiles=<><Tile icon="◉" title="Spotify" detail={streams.spotify.status?.connected?"Connected":"Browse and configure Spotify"} onClick={()=>open("spotify")} accent="#1ed760"/><Tile icon="♪" title="Apple Music" detail={streams["apple-music"].status?.connected?"Connected":"Browse and configure Apple Music"} onClick={()=>open("apple-music")} accent="#fa586a"/><Tile icon="●" title="Audius" detail={audius.connection==="ok"?"Connected · free streaming":"Free music discovery"} onClick={()=>open("audius")} accent="#8b5cf6"/></>}
+  else {title="AUDIO SOURCES";tiles=<><Tile icon="◉" title="Spotify" detail={streams.spotify.status?.connected?"Connected":"Browse and configure Spotify"} onClick={()=>open("spotify")} accent="#1ed760"/><Tile icon="♪" title="Apple Music" detail={streams["apple-music"].status?.connected?"Connected":"Browse and configure Apple Music"} onClick={()=>open("apple-music")} accent="#fa586a"/><Tile icon="●" title="Audius" detail={audius.connection==="ok"?"Connected · free streaming":"Free music discovery"} onClick={()=>open("audius")} accent="#8b5cf6"/><Tile icon="⇩" title="High Speed Converter" detail="Convert local audio and import it into your library" onClick={()=>open("converter")} accent="#39dca0"/><Tile icon="●" title="App Recorder" detail="Record permitted Vivaldi audio as MP3 or WAV" onClick={()=>open("recorder")} accent="#4ca8ff"/></>}
   return <div className={`section-home${area === "playlists" ? " playlist-home" : ""}`}><div className="section-home-title"><b>{title}</b><span>{managingPlaylists && area === "playlists" ? "Rename, duplicate or remove playlists" : "Choose where you want to go"}</span>{area === "playlists" && <button className={`playlist-manage-button${managingPlaylists ? " active" : ""}`} title={managingPlaylists ? "Back to playlist tiles" : "Manage playlists"} aria-label={managingPlaylists ? "Back to playlist tiles" : "Manage playlists"} onClick={()=>setManagingPlaylists(!managingPlaylists)}><span aria-hidden>{managingPlaylists ? "←" : "✎"}</span> {managingPlaylists ? "Done" : "Manage"}</button>}</div>{area === "playlists" && managingPlaylists ? <PlaylistManagement onOpen={openPlaylist}/> : area === "playlists" ? tiles : <div className="nav-tiles">{tiles}</div>}</div>;
 }
 
@@ -955,7 +958,7 @@ function DownloadButton({ track }: { track: StreamingTrack }) {
 }
 
 function StreamingTracks({ view, onPrepare }: { view: ProviderView; onPrepare?: () => void }) {
-  const { platform, matching, spotifyLocal } = useApp();
+  const { platform, matching, spotifyLocal, spotifySession } = useApp();
   const [picked, setPicked] = useState<Set<string>>(new Set());
   useEffect(() => setPicked(new Set()), [view.selected]);
   const prepare = () => {
@@ -1090,7 +1093,7 @@ function StreamingTracks({ view, onPrepare }: { view: ProviderView; onPrepare?: 
                   ))}
                   {onPrepare && t.provider === "spotify" && <DownloadButton track={t} />}
                   {t.externalUrl && (
-                    <button className="tiny" title="Open in the service's own app" onClick={() => platform.openExternal(t.externalUrl!)}>
+                    <button className="tiny" title="Open in the service's own app" onClick={() => t.provider === "spotify" ? void spotifySession.playback.openTrack(t) : platform.openExternal(t.externalUrl!)}>
                       ↗
                     </button>
                   )}

@@ -25,6 +25,7 @@
   "dependencies": {
     "electron-updater": "^6.8.9",
     "fast-xml-parser": "^5.11.1",
+    "ffmpeg-static": "^5.2.0",
     "music-metadata": "^11.16.1",
     "onnxruntime-node": "^1.30.0",
     "react": "^19.3.0",
@@ -60,6 +61,7 @@
       "package.json",
       "build/window-icon.png",
       "!node_modules/onnxruntime-node/bin/napi-v6/linux/**",
+      "node_modules/loopback-capture/**",
       "!**/node_modules/**/*.log",
       "!**/node_modules/**/build/config.gypi",
       "!*.log"
@@ -81,7 +83,8 @@
         "NSMicrophoneUsageDescription": "Used only if you choose the microphone as the Lighting sound-to-light source."
       },
       "files": [
-        "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/**",
+        "!node_modules/loopback-capture/**"
       ],
       "x64ArchFiles": "**/onnxruntime-node/bin/**"
     },
@@ -91,7 +94,8 @@
       ],
       "files": [
         "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
-        "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**",
+        "!node_modules/loopback-capture/prebuilds/linux/**"
       ]
     },
     "nsis": {
@@ -111,11 +115,16 @@
       "artifactName": "DonkeyBillabongDJ-macOS.${ext}"
     },
     "asarUnpack": [
-      "node_modules/onnxruntime-node/**"
+      "node_modules/onnxruntime-node/**",
+      "node_modules/ffmpeg-static/**",
+      "node_modules/loopback-capture/prebuilds/**"
     ]
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/benalembick/DonkeyBillabongDJ.git"
+  },
+  "optionalDependencies": {
+    "loopback-capture": "^3.0.2"
   }
 }

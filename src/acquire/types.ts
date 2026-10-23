@@ -236,6 +236,54 @@ export interface DownloadResult {
   quality: AudioQuality;
 }
 
+export type ConversionFormat = "mp3" | "flac" | "wav" | "m4a";
+export type ConversionState = "queued" | "probing" | "converting" | "verifying" | "completed" | "cancelled" | "failed";
+
+export interface ConversionRequest {
+  id: string;
+  input: string;
+  destination: string;
+  format: ConversionFormat;
+  /** Lossy bitrate in kbps. Ignored by lossless formats. */
+  bitrateKbps?: number;
+  /** The user must affirm this for every submitted batch. */
+  rightsConfirmed: boolean;
+}
+
+export interface ConversionProgress {
+  id: string;
+  state: ConversionState;
+  progress: number;
+  speed?: number;
+  output?: string;
+  error?: string;
+}
+
+export interface ConversionResult {
+  id: string;
+  path: string;
+  name: string;
+  quality: AudioQuality;
+  elapsedMs: number;
+  speed: number | null;
+}
+
+export interface AcquisitionCapabilities {
+  converter: { available: boolean; formats: ConversionFormat[]; reason?: string };
+  recorder: {
+    available: boolean;
+    isolation: "application" | "unavailable";
+    silentRouting: boolean;
+    reason?: string;
+  };
+}
+
+export interface CaptureSource {
+  id: string;
+  name: string;
+  thumbnail: string;
+}
+
 /** Spotify playlist / track / liked songs as entries in source order. */
 export interface SpotifySourceResult {
   source: JobSource;

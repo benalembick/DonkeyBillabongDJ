@@ -9,15 +9,17 @@
  *  - download URLs are re-validated against each provider's rules (HTTPS, host, path)
  *  - no shell commands; nothing logged contains tokens
  */
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { constants as fsc, promises as fs } from "node:fs";
 import path from "node:path";
-import type { AcquireConfig, DownloadResult, SourceTrack, WatchedFile, WatchStatus } from "../../src/acquire/types";
+import type { AcquireConfig, ConversionRequest, DownloadResult, SourceTrack, WatchedFile, WatchStatus } from "../../src/acquire/types";
 import * as libraryDb from "../library/db";
 import { readTags } from "../library/tags";
 import { cleanPartials, downloadToFile, extFromContainer, extFromHeaders, finalizeFile, isAudioPath, PARTIAL_DIR, probeAudio, safeJoin, tempPath } from "./fileOps";
 import { SpotDL, spotdlSongToSource } from "./spotdl";
 import { FolderWatcher, type StableFile } from "./watcher";
+import { cancelConversion, converterAvailable, convertFile } from "./converter";
+import { nativeRecorderAvailable, nativeRecordingActive, startNativeRecording, stopNativeRecording, stopNativeRecordingOnExit } from "./nativeRecorder";
 
 const CONFIG_FILE = () => path.join(app.getPath("userData"), "spotify-local.json");
 
@@ -232,7 +234,26 @@ export async function registerAcquireIpc(): Promise<void> {
   if (config.destination) void cleanPartials(config.destination);
   if (config.watching && config.watchFolder) void startWatching().catch((err) => (watchError = String(err instanceof Error ? err.message : err)));
 
+  app.on("before-quit", stopNativeRecordingOnExit);
+
   ipcMain.handle("dbdj:acquire:config", () => ({ config, watch: status(), platform: process.platform }));
+  ipcMain.handle("dbdj:acquire:capabilities", () => ({
+    converter: { available: converterAvailable(), formats: ["mp3", "flac", "wav", "m4a"], reason: converterAvailable() ? undefined : "Bundled FFmpeg is unavailable" },
+    recorder: { available: nativeRecorderAvailable(), isolation: nativeRecorderAvailable() ? "application" : "unavailable", silentRouting: false, reason: process.platform === "win32" ? "Windows process loopback records audio from Vivaldi and its child processes. Other Vivaldi tabs may also be audible." : process.platform === "darwin" ? "Core Audio process-tap bridge is not installed in this build." : "Application audio recording is not supported on this platform." },
+  }));
+  ipcMain.handle("dbdj:acquire:captureSources", async () => (await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 240, height: 135 }, fetchWindowIcons: true })).map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL() })));
+  ipcMain.handle("dbdj:acquire:startRecording", (e, sourceId: unknown) => startNativeRecording(e.sender, String(sourceId)));
+  ipcMain.handle("dbdj:acquire:stopRecording", (e) => stopNativeRecording(e.sender));
+  ipcMain.handle("dbdj:acquire:recordingActive", (e) => nativeRecordingActive(e.sender));
+  ipcMain.handle("dbdj:acquire:pickConversionFiles", async (e) => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    const opts = { title: "Choose audio to convert", properties: ["openFile", "multiSelections"] as ("openFile" | "multiSelections")[], filters: [{ name: "Audio", extensions: ["mp3", "wav", "flac", "m4a", "aac", "ogg", "aif", "aiff", "caf"] }] };
+    const r = w ? await dialog.showOpenDialog(w, opts) : await dialog.showOpenDialog(opts);
+    return r.canceled ? [] : r.filePaths;
+  });
+  ipcMain.handle("dbdj:acquire:pickConversionDestination", (e) => pick(e, "Folder for converted tracks"));
+  ipcMain.handle("dbdj:acquire:convert", (e, req: ConversionRequest) => convertFile(req, (p) => { if (!e.sender.isDestroyed()) e.sender.send("dbdj:acquire:conversionProgress", p); }));
+  ipcMain.handle("dbdj:acquire:cancelConversion", (_e, id: unknown) => cancelConversion(String(id)));
   ipcMain.handle("dbdj:acquire:pickDestination", async (e) => {
     const dir = await pick(e, "Folder for downloaded tracks");
     if (dir) {

@@ -32,7 +32,7 @@ export function qualityText(q: AudioQuality | null | undefined): string {
 }
 
 export function SpotifyLocalPanel({ jobId, onOpenPlaylist }: { jobId?: string | null; onOpenPlaylist?: (id: string) => void }) {
-  const { spotifyLocal } = useApp();
+  const { spotifyLocal, spotifySession } = useApp();
   const s = useSpotifyLocal();
   const [selected, setSelected] = useState<string | null>(jobId ?? null);
   const [settings, setSettings] = useState(false);
@@ -54,6 +54,10 @@ export function SpotifyLocalPanel({ jobId, onOpenPlaylist }: { jobId?: string | 
         <h3>⇄ Spotify → Local</h3>
         <span className="hint">Spotify supplies the playlist and metadata; the decks play local files only.</span>
         <button className={settings ? "active" : ""} onClick={() => setSettings((v) => !v)}>⚙ Folders &amp; providers</button>
+      </div>
+      <div className="spotify-session-capabilities" role="note">
+        <div><b>Spotify Session</b><span>{spotifySession.playback.getState().connected ? "● Connected" : "○ Not connected"} · Playback opens in Spotify and stays separate from DJ decks.</span></div>
+        <div><b>Recording</b><span>○ Unavailable · {spotifySession.recording.getCapability().reason}</span></div>
       </div>
       {s.message && (
         <div className={s.message.kind === "error" ? "provider-error" : "sl-note"} role="status">

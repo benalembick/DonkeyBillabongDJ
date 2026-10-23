@@ -9,7 +9,7 @@ const common = {
   sourcemap: true,
   // Loaded from node_modules at runtime: the native addon (unpacked from the asar in packaged
   // builds) and electron-updater, which lazy-loads its per-platform updaters.
-  external: ["electron", "electron-updater", "onnxruntime-node"],
+  external: ["electron", "electron-updater", "onnxruntime-node", "loopback-capture"],
   logLevel: "info",
 };
 

@@ -301,7 +301,7 @@ function Shell() {
           <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={800} height={267} draggable={false} />
         </div>
         <nav className="main-navigation" aria-label="Main browser areas">
-          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["production","Production Studio"],["practice","Learn"],["streaming","Streaming"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area||(area==="practice"&&(navigation.area==="transitions"||navigation.area==="training"))?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
+          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["production","Production Studio"],["practice","Learn"],["streaming","Audio Sources"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area||(area==="practice"&&(navigation.area==="transitions"||navigation.area==="training"))?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
         </nav>
         <LayoutSwitch />
         <div className="statuses">

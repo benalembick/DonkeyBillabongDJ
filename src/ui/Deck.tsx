@@ -390,6 +390,7 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
   const L = deckLetter(deck);
   const p = `deck${deck + 1}`;
   const [dragOver, setDragOver] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
   const bpm = engine.getBpm(deck);
 
   const pickAndLoad = async () => {
@@ -468,7 +469,9 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
         <button className="load-btn" onClick={() => void pickAndLoad()} disabled={d.playing} title={d.playing ? "Pause the deck to load another track" : "Choose an audio file for this deck"}>
           LOAD
         </button>
+        {d.track?.lyrics && <button className="load-btn" onClick={() => setShowLyrics(true)} title="Show embedded lyrics">LYRICS</button>}
       </header>
+      {showLyrics && d.track?.lyrics && <div className="lyrics-overlay" role="dialog" aria-label={`Lyrics for ${d.track.title}`}><div className="lyrics-panel"><header><div><b>{d.track.title}</b><small>{d.track.artist}</small></div><button onClick={() => setShowLyrics(false)} aria-label="Close lyrics">×</button></header><pre>{d.track.lyrics}</pre></div></div>}
 
       {(d.status === "loading" || d.status === "error") && (
         <div className={`deck-load ${d.loadMessage || d.status === "error" ? "warn" : ""}`}>

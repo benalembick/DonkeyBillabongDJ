@@ -28,6 +28,7 @@ async function readOne(filePath: string): Promise<TagResult> {
       key: c.key,
       genre: c.genre?.[0],
       year: c.year,
+      lyrics: c.lyrics?.filter(Boolean).join("\n\n"),
     };
   } catch (err) {
     return { ref: filePath, ok: false, error: err instanceof Error ? err.message : String(err) };

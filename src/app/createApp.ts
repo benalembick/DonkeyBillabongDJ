@@ -43,6 +43,7 @@ import { VocalStudio } from "../production/vocal/VocalStudio";
 import { VocalPitch } from "../production/vocal/VocalPitch";
 import { LiveLooper } from "../production/looper/LiveLooper";
 import { TeachLoopService } from "../teachloop/TeachLoopService";
+import { browserSpotifySessionStore, RecordingSourceAdapter, SpotifyPlaybackAdapter, SpotifySessionCoordinator } from "../acquire/SpotifySessionCoordinator";
 
 export interface App {
   bus: CommandBus;
@@ -69,6 +70,8 @@ export interface App {
   matching: MatchingService;
   /** Spotify → Local: Spotify playlists prepared as local playlists of real files. */
   spotifyLocal: SpotifyLocalService;
+  /** Spotify selection/playback/session boundary; never exposes Spotify audio to the decks. */
+  spotifySession: SpotifySessionCoordinator;
   audius: AudiusStore;
   /** Which list the controller's browse encoder / LOAD buttons act on. */
   browser: BrowserRouter;
@@ -197,6 +200,13 @@ export function createApp(): App {
   controllers.on("monitor", (entry) => { if (!entry.mapping && entry.message.deviceId !== "simulator") production.handleSamplerMidi(entry.message); });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
+  const spotifyPlayback = new SpotifyPlaybackAdapter(async (url) => { platform.openExternal(url); });
+  const spotifySession = new SpotifySessionCoordinator(
+    spotifyPlayback,
+    new RecordingSourceAdapter({ providerAuthorized: false, processCaptureAvailable: false, silentRouting: false, reason: "Spotify playback is not authorization to record. No authorized Spotify recording adapter is configured." }),
+    browserSpotifySessionStore(localStorage),
+  );
+  streaming.on("change", (state) => spotifyPlayback.setConnected(!!state.spotify.status?.connected));
   const matching = new MatchingService({ engine, log, library, storage: platform.mappingStorage, remoteSources: [new AudiusSource(audiusClient)] });
   // "Available" only after a real API request succeeds.
   void audiusStore.testConnection().then(() => matching.notifySourcesChanged());
@@ -398,6 +408,7 @@ export function createApp(): App {
     streaming,
     matching,
     spotifyLocal,
+    spotifySession,
     audius: audiusStore,
     browser,
     production,

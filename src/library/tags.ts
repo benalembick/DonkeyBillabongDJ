@@ -17,6 +17,7 @@ export interface TagResult {
   year?: number;
   /** Cached embedded cover (dbdj-art://img/<hash>) when the file has one. */
   artworkUrl?: string;
+  lyrics?: string;
 }
 
 /** Merge tags into a library track. Tags win over filename-derived values when present. */
@@ -34,6 +35,7 @@ export function applyTags(t: TrackInfo, tags: TagResult): TrackInfo {
     genre: tags.genre ?? t.genre,
     year: tags.year ?? t.year,
     artworkUrl: tags.artworkUrl ?? t.artworkUrl,
+    lyrics: tags.lyrics?.trim() || t.lyrics,
     tagsRead: true,
     artworkRead: true,
   };

@@ -39,13 +39,8 @@ const PATHS: Record<NavArea, ReactNode> = {
       <circle cx="12" cy="12" r="1.3" fill="currentColor" />
     </>
   ),
-  // Broadcast waves: streaming.
-  streaming: (
-    <>
-      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
-      <path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8" />
-    </>
-  ),
+  // Download tray: combined streaming, conversion and recording sources.
+  streaming: <><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 18h16v3H4z"/></>,
   // Light bulb with rays: lighting.
   lighting: (
     <>

@@ -25,6 +25,7 @@ export interface TrackRow {
   rating: number;
   artwork: string | null;
   artwork_read?: number;
+  lyrics?: string | null;
 }
 
 export interface PlaylistRow {
@@ -117,6 +118,7 @@ function migrate(d: DatabaseSync): void {
     // Re-read tags once so existing tracks pick up their embedded cover art.
     d.exec("UPDATE tracks SET tags_read = 0");
   }
+  if (!cols.includes("lyrics")) d.exec("ALTER TABLE tracks ADD COLUMN lyrics TEXT");
 }
 
 export function loadTracks(): TrackRow[] {
@@ -148,15 +150,15 @@ export function removeMashupRecipe(id: string): void { open().prepare("DELETE FR
 export function upsertTracks(rows: TrackRow[]): void {
   const d = open();
   const stmt = d.prepare(`
-    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at, rating, artwork, artwork_read)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tracks (ref, title, artist, album, genre, year, duration_ms, isrc, bpm, key, tags_read, added_at, rating, artwork, artwork_read, lyrics)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(ref) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
       genre=excluded.genre, year=excluded.year, duration_ms=excluded.duration_ms, isrc=excluded.isrc,
-      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read, rating=excluded.rating, artwork=excluded.artwork, artwork_read=excluded.artwork_read`);
+      bpm=excluded.bpm, key=excluded.key, tags_read=excluded.tags_read, rating=excluded.rating, artwork=excluded.artwork, artwork_read=excluded.artwork_read, lyrics=excluded.lyrics`);
   d.exec("BEGIN");
   try {
     for (const r of rows) {
-      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at, r.rating ?? 0, r.artwork ?? null, r.artwork_read ?? 0);
+      stmt.run(r.ref, r.title, r.artist, r.album, r.genre, r.year, r.duration_ms, r.isrc, r.bpm, r.key, r.tags_read, r.added_at, r.rating ?? 0, r.artwork ?? null, r.artwork_read ?? 0, r.lyrics ?? null);
     }
     d.exec("COMMIT");
   } catch (err) {

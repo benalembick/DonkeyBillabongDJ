@@ -83,6 +83,20 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
     },
   },
   acquire: {
+    capabilities: () => ipcRenderer.invoke("dbdj:acquire:capabilities"),
+    pickConversionFiles: () => ipcRenderer.invoke("dbdj:acquire:pickConversionFiles"),
+    pickConversionDestination: () => ipcRenderer.invoke("dbdj:acquire:pickConversionDestination"),
+    convert: (req: unknown) => ipcRenderer.invoke("dbdj:acquire:convert", req),
+    cancelConversion: (id: string) => ipcRenderer.invoke("dbdj:acquire:cancelConversion", id),
+    captureSources: () => ipcRenderer.invoke("dbdj:acquire:captureSources"),
+    startRecording: (sourceId: string) => ipcRenderer.invoke("dbdj:acquire:startRecording", sourceId),
+    stopRecording: () => ipcRenderer.invoke("dbdj:acquire:stopRecording"),
+    recordingActive: () => ipcRenderer.invoke("dbdj:acquire:recordingActive"),
+    onConversionProgress: (cb: (p: unknown) => void) => {
+      const h = (_e: unknown, p: unknown) => cb(p);
+      ipcRenderer.on("dbdj:acquire:conversionProgress", h);
+      return () => ipcRenderer.removeListener("dbdj:acquire:conversionProgress", h);
+    },
     config: () => ipcRenderer.invoke("dbdj:acquire:config"),
     pickDestination: () => ipcRenderer.invoke("dbdj:acquire:pickDestination"),
     pickWatchFolder: () => ipcRenderer.invoke("dbdj:acquire:pickWatchFolder"),
