@@ -579,7 +579,13 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
           <button className={`round small play ${d.playing ? "lit" : ""}`} onClick={() => send(`${p}.play`)} aria-label="Play/Pause">
             {d.playing ? "❚❚" : "▶"}
           </button>
-          <Pads deck={deck} columns={8} />
+          <div className="compact-hotcues">
+            <div className="section-label hotcue-label">
+              HOT CUE
+              <CueSourceToggle deck={deck} />
+            </div>
+            <Pads deck={deck} columns={4} />
+          </div>
           <JogDisplay deck={deck} size={78} />
           <div className="compact-side">
             <StateButtons deck={deck} />

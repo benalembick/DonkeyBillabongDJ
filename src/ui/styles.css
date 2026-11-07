@@ -294,7 +294,7 @@ img.art-tile { object-fit: cover; display: block; }
 .pads { display: grid; gap: 4px; }
 .pad-wrap { position: relative; }
 .pad { width: 100%; height: 38px; font-weight: 800; font-size: 13px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 4px; }
-.deck.compact .pad { height: 32px; font-size: 11px; }
+.deck.compact .pad { height: 34px; font-size: 12px; }
 .pad small { font-weight: 400; font-size: 9px; }
 .pad.set { color: #fff; }
 .pad-clear { position: absolute; top: 1px; right: 1px; padding: 0 4px; font-size: 10px; line-height: 12px; }
@@ -327,7 +327,9 @@ img.art-tile { object-fit: cover; display: block; }
 .tempo:not(.vertical) .tempo-fader { flex: 1; min-width: 80px; }
 
 .deck-row { display: flex; align-items: center; gap: 8px; min-height: 0; }
-.deck-row .pads { flex: 1; min-width: 0; }
+.compact-hotcues { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.compact-hotcues .hotcue-label { font-size: 9px; }
+.compact-hotcues .pads { flex: 1; min-width: 0; }
 .compact-side { display: flex; flex-direction: column; gap: 4px; width: 150px; }
 
 /* ── mixer ── */
