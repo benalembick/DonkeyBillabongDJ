@@ -171,8 +171,13 @@ export class WebAudioEngine implements AudioEngine {
   }
 
   private async build(): Promise<void> {
-    const opts: AudioContextOptions = { latencyHint: this.config.latencyHint };
+    const opts: AudioContextOptions & { sinkId?: string } = { latencyHint: this.config.latencyHint };
     if (this.config.sampleRate) opts.sampleRate = this.config.sampleRate;
+    // Picking the sink at construction (not via setSinkId() afterwards) matters on macOS: Chromium
+    // there has been seen to keep reporting destination.maxChannelCount for the default device even
+    // after setSinkId() resolves to a 4-channel interface like the DDJ-SB, wrongly forcing stereo
+    // fallback. Building the context for the device directly avoids that transplant.
+    if (this.config.outputDeviceId && this.config.outputDeviceId !== "default") opts.sinkId = this.config.outputDeviceId;
     let ctx: AudioContext;
     try {
       ctx = new AudioContext(opts);
@@ -196,9 +201,12 @@ export class WebAudioEngine implements AudioEngine {
   }
 
   private async applySink(ctx: AudioContext): Promise<void> {
-    const sinkCtx = ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> };
+    const sinkCtx = ctx as AudioContext & { setSinkId?: (id: string) => Promise<void>; sinkId?: string };
     if (!sinkCtx.setSinkId) return;
     const id = this.config.outputDeviceId === "default" ? "" : this.config.outputDeviceId;
+    // Already on this sink (e.g. selected via the AudioContextOptions constructor) — switching
+    // again is at best redundant and at worst re-triggers the device negotiation for no reason.
+    if (typeof sinkCtx.sinkId === "string" && sinkCtx.sinkId === id) return;
     try {
       await sinkCtx.setSinkId(id);
     } catch (err) {
