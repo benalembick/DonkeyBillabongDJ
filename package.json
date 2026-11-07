@@ -1,7 +1,7 @@
 {
   "name": "donkey-billabong-dj",
   "productName": "Donkey Billabong DJ",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": true,
   "description": "Cross-platform two-deck DJ application with first-class hardware controller support.",
   "author": "Ben Alembick",
@@ -87,7 +87,7 @@
         "!node_modules/onnxruntime-node/bin/napi-v6/win32/**",
         "!node_modules/loopback-capture/**"
       ],
-      "x64ArchFiles": "**/onnxruntime-node/bin/**"
+      "x64ArchFiles": "**/{onnxruntime-node/bin/**,ffmpeg-static/**}"
     },
     "win": {
       "target": [
