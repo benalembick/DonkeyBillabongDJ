@@ -22,6 +22,7 @@ import { handleArtProtocol, registerArtScheme } from "./library/artwork";
 registerArtScheme();
 import * as libraryDb from "./library/db";
 import { readTags } from "./library/tags";
+import { readEmbeddedCues, writeEmbeddedCues } from "./library/cueTags";
 import { autoDJFixtures, runAutoDJSmoke } from "./autodjSmoke";
 import { runLightingSmoke } from "./lightingSmoke";
 import { runKnobSmoke } from "./knobSmoke";
@@ -173,6 +174,8 @@ function registerIpc(): void {
   ipcMain.handle("dbdj:mappings:put", (_e, row: libraryDb.MappingRow) => libraryDb.putMapping(row));
   ipcMain.handle("dbdj:mappings:remove", (_e, key: string) => libraryDb.removeMapping(String(key)));
   ipcMain.handle("dbdj:tags:read", (_e, paths: string[]) => readTags((Array.isArray(paths) ? paths : []).map(String).filter(isAudioFile)));
+  ipcMain.handle("dbdj:cues:read", (_e, filePath: string) => readEmbeddedCues(String(filePath)));
+  ipcMain.handle("dbdj:cues:write", (_e, filePath: string, cues: unknown) => writeEmbeddedCues(String(filePath), Array.isArray(cues) ? cues : []));
 
   ipcMain.handle("dbdj:openExternal", async (_e, url: string) => {
     const u = new URL(String(url));

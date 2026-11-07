@@ -27,6 +27,7 @@
     "fast-xml-parser": "^5.11.1",
     "ffmpeg-static": "^5.2.0",
     "music-metadata": "^11.16.1",
+    "node-id3": "^0.2.9",
     "onnxruntime-node": "^1.30.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

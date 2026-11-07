@@ -272,7 +272,6 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
         else g.fillText(label, p + 3 * dpr, 17 * dpr);
       }
     };
-    ov?.recommendedCues.forEach((cue) => marker(cue.timestamp, cue.kind === "mix-in" ? "#2ee59d" : cue.kind === "mix-out" ? "#ff9f43" : "#bf5af2", cue.label.replace("Recommended ", "")));
     if (planned) marker(planned.start, planned.role === "out" ? "#ff9f43" : "#2ee59d", planned.label);
     marker(d.cuePoint, "#ffd166", "");
     d.hotcues.forEach((hc, i) => hc != null && marker(hc, HOTCUE_COLORS[i], String(i + 1)));
@@ -424,10 +423,6 @@ export function OverviewWaveform({ deck }: { deck: number }) {
         const xa = x(section.start), xb = x(section.end);
         g.fillStyle = section.kind === "drop" || section.kind === "chorus" ? "rgba(255,90,40,.12)" : section.kind === "breakdown" ? "rgba(80,140,255,.12)" : "rgba(255,255,255,.035)";
         g.fillRect(xa, 0, Math.max(1, xb - xa), h);
-      }
-      for (const cue of ov.recommendedCues) {
-        g.fillStyle = cue.kind === "mix-in" ? "#2ee59d" : cue.kind === "mix-out" ? "#ff9f43" : "#bf5af2";
-        g.fillRect(x(cue.timestamp) - dpr, 0, 2 * dpr, h * .55);
       }
     }
     g.fillStyle = "#ffd166";

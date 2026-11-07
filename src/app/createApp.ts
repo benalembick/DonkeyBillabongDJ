@@ -9,7 +9,7 @@
 import { AnalysisService } from "../analysis/AnalysisService";
 import { WebAudioEngine } from "../audio/WebAudioEngine";
 import { CommandBus } from "../core/commands";
-import { DJEngine, DEFAULT_ENGINE_SETTINGS, type EngineSettings } from "../core/engine/DJEngine";
+import { DJEngine, DEFAULT_ENGINE_SETTINGS, cueSourceFor, type EngineSettings } from "../core/engine/DJEngine";
 import { DEFAULT_AUDIO_CONFIG, type AudioConfig } from "../core/engine/types";
 import { EventLog } from "../core/log";
 import { ControllerManager } from "../controllers/ControllerManager";
@@ -34,6 +34,8 @@ import { PlaylistStore } from "../library/PlaylistStore";
 import { AutoDJ } from "../autodj/AutoDJ";
 import { DEFAULT_AUTO_DJ } from "../autodj/transition";
 import { PreparationStore } from "../preparation/PreparationStore";
+import { CueSourceRouter, toDeckFields } from "../preparation/CueSourceRouter";
+import type { EmbeddedCue } from "../library/embeddedCues";
 import { LiveMashupService } from "../mashup/LiveMashupService";
 import { PracticeService } from "../practice/PracticeService";
 import { SpotifyLocalService, type FileCheck } from "../acquire/SpotifyLocalService";
@@ -91,6 +93,10 @@ export interface App {
   addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number>;
   saveAudioConfig(c: AudioConfig): void;
   saveEngineSettings(s: Partial<EngineSettings>): void;
+  /** Overwrites a deck's loaded track's embedded hot cues with its currently suggested ones. Desktop + MP3/WAV only. */
+  saveSuggestedCuesToEmbedded(deck: number): Promise<void>;
+  /** Forces a fresh analysis and replaces a deck's auto-suggested hot cues with it, keeping any the user placed or edited. */
+  regenerateSuggestedCues(deck: number): Promise<void>;
 }
 
 const AUDIO_KEY = "dbdj.audioConfig.v1";
@@ -143,7 +149,7 @@ export function createApp(): App {
     settings: { ...storedSettings, jog: { ...DEFAULT_ENGINE_SETTINGS.jog, ...storedSettings.jog } },
   });
   const preparation = new PreparationStore(platform.preparation, (err) => log.warn("analysis", `Preparation storage: ${String(err)}`));
-  engine.setPreparationPort(preparation);
+  engine.setPreparationPort(new CueSourceRouter(preparation, platform.embeddedCues, (deck) => cueSourceFor(engine.getSettings(), deck), (msg) => log.warn("cues", msg)));
   const analysis = new AnalysisService(engine, {
     preparation,
     audio,
@@ -189,7 +195,8 @@ export function createApp(): App {
   const lighting = new LightingService({ bus, log, dj: engine, audio, sections: (deck) => analysis.get(deck)?.sections ?? null, bridge: platform.kind === "desktop" ? (window.dbdjDesktop?.lighting ?? null) : null });
   void lighting.start();
   const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis, stemAvailable: (ref) => stems.index()[ref] === "complete",
-    settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s) });
+    settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s),
+    rememberedQueue: load("dbdj.autoDJ.queue.v1", { playlistId: null, current: null, upcoming: [], played: [] }), saveQueue: (q) => save("dbdj.autoDJ.queue.v1", q) });
   const liveMashup = new LiveMashupService({ engine, bus, preparation, persistence: platform.mashups, lookup: (ref) => library.getByRef(ref) ?? undefined, envelopes: (deck) => stems.envelopes(deck), renderData: (ref) => stems.renderData(ref), sourcePcm: (deck) => audio.exportPcm(deck), saveFile: (name,data) => platform.saveMashup(name,data), importRendered: async (file,track) => {
     library.addFiles([file]); library.patchTracks([track]); await platform.library?.save([track]);
     let mashups = playlists.getState().playlists.find((p) => p.name === "Mashups"); if (!mashups) mashups = playlists.create("Mashups"); playlists.addTracks(mashups.id,[file.ref]); analysis.queueTracks([track]);
@@ -425,7 +432,10 @@ export function createApp(): App {
     saveEngineSettings: (s) => {
       engine.updateSettings(s);
       save(ENGINE_KEY, engine.getSettings());
+      if ("cueSource" in s) void refreshLoadedCueSources();
     },
+    saveSuggestedCuesToEmbedded,
+    regenerateSuggestedCues,
   };
 
   async function addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number> {
@@ -454,5 +464,51 @@ export function createApp(): App {
       if (t) await engine.loadTrack(loadIntoDeck, t);
     }
     return n;
+  }
+
+  /** Re-populate hot cue pads for every already-loaded local deck after its cue source setting changes. */
+  async function refreshLoadedCueSources(): Promise<void> {
+    for (const d of engine.getState().decks) {
+      if (d.status !== "ready" || !d.track || d.track.source !== "local") continue;
+      const mode = cueSourceFor(engine.getSettings(), d.index);
+      const trackId = d.track.trackId;
+      if (!trackId) continue;
+      if (mode === "suggested") {
+        const record = preparation.get(trackId);
+        if (record) { const f = preparation.fields(record, d.duration); engine.refreshPreparation(trackId, { hotcues: f.hotcues, cueDetails: f.cueDetails }); }
+        continue;
+      }
+      if (!platform.embeddedCues) continue;
+      const result = await platform.embeddedCues.read(d.track.ref);
+      if (!result.ok) { log.warn("cues", `Couldn't read embedded hot cues for "${d.track.title}": ${result.error ?? "unknown error"}`); continue; }
+      engine.refreshPreparation(trackId, toDeckFields(result.supported ? result.cues : [], d.duration));
+    }
+  }
+
+  /** Overwrites a deck's loaded track's embedded hot cues with its currently suggested ones (from the preparation database). */
+  async function saveSuggestedCuesToEmbedded(deck: number): Promise<void> {
+    const d = engine.getState().decks[deck];
+    if (!d.track || d.track.source !== "local" || !d.track.trackId) { log.warn("cues", "No local track loaded to save cues from."); return; }
+    if (!platform.embeddedCues) { log.warn("cues", "Embedded hot cues are only available in the desktop app."); return; }
+    const record = preparation.get(d.track.trackId);
+    const cues: EmbeddedCue[] = (record?.cues ?? [])
+      .filter((c) => c.type === "hotcue")
+      .map((c) => ({ slot: c.slot, timestamp: c.timestamp, name: c.name, colour: c.colour }));
+    const r = await platform.embeddedCues.write(d.track.ref, cues);
+    if (!r.ok) { log.warn("cues", `Couldn't save suggested cues into "${d.track.title}": ${r.error ?? "unknown error"}`); return; }
+    log.info("cues", `Saved ${cues.length} suggested hot cue(s) into "${d.track.title}"'s file tag.`);
+    if (cueSourceFor(engine.getSettings(), deck) === "embedded") void refreshLoadedCueSources();
+  }
+
+  /** Forces a fresh analysis and regenerates a deck's auto-suggested hot cues from it, never touching a cue the user placed or edited. */
+  async function regenerateSuggestedCues(deck: number): Promise<void> {
+    const d = engine.getState().decks[deck];
+    if (!d.track || d.track.source !== "local") { log.warn("cues", "No local track loaded to regenerate cues for."); return; }
+    try {
+      await analysis.analyseOne(d.track, () => undefined, true, true);
+      log.info("cues", `Regenerated suggested hot cues for "${d.track.title}".`);
+    } catch (err) {
+      log.warn("cues", `Couldn't regenerate suggested cues for "${d.track.title}": ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }

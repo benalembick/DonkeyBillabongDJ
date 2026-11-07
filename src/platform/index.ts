@@ -8,6 +8,8 @@ import type {
 import { createBrowserStreaming } from "../providers/browser/browserStreaming";
 import type { TrackInfo } from "../core/engine/types";
 import type { TagResult } from "../library/tags";
+import type { EmbeddedCue, EmbeddedCueResult } from "../library/embeddedCues";
+import { CueIoQueue } from "./CueIoQueue";
 import type { MappingStorage, ResolutionMapping } from "../matching/SmartTrackResolver";
 import type { SourceId } from "../matching/sources";
 import type { UpdateStatus } from "./updates";
@@ -63,6 +65,11 @@ export interface DesktopBridge {
   readTextFile(path: string): Promise<string>;
   openExternal(url: string): Promise<void>;
   readTags(paths: string[]): Promise<TagResult[]>;
+  /** A track's own embedded hot cues (ID3v2 TXXX frame; MP3/WAV; desktop only). */
+  cues: {
+    read(filePath: string): Promise<EmbeddedCueResult>;
+    write(filePath: string, cues: EmbeddedCue[]): Promise<{ ok: boolean; error?: string }>;
+  };
   db: {
     loadPreparation(): Promise<TrackPreparation[]>;
     savePreparation(record: TrackPreparation): Promise<void>;
@@ -237,6 +244,11 @@ export interface Platform {
   streaming: StreamingBridge | null;
   /** Read embedded tags (ISRC, duration, BPM, key…) for local refs. */
   readTags(refs: string[]): Promise<TagResult[]>;
+  /** A track's own embedded hot cues (desktop only: the browser can't write back to a picked file). */
+  embeddedCues: {
+    read(ref: string): Promise<EmbeddedCueResult>;
+    write(ref: string, cues: EmbeddedCue[]): Promise<{ ok: boolean; error?: string }>;
+  } | null;
   library: LibraryPersistence | null;
   /** Playlists: SQLite on desktop, localStorage in the browser. */
   playlists: PlaylistPersistence;
@@ -395,6 +407,14 @@ class DesktopPlatform implements Platform {
   readTags(refs: string[]): Promise<TagResult[]> {
     return this.bridge.readTags(refs);
   }
+  private readonly cueQueue = new CueIoQueue();
+  get embeddedCues() {
+    const bridge = this.bridge.cues;
+    return {
+      read: (ref: string) => this.cueQueue.run(ref, () => bridge.read(ref)),
+      write: (ref: string, cues: EmbeddedCue[]) => this.cueQueue.run(ref, () => bridge.write(ref, cues)),
+    };
+  }
   get library(): LibraryPersistence {
     const db = this.bridge.db;
     return {
@@ -462,6 +482,8 @@ class BrowserPlatform implements Platform {
   readonly mappingStorage: MappingStorage = new LocalStorageMappings();
   readonly playlists: PlaylistPersistence = new LocalStoragePlaylists();
   readonly importJobs: ImportJobPersistence = new LocalStorageImportJobs();
+  /** The browser can't write back to a file picked via <input type=file>. */
+  readonly embeddedCues = null;
 
   async readTags(refs: string[]): Promise<TagResult[]> {
     const { parseBlob, selectCover } = await import("music-metadata");

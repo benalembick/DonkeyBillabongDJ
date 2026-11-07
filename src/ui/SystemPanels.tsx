@@ -1,7 +1,9 @@
 /** Diagnostics + Settings (audio, controller/jog, Mixxx import). */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AudioConfig, OutputDevice } from "../core/engine/types";
 import type { CrossfaderCurve } from "../core/engine/mixerMath";
+import { cueSourceFor, withCueSource, type CueSource } from "../core/engine/DJEngine";
+import { deckLetter } from "../core/actions";
 import { importMixxxMapping, type ImportResult } from "../controllers/mixxx/MixxxImporter";
 import { useApp, useEngineState } from "./context";
 import { MatchDiagnostics } from "./MatchDialog";
@@ -12,7 +14,7 @@ import { WaveformSettings } from "./WaveStylePicker";
 
 const audiusAppName = () => AUDIUS_APP_NAME;
 import type { SourceId } from "../matching/sources";
-import { useTick } from "./hooks";
+import { useFrameStore, useTick } from "./hooks";
 
 function AudiusDiagnostics() {
   const { audius, engine } = useApp();
@@ -321,6 +323,38 @@ function StreamingSettings() {
   );
 }
 
+function HotCueSettings() {
+  const app = useApp();
+  const { analysis, library, log } = app;
+  const progress = useFrameStore(useCallback((cb) => analysis.on("change", cb), [analysis]), () => analysis.getState());
+  const reevaluate = () => {
+    const tracks = library.getState().tracks.filter((t) => t.source === "local" && !t.unavailableReason);
+    if (!tracks.length) { log.warn("analysis", "No local tracks to re-evaluate."); return; }
+    const ok = window.confirm(
+      `Re-evaluate suggested hot cues for all ${tracks.length} imported track(s)?\n\n` +
+      "Each track is re-analysed from scratch, which can take a while for a large library. " +
+      "Hot cues you've placed or edited by hand are kept — only this app's auto-suggested ones are replaced.",
+    );
+    if (!ok) return;
+    void analysis.analyseTracks(tracks, true, true);
+  };
+  return (
+    <fieldset>
+      <legend>HOT CUES</legend>
+      <div className="row">
+        <button disabled={progress.busy} onClick={reevaluate}>
+          {progress.busy ? `Re-evaluating… ${progress.done}/${progress.total}` : "Re-evaluate all suggested hot cues…"}
+        </button>
+        {progress.busy && <button onClick={() => analysis.cancelBatch()}>Cancel</button>}
+      </div>
+      <p className="hint">
+        Re-analyses every imported local track and refreshes its suggested hot cues (Intro/Build/Drop/Outro). Hot cues you've placed or edited by hand are never touched.
+      </p>
+      {!progress.busy && progress.errors.length > 0 && <p className="hint warn">{progress.errors.length} track(s) failed to re-analyse — see Diagnostics for details.</p>}
+    </fieldset>
+  );
+}
+
 export function Settings() {
   const app = useApp();
   const { audio, engine, controllers, platform, log } = app;
@@ -487,6 +521,15 @@ export function Settings() {
           <input type="checkbox" checked={settings.lockPlayingDecks} onChange={(e) => app.saveEngineSettings({ lockPlayingDecks: e.target.checked })} />
           Prevent loading into a playing deck
         </label>
+        {Array.from({ length: engine.deckCount }, (_, deck) => (
+          <label key={deck}>
+            Deck {deckLetter(deck)} hot cue pads show
+            <select value={cueSourceFor(settings, deck)} onChange={(e) => app.saveEngineSettings({ cueSource: withCueSource(settings, deck, e.target.value as CueSource) })}>
+              <option value="suggested">This app's suggested cues</option>
+              <option value="embedded" disabled={!platform.embeddedCues}>The track's own embedded cues (MP3, WAV){!platform.embeddedCues ? " — desktop app only" : ""}</option>
+            </select>
+          </label>
+        ))}
         <div className="row">
           <button onClick={() => { const m = controllers.getActiveMapping() ?? controllers.getMappings()[0]; if (m) download(`${m.id}.json`, m); }}>
             Export mapping (JSON)
@@ -495,6 +538,7 @@ export function Settings() {
         </div>
       </fieldset>
 
+      <HotCueSettings />
       <StreamingSettings />
       <WaveformSettings />
       <StemSettings />

@@ -154,6 +154,9 @@ export interface EngineState {
   masterDeck: number | null;
 }
 
+/** Where hot cue pads get their data from: this app's own analysis, or the track's own embedded tag. */
+export type CueSource = "suggested" | "embedded";
+
 export interface EngineSettings {
   jog: JogSettings;
   /** Pioneer/Technics convention: pulling the tempo slider towards you speeds up. */
@@ -165,6 +168,12 @@ export interface EngineSettings {
   crossfaderAssign: ("left" | "right" | "thru")[];
   /** Effect assigned to FX1/FX2/FX3 of each unit (persisted). */
   fxAssign: FxType[][];
+  /**
+   * Per deck: "suggested" — hot cues come from (and save to) this app's preparation
+   * database. "embedded" — they come from (and save to) the track's own file tag
+   * (MP3/WAV). Decks choose independently.
+   */
+  cueSource: CueSource[];
 }
 
 export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
@@ -174,7 +183,20 @@ export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
   lockPlayingDecks: true,
   crossfaderAssign: ["left", "right", "left", "right"],
   fxAssign: [DEFAULT_FX_ASSIGN, DEFAULT_FX_ASSIGN],
+  cueSource: ["suggested", "suggested", "suggested", "suggested"],
 };
+
+/** `settings.cueSource[deck]` with a safe fallback for decks beyond the stored array's length. */
+export function cueSourceFor(settings: EngineSettings, deck: number): CueSource {
+  return settings.cueSource[deck] ?? "suggested";
+}
+
+/** A copy of `settings.cueSource` with one deck's entry replaced — for `saveEngineSettings({ cueSource: ... })`. */
+export function withCueSource(settings: EngineSettings, deck: number, source: CueSource): CueSource[] {
+  const next = settings.cueSource.slice();
+  next[deck] = source;
+  return next;
+}
 
 /** Browser/library port used by browser.* actions. Implemented by the library layer. */
 export interface BrowserPort {
@@ -191,7 +213,7 @@ export interface LoadProgress {
 export type TrackBytesLoader = (track: TrackInfo, opts: { onProgress: (p: LoadProgress) => void; signal: AbortSignal }) => Promise<ArrayBuffer>;
 export type SourcePolicy = (track: TrackInfo) => { ok: boolean; reason?: string };
 export interface PreparationPort {
-  restore(track: TrackInfo, bytes: ArrayBuffer, duration: number): Promise<Partial<DeckState>>;
+  restore(track: TrackInfo, bytes: ArrayBuffer, duration: number, deck: number): Promise<Partial<DeckState>>;
   changed(previous: DeckState, next: DeckState, patch: Partial<DeckState>): void;
 }
 
@@ -358,6 +380,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.log = opts.log;
     this.deckCount = opts.deckCount ?? 2;
     this.settings = { ...DEFAULT_ENGINE_SETTINGS, ...opts.settings };
+    // Migrate settings persisted before cueSource became per-deck (a bare string, not an array).
+    if (!Array.isArray(this.settings.cueSource)) {
+      const legacy: CueSource = this.settings.cueSource === "embedded" ? "embedded" : "suggested";
+      this.settings.cueSource = DEFAULT_ENGINE_SETTINGS.cueSource.map(() => legacy);
+    }
     this.state = {
       decks: Array.from({ length: this.deckCount }, (_, i) => initialDeck(i)),
       mixer: {
@@ -954,7 +981,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       // original bytes because preparation hashes them after decoding.
       const decoded = await this.audio.decode(bytes.slice(0));
       if (token !== this.loadTokens[deck]) return;
-      const prepared = await this.preparation?.restore(track, bytes, decoded.duration) ?? {};
+      const prepared = await this.preparation?.restore(track, bytes, decoded.duration, deck) ?? {};
       if (token !== this.loadTokens[deck]) return;
       track = prepared.track ?? track;
       this.audio.setPlaying(deck, false);

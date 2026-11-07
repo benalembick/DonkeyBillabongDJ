@@ -5,12 +5,13 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { deckLetter, STEM_LABELS, STEM_NAMES } from "../core/actions";
-import { LOOP_SIZES } from "../core/engine/DJEngine";
+import { LOOP_SIZES, cueSourceFor, withCueSource } from "../core/engine/DJEngine";
 import { useApp, useEngineState, useSend } from "./context";
 import { formatTime, useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS } from "./layout";
 import { OverviewWaveform } from "./Waveforms";
 import { ArtTile } from "./ArtTile";
+import { EMBEDDED_CUE_FORMATS, fileExtension } from "../library/embeddedCues";
 
 const RANGE_LABEL: Record<string, string> = { "0.06": "±6", "0.1": "±10", "0.16": "±16", "1": "WIDE" };
 const SOURCE_LABEL: Record<string, string> = { "apple-music": "APPLE MUSIC" };
@@ -191,6 +192,61 @@ function TempoFader({ deck, vertical }: { deck: number; vertical: boolean }) {
       <button className="tiny" onClick={() => send(`${p}.tempo.reset`)} title="Reset tempo">
         0
       </button>
+    </div>
+  );
+}
+
+/** Switches whether hot cue pads (and edits to them) use this app's suggested cues or the track's own embedded file tag. */
+function CueSourceToggle({ deck }: { deck: number }) {
+  const app = useApp();
+  const d = useEngineState().decks[deck];
+  const [busy, setBusy] = useState(false);
+  const mode = cueSourceFor(app.engine.getSettings(), deck);
+  const embeddedSupported = !!app.platform.embeddedCues;
+  const trackId = d.track?.trackId;
+  const format = d.track ? fileExtension(d.track.ref, d.track.source) : null;
+  const formatSupported = !!format && EMBEDDED_CUE_FORMATS.has(format);
+  const suggestedCount = trackId ? (app.preparation.get(trackId)?.cues.filter((c) => c.type === "hotcue").length ?? 0) : 0;
+  const pushToFile = () => {
+    if (!trackId || !d.track) return;
+    const what = suggestedCount ? `${suggestedCount} suggested hot cue${suggestedCount === 1 ? "" : "s"}` : "no suggested hot cues (this clears the file's embedded cues)";
+    if (!window.confirm(`Save ${what} into "${d.track.title}"?\n\nThis overwrites any hot cues already embedded in that file.`)) return;
+    void app.saveSuggestedCuesToEmbedded(deck);
+  };
+  const regenerate = async () => {
+    if (!d.track) return;
+    if (!window.confirm(`Regenerate suggested hot cues for "${d.track.title}" from a fresh analysis?\n\nAny cue you placed or edited by hand is kept; only auto-suggested ones are replaced.`)) return;
+    setBusy(true);
+    try { await app.regenerateSuggestedCues(deck); } finally { setBusy(false); }
+  };
+  return (
+    <div className="cue-source-toggle" title="Where hot cue pads come from, and where edits to them are saved">
+      <button className={mode === "suggested" ? "active" : ""} onClick={() => app.saveEngineSettings({ cueSource: withCueSource(app.engine.getSettings(), deck, "suggested") })}>
+        Suggested
+      </button>
+      <button
+        className={mode === "embedded" ? "active" : ""}
+        disabled={!embeddedSupported}
+        title={embeddedSupported ? "The track's own file tag (MP3, WAV)" : "Desktop app only"}
+        onClick={() => app.saveEngineSettings({ cueSource: withCueSource(app.engine.getSettings(), deck, "embedded") })}
+      >
+        Embedded
+      </button>
+      {d.status === "ready" && (
+        <button className="cue-regenerate" disabled={busy} title="Regenerate suggested hot cues from a fresh analysis (keeps any hand-placed cues)" onClick={() => void regenerate()}>
+          {busy ? "…" : "↻"}
+        </button>
+      )}
+      {embeddedSupported && d.status === "ready" && (
+        <button
+          className="cue-push-to-mp3"
+          disabled={!formatSupported}
+          title={formatSupported ? "Overwrite this file's embedded hot cues with the suggested ones" : `Embedded hot cues aren't supported for .${format ?? "this"} files (MP3, WAV only)`}
+          onClick={pushToFile}
+        >
+          → File
+        </button>
+      )}
     </div>
   );
 }
@@ -498,7 +554,10 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
       {variant === "full" ? (
         <div className="deck-body">
           <div className="deck-left">
-            <div className="section-label">HOT CUE</div>
+            <div className="section-label hotcue-label">
+              HOT CUE
+              <CueSourceToggle deck={deck} />
+            </div>
             <Pads deck={deck} columns={4} />
             <LoopSection deck={deck} />
           </div>

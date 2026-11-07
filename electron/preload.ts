@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
   readTextFile: (p: string): Promise<string> => ipcRenderer.invoke("dbdj:readTextFile", p),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("dbdj:openExternal", url),
   readTags: (paths: string[]) => ipcRenderer.invoke("dbdj:tags:read", paths),
+  cues: {
+    read: (filePath: string) => ipcRenderer.invoke("dbdj:cues:read", filePath),
+    write: (filePath: string, cues: unknown[]) => ipcRenderer.invoke("dbdj:cues:write", filePath, cues),
+  },
   db: {
     loadPreparation: () => ipcRenderer.invoke("dbdj:preparation:load"),
     savePreparation: (record: unknown) => ipcRenderer.invoke("dbdj:preparation:save", record),

@@ -1,5 +1,5 @@
 import { Emitter } from "../core/events";
-import type { DJEngine } from "../core/engine/DJEngine";
+import { cueSourceFor, type DJEngine } from "../core/engine/DJEngine";
 import type { AudioEngine, TrackInfo } from "../core/engine/types";
 import type { TrackAnalysis } from "./analyzeTrack";
 import type { PreparationStore } from "../preparation/PreparationStore";
@@ -71,7 +71,12 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     const d = this.engine.getState().decks[deck];
     if (d.status !== "ready") return;
     const prepared = d.track?.trackId ? this.options?.preparation.get(d.track.trackId) : undefined;
-    if (prepared) this.engine.refreshPreparation(prepared.trackId, this.options!.preparation.fields(prepared, d.duration));
+    if (prepared) {
+      const fields = this.options!.preparation.fields(prepared, d.duration);
+      // Hot cues currently shown from the track's own embedded tag must not be replaced by fresh suggestions.
+      if (cueSourceFor(this.engine.getSettings(), deck) === "embedded") { delete fields.hotcues; delete fields.cueDetails; }
+      this.engine.refreshPreparation(prepared.trackId, fields);
+    }
     else if (analysis.bpm && analysis.firstBeat !== null) this.engine.setBeatGrid(deck, { bpm: analysis.bpm, firstBeat: analysis.firstBeat, confidence: analysis.confidence, source: analysis.bpmSource });
     this.show(deck, analysis);
   }
@@ -79,7 +84,7 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
    * `transfer`: hand the decoded samples to the worker instead of copying them (library analysis,
    * where the buffer isn't used afterwards). Deck loads copy, since the deck plays that buffer.
    */
-  private async analyseBuffer(track: TrackInfo, buffer: AudioBuffer, force = false, transfer = false): Promise<Overview> {
+  private async analyseBuffer(track: TrackInfo, buffer: AudioBuffer, force = false, transfer = false, resuggest = false): Promise<Overview> {
     const trackId = track.trackId;
     if (!force && trackId && this.options) {
       const cached = await this.options.preparation.waveform(trackId);
@@ -108,7 +113,7 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
       });
       this.set({ runs: this.state.runs + 1 });
       const analysis = await result;
-      if (trackId && this.options) await this.options.preparation.saveAnalysis(trackId, analysis, duration, track);
+      if (trackId && this.options) await this.options.preparation.saveAnalysis(trackId, analysis, duration, track, resuggest);
       return analysis;
     })();
     this.inflight.set(key, work);
@@ -148,7 +153,7 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
    * Analyse one track now, even while a library batch is running (e.g. the Transitions page
    * needs it). Reports its stage; resolves when the analysis is saved.
    */
-  async analyseOne(track: TrackInfo, onStage: (stage: "reading" | "decoding" | "analysing" | "done") => void = () => undefined, force = false): Promise<void> {
+  async analyseOne(track: TrackInfo, onStage: (stage: "reading" | "decoding" | "analysing" | "done") => void = () => undefined, force = false, resuggest = false): Promise<void> {
     if (!this.options) throw new Error("Analysis isn't available");
     if (track.source !== "local") throw new Error("Only local files can be analysed");
     if (track.unavailableReason) throw new Error(track.unavailableReason);
@@ -161,7 +166,7 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     const buffer = decoded.handle as AudioBuffer;
     if (!buffer || typeof buffer.getChannelData !== "function") throw new Error("Audio decoder did not provide analysis samples");
     onStage("analysing");
-    const result = await this.analyseBuffer({ ...track, trackId: prep.trackId }, buffer, force, true);
+    const result = await this.analyseBuffer({ ...track, trackId: prep.trackId }, buffer, force, true, resuggest);
     this.engine.getState().decks.forEach((d, deck) => { if (d.status === "ready" && d.track?.trackId === prep.trackId) this.apply(deck, result); });
     onStage("done");
   }
@@ -176,7 +181,7 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     await this.analyseTracks(tracks);
     if (this.queued.size) void this.drainQueue();
   }
-  async analyseTracks(tracks: TrackInfo[], force = false): Promise<void> {
+  async analyseTracks(tracks: TrackInfo[], force = false, resuggest = false): Promise<void> {
     if (!this.options || this.state.busy) return;
     const list = [...new Map(tracks.filter((t) => t.source === "local").map((t) => [t.ref, t])).values()];
     this.cancelled = false;
@@ -206,7 +211,7 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
             const decoded = await this.options.audio.decode(bytes), buffer = decoded.handle as AudioBuffer;
             if (!buffer || typeof buffer.getChannelData !== "function") throw new Error("Audio decoder did not provide analysis samples");
             if (!force && decoded.duration > MAX_BATCH_SECONDS) throw new SkipTrack(`too long for background analysis (${minutes(decoded.duration)})`);
-            const result = await this.analyseBuffer({ ...track, trackId: prep.trackId }, buffer, force, true);
+            const result = await this.analyseBuffer({ ...track, trackId: prep.trackId }, buffer, force, true, resuggest);
             this.engine.getState().decks.forEach((d, deck) => { if (d.status === "ready" && d.track?.trackId === prep.trackId) this.apply(deck, result); });
           }
           if (this.crashed.delete(track.ref)) this.saveSkipList();

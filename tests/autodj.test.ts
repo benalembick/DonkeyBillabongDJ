@@ -225,6 +225,15 @@ describe("Auto DJ", () => {
     expect(engine.getState().decks[1].track?.ref).toBe("b");
   });
 
+  it("restores the last edited queue in the off state and persists later edits", async () => {
+    const { bus, audio, library, playlists, engine } = await setup();
+    const saved: Array<{ playlistId: string | null; current: string | null; upcoming: string[]; played: string[] }> = [];
+    const auto = new AutoDJ({ engine, bus, audio, library, playlists, analysis: { get: () => null }, rememberedQueue: { playlistId: "previous", current: "a", upcoming: ["c", "b"], played: ["d"] }, saveQueue: (queue) => saved.push(queue) });
+    expect(auto.getState()).toMatchObject({ status: "OFF", playlistId: "previous", current: "a", upcoming: ["c", "b"], played: ["d"], message: "Last Auto DJ queue restored" });
+    auto.remove(0);
+    expect(saved.at(-1)).toEqual({ playlistId: "previous", current: "a", upcoming: ["b"], played: ["d"] });
+  });
+
   it("adds selected playlist tracks to play next in their selected order", async () => {
     const { auto, playlist } = await setup();
     await auto.start(playlist.id);

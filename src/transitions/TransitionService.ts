@@ -11,7 +11,7 @@
  */
 import { Emitter } from "../core/events";
 import type { CommandBus } from "../core/commands";
-import type { DJEngine } from "../core/engine/DJEngine";
+import { cueSourceFor, type DJEngine } from "../core/engine/DJEngine";
 import type { TrackInfo } from "../core/engine/types";
 import type { AnalysisService } from "../analysis/AnalysisService";
 import type { LibraryStore } from "../library/LibraryStore";
@@ -193,7 +193,13 @@ export class TransitionService extends Emitter<{ change: TransitionState }> {
     let first = g.firstBeat + (by.beats ?? 0) * beatLength(g.bpm) + (by.ms ?? 0) / 1000;
     if (first < 0) first += barLength(g.bpm);
     const r = this.d.preparation.editGrid(f.trackId, bpm, first);
-    if (r) this.d.engine.refreshPreparation(r.trackId, this.d.preparation.fields(r));
+    if (r) {
+      const fields = this.d.preparation.fields(r);
+      // Hot cues currently shown from the track's own embedded tag must not be replaced here.
+      const deck = side === "out" ? this.decksFor().outDeck : this.decksFor().inDeck;
+      if (cueSourceFor(this.d.engine.getSettings(), deck) === "embedded") { delete fields.hotcues; delete fields.cueDetails; }
+      this.d.engine.refreshPreparation(r.trackId, fields);
+    }
   }
 
   // ─────────────────────────── facts ───────────────────────────

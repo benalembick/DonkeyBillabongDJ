@@ -21,7 +21,13 @@ export interface AutoDJState {
   message: string;
   settings: AutoDJSettings;
 }
-interface Options { engine: DJEngine; bus: CommandBus; audio: AudioEngine; library: LibraryStore; playlists: PlaylistStore; analysis: Pick<AnalysisService, "get">; stemAvailable?: (ref: string) => boolean; settings?: Partial<AutoDJSettings>; saveSettings?: (s: AutoDJSettings) => void }
+export interface RememberedAutoDJQueue {
+  playlistId: string | null;
+  current: string | null;
+  upcoming: string[];
+  played: string[];
+}
+interface Options { engine: DJEngine; bus: CommandBus; audio: AudioEngine; library: LibraryStore; playlists: PlaylistStore; analysis: Pick<AnalysisService, "get">; stemAvailable?: (ref: string) => boolean; settings?: Partial<AutoDJSettings>; saveSettings?: (s: AutoDJSettings) => void; rememberedQueue?: Partial<RememberedAutoDJQueue>; saveQueue?: (q: RememberedAutoDJQueue) => void }
 
 /** Only references and transient playback state; the library owns all track metadata. */
 export class AutoDJ extends Emitter<{ change: AutoDJState }> {
@@ -33,13 +39,19 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   private unsub: (() => void)[];
   constructor(private o: Options) {
     super();
-    this.state = { status: "OFF", playlistId: null, current: null, deck: 0, upcoming: [], played: [], preparing: false, queueLocked: false, plan: null, nextSeconds: null, message: "", settings: { ...DEFAULT_AUTO_DJ, ...o.settings } };
+    const remembered = o.rememberedQueue;
+    const refs = (value: unknown) => Array.isArray(value) ? value.filter((ref): ref is string => typeof ref === "string") : [];
+    this.state = { status: "OFF", playlistId: typeof remembered?.playlistId === "string" ? remembered.playlistId : null, current: typeof remembered?.current === "string" ? remembered.current : null, deck: 0, upcoming: refs(remembered?.upcoming), played: refs(remembered?.played), preparing: false, queueLocked: false, plan: null, nextSeconds: null, message: remembered?.current || refs(remembered?.upcoming).length ? "Last Auto DJ queue restored" : "", settings: { ...DEFAULT_AUTO_DJ, ...o.settings } };
     // Manual deck/mixer actions intentionally leave automation active. Once
     // started, Auto DJ owns the transition schedule until STOP AUTO DJ is used.
     this.unsub = [o.audio.on((e) => { if (e.type === "error") this.pause(`Audio error: ${e.message}`); })];
   }
   getState(): AutoDJState { return this.state; }
-  private set(patch: Partial<AutoDJState>) { this.state = { ...this.state, ...patch }; this.emit("change", this.state); }
+  private set(patch: Partial<AutoDJState>) {
+    this.state = { ...this.state, ...patch };
+    if ("playlistId" in patch || "current" in patch || "upcoming" in patch || "played" in patch) this.o.saveQueue?.({ playlistId: this.state.playlistId, current: this.state.current, upcoming: this.state.upcoming, played: this.state.played });
+    this.emit("change", this.state);
+  }
   configure(patch: Partial<AutoDJSettings>) {
     const settings = { ...this.state.settings, ...patch };
     this.o.saveSettings?.(settings);

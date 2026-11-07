@@ -22,3 +22,14 @@ export function useStemIndex(): Record<string, "complete" | "partial"> {
   }, [stems]);
   return idx;
 }
+
+/** Library ref → background separation progress (0..1), for refs currently being analysed. */
+export function useStemProgress(): Record<string, number> {
+  const { stems } = useApp();
+  const [p, setP] = useState(stems.libraryProgress());
+  useEffect(() => {
+    setP(stems.libraryProgress());
+    return stems.on("libraryProgress", setP);
+  }, [stems]);
+  return p;
+}

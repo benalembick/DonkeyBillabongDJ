@@ -4,7 +4,13 @@ import { DISPLAY_HIGH_HZ, DISPLAY_KEYS, DISPLAY_LOW_HZ, type DisplayBands, type 
 export const ANALYSIS_VERSION = 1;
 export const PREPARATION_SCHEMA = 1;
 export const CUE_COLOURS = ["#ff5f57", "#ffbd2e", "#28c840", "#32ade6", "#bf5af2", "#ff375f", "#64d2ff", "#ffd60a"];
-export interface PreparedCue { slot: number; timestamp: number; name: string; colour: string; type: "hotcue" | "memory" }
+export interface PreparedCue {
+  slot: number; timestamp: number; name: string; colour: string; type: "hotcue" | "memory";
+  /** "analysis": auto-suggested and safe to replace when re-suggesting; absent/"manual": the user placed or edited it. */
+  source?: "analysis" | "manual";
+  comment?: string;
+  confidence?: number;
+}
 export interface SavedLoop { id: string; slot: number; start: number; end: number; beats: number | null; name: string; colour: string }
 export interface PreparedGrid extends BeatGrid { offset: number; beatPositions: number[]; manuallyAdjusted: boolean }
 export interface GainAnalysis { gainDb: number; peak?: number; loudness?: number; method: string }
@@ -135,7 +141,9 @@ export function unpackWaveform(r: WaveformRecord): TrackAnalysis {
   if (r.schemaVersion !== PREPARATION_SCHEMA) throw new Error("Unsupported waveform schema");
   return { bpm: r.bpm, firstBeat: r.firstBeat, confidence: r.confidence, bpmSource: r.bpmSource,
     key: r.key ?? null, keyConfidence: r.keyConfidence ?? 0, energy: r.energy ?? null, energyConfidence: r.energyConfidence ?? 0,
-    gainDb: r.gainDb ?? null, peak: r.peak ?? 0, sections: r.sections ?? [], recommendedCues: r.recommendedCues ?? [], fps: r.fps,
+    gainDb: r.gainDb ?? null, peak: r.peak ?? 0, sections: r.sections ?? [], recommendedCues: r.recommendedCues ?? [],
+    // Not cached: it's only consulted once, right when a track is freshly analysed (see PreparationStore.saveAnalysis).
+    hotCueSuggestions: [], fps: r.fps,
     peaks: decode(r.arrays.peaks), rms: decode(r.arrays.rms), low: decode(r.arrays.low), mid: decode(r.arrays.mid), high: decode(r.arrays.high),
     // Bands analysed with different crossovers are ignored (and re-derived in the background on next load).
     ...(r.bands && r.bands.xover?.[0] === DISPLAY_LOW_HZ && r.bands.xover?.[1] === DISPLAY_HIGH_HZ ? { bands: unpackBands(r.bands) } : {}) };

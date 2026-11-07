@@ -92,6 +92,8 @@ type Events = {
   envelopes: { deck: number };
   index: Record<string, "complete" | "partial">;
   libraryError: { ref: string; message: string };
+  /** Background (library pre-analysis) separation progress, 0..1, for refs currently being separated. */
+  libraryProgress: Record<string, number>;
 };
 
 export interface StemServiceStatus {
@@ -117,6 +119,8 @@ export class StemService extends Emitter<Events> {
   private libRunning = false;
   private envs: (StemEnvelopes | null)[] = [];
   private idx: Record<string, "complete" | "partial"> = {};
+  /** Background separation progress (0..1) for refs currently in the library queue. */
+  private libProgress: Record<string, number> = {};
   private st: StemServiceStatus;
   private seekTimer: ReturnType<typeof setInterval> | null = null;
   private lastPrio: number[] = [];
@@ -197,6 +201,9 @@ export class StemService extends Emitter<Events> {
 
   index(): Record<string, "complete" | "partial"> {
     return this.idx;
+  }
+  libraryProgress(): Record<string, number> {
+    return this.libProgress;
   }
   renderData(ref: string) { if (!this.bridge || typeof this.bridge.renderData !== "function") return Promise.reject(new Error("Restart DonkeyBillabongDJ to enable offline rendering")); return this.bridge.renderData(ref); }
 
@@ -558,10 +565,19 @@ export class StemService extends Emitter<Events> {
 
   private pendingRun = new Map<number, { left: Float32Array; right: Float32Array }>();
 
+  private setLibraryProgress(ref: string, progress: number | null): void {
+    const next = { ...this.libProgress };
+    if (progress === null) delete next[ref];
+    else next[ref] = progress;
+    this.libProgress = next;
+    this.emit("libraryProgress", this.libProgress);
+  }
+
   private onLibraryMsg(lib: LibraryJob, m: FromWorker): void {
     const finish = (err?: Error) => {
       this.libJobs.delete(lib.id);
       this.pendingRun.delete(lib.id);
+      this.setLibraryProgress(lib.ref, null);
       if (err) lib.reject(err);
       else lib.resolve();
     };
@@ -571,8 +587,12 @@ export class StemService extends Emitter<Events> {
         const pcm = this.pendingRun.get(lib.id);
         this.pendingRun.delete(lib.id);
         if (pcm) this.post({ type: "run", jobId: lib.id, left: pcm.left, right: pcm.right, startFrame: 0, quality: this.st.settings.quality });
+        this.setLibraryProgress(lib.ref, 0);
         break;
       }
+      case "progress":
+        this.setLibraryProgress(lib.ref, Math.min(1, m.done / m.regions));
+        break;
       case "done":
         finish();
         break;
@@ -580,7 +600,7 @@ export class StemService extends Emitter<Events> {
         finish(new Error(m.message));
         break;
       case "region":
-        break; // library jobs only fill the cache
+        break; // library jobs only fill the cache; progress comes from "progress" messages
     }
   }
 }

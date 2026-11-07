@@ -56,6 +56,12 @@ export interface TrackAnalysis {
   peak: number;
   sections: AnalysisSection[];
   recommendedCues: RecommendedCue[];
+  /**
+   * Exactly 8 structural hot cue suggestions (Intro 1/2, Build 1, Drop 1, Build 2,
+   * Drop 2, Outro 1/2) in that fixed order, for the hot cue pads — or empty when
+   * the track is too short or its tempo isn't known confidently enough to place them.
+   */
+  hotCueSuggestions: RecommendedCue[];
 }
 
 export type SectionKind = "intro" | "verse" | "breakdown" | "build" | "drop" | "chorus" | "outro" | "section";
@@ -159,16 +165,18 @@ export function analyzeTrack(channels: Float32Array[], sampleRate: number, bucke
     rms[b] = Math.sqrt(q / (e - s));
   }
 
+  const duration = Math.max(0.001, n / sampleRate);
   const beat = detectBeats(onsetEnv, WAVE_FPS, metaBpm);
   const musicalKey = detectKey(channels, sampleRate);
-  const structure = analyseStructure(rms, Math.max(0.001, n / sampleRate));
+  const structure = analyseStructure(rms, duration);
+  const hotCueSuggestions = suggestHotCues(low, onsetEnv, WAVE_FPS, duration, beat.bpm);
   let peak = 0, square = 0;
   for (const v of peaks) { peak = Math.max(peak, v); square += v * v; }
   const perceived = Math.sqrt(square / Math.max(1, peaks.length));
   const gainDb = perceived > 0 ? Math.max(-18, Math.min(18, 20 * Math.log10(0.18 / perceived))) : null;
   return { peaks, rms, low, mid, high, bands, fps: WAVE_FPS, ...beat,
     key: musicalKey.key, keyConfidence: musicalKey.confidence, energy: structure.energy, energyConfidence: structure.confidence,
-    gainDb, peak, sections: structure.sections, recommendedCues: structure.cues };
+    gainDb, peak, sections: structure.sections, recommendedCues: structure.cues, hotCueSuggestions };
 }
 
 /** Lightweight chroma estimate. Low-confidence or tonally ambiguous audio remains unknown. */
@@ -241,6 +249,123 @@ export function analyseStructure(rms: Float32Array, duration: number): { energy:
     ...sections.filter((s) => s.kind === "drop" || s.kind === "breakdown").slice(0, 4).map((s) => ({ kind: s.kind, timestamp: s.start, confidence: s.confidence, label: s.kind === "drop" ? "Drop" : "Breakdown" })),
   ];
   return { energy, confidence, sections, cues };
+}
+
+/**
+ * Suggests 8 structural hot cues for standard 4/4 dance-music phrasing, bar-aligned
+ * from the track's start: Intro 1 (0:00) / Intro 2 (+8 bars) / Build 1 / Drop 1 /
+ * Build 2 / Drop 2 / Outro 1 / Outro 2 (+8 bars after Outro 1). A drop is a bar
+ * whose bass energy jumps sharply above its preceding bars and stays up (not a
+ * one-bar transient); a build's start is the quietest bar in the lookback before
+ * a drop, snapped to the nearest canonical 8/16/32-bar phrase length. Requires a
+ * confidently detected tempo and enough bars for the structure to exist at all —
+ * otherwise returns no suggestions rather than guessing.
+ */
+export function suggestHotCues(low: Float32Array, power: Float32Array, fps: number, duration: number, bpm: number | null): RecommendedCue[] {
+  // Duration, not bar count, gates this: a bar-count minimum is tempo-biased and would silently
+  // reject plenty of ordinary full-length songs just for having a slower tempo (e.g. at 88 BPM a
+  // typical ~3-minute track is only ~65 bars — a flat 64-bar floor rejected it for no good reason).
+  if (!bpm || bpm <= 0 || duration < 90) return [];
+  const barLength = 240 / bpm; // 4 beats/bar, 4/4 assumed
+  const totalBars = Math.floor(duration / barLength);
+  const bass = barAverages(low, fps, barLength, totalBars);
+  const level = barAverages(power, fps, barLength, totalBars);
+  normalizeInPlace(bass);
+  normalizeInPlace(level);
+
+  const drops = findDropBars(bass, level, 16);
+  const drop1 = drops[0] ?? Math.round(totalBars * 0.35);
+  const drop2 = drops.find((b) => b >= drop1 + 16) ?? Math.min(totalBars - 9, Math.max(drop1 + 24, Math.round(totalBars * 0.7)));
+  const build1 = findBuildStartBar(level, drop1, 16);
+  const build2 = findBuildStartBar(level, drop2, drop1 + 8);
+  const outro1 = findOutroStartBar(level, drop2, totalBars);
+
+  const bars = enforceBarOrder([0, 8, build1, drop1, build2, drop2, outro1, outro1 + 8], 4, totalBars - 1);
+  const meta: { kind: SectionKind; label: string }[] = [
+    { kind: "intro", label: "Intro 1" }, { kind: "intro", label: "Intro 2" },
+    { kind: "build", label: "Build 1" }, { kind: "drop", label: "Drop 1" },
+    { kind: "build", label: "Build 2" }, { kind: "drop", label: "Drop 2" },
+    { kind: "outro", label: "Outro 1" }, { kind: "outro", label: "Outro 2" },
+  ];
+  return bars.map((b, i) => ({ kind: meta[i].kind, label: meta[i].label, confidence: 0.75, timestamp: Math.min(duration, b * barLength) }));
+}
+
+/** Mean of `signal` (at `fps`) within each bar of length `barLength` seconds, `totalBars` of them from t=0. */
+function barAverages(signal: Float32Array, fps: number, barLength: number, totalBars: number): Float32Array {
+  const out = new Float32Array(totalBars);
+  for (let b = 0; b < totalBars; b++) {
+    const f0 = Math.floor(b * barLength * fps);
+    const f1 = Math.min(signal.length, Math.max(f0 + 1, Math.floor((b + 1) * barLength * fps)));
+    let sum = 0;
+    for (let f = f0; f < f1; f++) sum += signal[f];
+    out[b] = sum / Math.max(1, f1 - f0);
+  }
+  return out;
+}
+
+/** Scales in place so the 90th percentile sits at 1.0 (a stand-in for "loud" that's robust to outliers). */
+function normalizeInPlace(values: Float32Array): void {
+  const sorted = [...values].sort((a, b) => a - b);
+  const p90 = sorted[Math.floor(sorted.length * 0.9)] || 1;
+  for (let i = 0; i < values.length; i++) values[i] = Math.min(1.5, values[i] / p90);
+}
+
+function barRangeAvg(arr: Float32Array, from: number, to: number): number {
+  let s = 0;
+  for (let i = from; i < to; i++) s += arr[i];
+  return to > from ? s / (to - from) : 0;
+}
+
+/** Bars where bass jumps sharply above its preceding 8 bars, stays up for 4 bars (not a one-bar hit), and is objectively loud. */
+function findDropBars(bass: Float32Array, level: Float32Array, minBar: number): number[] {
+  const n = bass.length, lookback = 8, sustain = 4;
+  const events: number[] = [];
+  for (let b = minBar; b < n - sustain; b++) {
+    const before = barRangeAvg(bass, Math.max(0, b - lookback), b);
+    if (bass[b] - before < 0.3) continue;
+    if (level[b] < 0.55) continue;
+    if (barRangeAvg(bass, b, b + sustain) < before + 0.2) continue;
+    if (events.length && b - events[events.length - 1] <= sustain) continue; // one event per run of nearby hits
+    events.push(b);
+  }
+  return events;
+}
+
+/** The quietest bar in the lookback before a drop, with the gap snapped to the nearest canonical 8/16/32-bar phrase. */
+function findBuildStartBar(level: Float32Array, dropBar: number, earliestBar: number): number {
+  const from = Math.max(earliestBar, dropBar - 32);
+  if (from >= dropBar) return Math.max(earliestBar, dropBar - 8);
+  let minBar = from;
+  for (let b = from; b < dropBar; b++) if (level[b] < level[minBar]) minBar = b;
+  const rawGap = dropBar - minBar;
+  const snapped = [8, 16, 32].reduce((best, c) => (Math.abs(c - rawGap) < Math.abs(best - rawGap) ? c : best));
+  return Math.max(earliestBar, dropBar - snapped);
+}
+
+/** Where the outro's drums return after the comedown following the second drop, or (failing that) where the closing tail begins. */
+function findOutroStartBar(level: Float32Array, afterBar: number, totalBars: number): number {
+  const tailStart = Math.max(afterBar + 1, Math.floor(totalBars * 0.75));
+  if (tailStart >= totalBars - 1) return Math.max(afterBar + 4, totalBars - 9);
+  let dipBar = tailStart;
+  for (let b = tailStart; b < totalBars; b++) if (level[b] < level[dipBar]) dipBar = b;
+  const recoveredTo = Math.max(0.4, level[dipBar] + 0.15);
+  for (let b = dipBar + 1; b < totalBars; b++) if (level[b] >= recoveredTo) return b;
+  // No return of the drums detected (the track just fades): fall back to where the low tail begins.
+  const mean = barRangeAvg(level, afterBar, totalBars);
+  let b = totalBars - 1;
+  while (b > afterBar + 8 && level[b] < mean * 0.75) b--;
+  return b;
+}
+
+/** Forces strictly increasing bar indices at least `minGap` apart, clamped to `maxBar`; `bars[0]`/`bars[1]` (Intro 1/2) stay fixed anchors. */
+function enforceBarOrder(bars: number[], minGap: number, maxBar: number): number[] {
+  const out = bars.map((b) => Math.max(0, Math.min(maxBar, Math.round(b))));
+  for (let i = 1; i < out.length; i++) out[i] = Math.max(out[i], out[i - 1] + minGap);
+  for (let i = out.length - 1; i >= 1; i--) {
+    if (out[i] > maxBar) out[i] = maxBar;
+    if (out[i] <= out[i - 1]) out[i - 1] = Math.max(0, out[i] - minGap);
+  }
+  return out;
 }
 
 /** Onset strength = positive change of the (log-compressed) energy envelope. */

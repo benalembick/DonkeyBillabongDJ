@@ -93,7 +93,7 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
       hotCueCount: r.cues.filter((c) => c.type === "hotcue").length, savedLoopCount: r.savedLoops.length,
       prepared: r.analysisVersion !== null, durationMs: r.duration ? r.duration * 1000 : track.durationMs } : track;
   }
-  async restore(track: TrackInfo, bytes: ArrayBuffer, duration: number): Promise<Partial<DeckState>> {
+  async restore(track: TrackInfo, bytes: ArrayBuffer, duration: number, _deck: number): Promise<Partial<DeckState>> {
     if (track.source !== "local") return {};
     const r = await this.identify(track, bytes, duration);
     return { ...this.fields(r, duration), track: this.decorate(track) };
@@ -160,18 +160,26 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
     this.waveformMemory.delete(record.trackId); this.waveformMemory.set(record.trackId, record);
     while (this.waveformMemory.size > 4) this.waveformMemory.delete(this.waveformMemory.keys().next().value!);
   }
-  async saveAnalysis(id: string, a: TrackAnalysis, duration: number, track: TrackInfo): Promise<void> {
+  /** `resuggest`: replace the auto-suggested hot cues with fresh ones even if some already exist — but never a cue the user placed or edited. */
+  async saveAnalysis(id: string, a: TrackAnalysis, duration: number, track: TrackInfo, resuggest = false): Promise<void> {
     const cache = packWaveform(id, a);
     await this.persistence.saveWaveform(cache); this.cache(cache);
     const r = this.get(id);
     if (!r) return;
     const grid = r.beatGrid?.manuallyAdjusted ? r.beatGrid : a.bpm && a.firstBeat !== null ? makeGrid({ bpm: a.bpm, firstBeat: a.firstBeat, confidence: a.confidence, source: a.bpmSource }, duration) : null;
     let cues = r.cues;
-    if (!cues.some((c) => c.type === "hotcue")) {
-      cues = a.recommendedCues.filter((c) => c.confidence >= 0.6).slice(0, 8).map((c, slot) => ({
+    const hasHotcues = cues.some((c) => c.type === "hotcue");
+    if (!hasHotcues || resuggest) {
+      const suggested = a.hotCueSuggestions.slice(0, 8).map((c, slot) => ({
         slot, type: "hotcue" as const, timestamp: c.timestamp, name: c.label, colour: CUE_COLOURS[slot],
         comment: `Automatically detected ${c.kind}`, confidence: c.confidence, source: "analysis" as const,
       }));
+      if (!hasHotcues) cues = suggested;
+      else {
+        const keep = cues.filter((c) => c.type !== "hotcue" || c.source !== "analysis");
+        const keptSlots = new Set(keep.filter((c) => c.type === "hotcue").map((c) => c.slot));
+        cues = [...keep, ...suggested.filter((c) => !keptSlots.has(c.slot))];
+      }
     }
     this.commit({ ...r, title: track.title, artist: track.artist, album: track.album, isrc: track.isrc ?? r.isrc,
       duration, bpm: grid?.bpm ?? a.bpm, key: track.key ?? a.key ?? r.key, keyConfidence: track.key ? 0.4 : a.keyConfidence,

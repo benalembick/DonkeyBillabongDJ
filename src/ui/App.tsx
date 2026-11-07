@@ -200,7 +200,7 @@ function Splitter({ mode, maximized, onToggleMaximize }: { mode: LayoutMode; max
   return (
     <div
       className={`splitter${maximized ? " maximized" : ""}`}
-      title={maximized ? "Bottom panel is maximized" : "Drag to resize the bottom panel"}
+      title={maximized ? "Library focus view is open (double-click to restore)" : "Drag to resize the library (double-click to expand)"}
       onPointerDown={(e) => {
         if (maximized || e.target !== e.currentTarget) return;
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -213,7 +213,8 @@ function Splitter({ mode, maximized, onToggleMaximize }: { mode: LayoutMode; max
         setLayout({ libraryHeight: { ...getLayout().libraryHeight, [mode]: Math.round(h) } });
       }}
       onPointerUp={() => (start.current = null)}
-    ><button className="panel-maximize" aria-label={maximized ? "Restore bottom panel" : "Maximize bottom panel"} aria-pressed={maximized} title={maximized ? "Restore bottom panel" : "Maximize bottom panel"} onPointerDown={(e)=>e.stopPropagation()} onClick={onToggleMaximize}><span aria-hidden>{maximized ? "▣" : "□"}</span>{maximized ? " Restore" : " Maximize"}</button></div>
+      onDoubleClick={(e) => { if (e.target === e.currentTarget) onToggleMaximize(); }}
+    ><button className="panel-maximize" aria-label={maximized ? "Show decks" : "Expand library"} aria-pressed={maximized} title={maximized ? "Show decks (Esc)" : "Expand library"} onPointerDown={(e)=>e.stopPropagation()} onClick={onToggleMaximize}><span aria-hidden>{maximized ? "▣" : "□"}</span>{maximized ? " Show decks" : " Expand library"}</button></div>
   );
 }
 
@@ -323,7 +324,7 @@ function Shell() {
       <section className="lower">
         {/* The library stays mounted (hidden) while Lighting is open, so it comes back exactly as it was. */}
         <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "training" || navigation.area === "teachloop"}>
-          <Boundary name="Library"><LibraryPanel navigation={libraryNavigation.current} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} /></Boundary>
+          <Boundary name="Library"><LibraryPanel navigation={libraryNavigation.current} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} expanded={lowerMaximized} onToggleExpanded={() => setLowerMaximized((v) => !v)} /></Boundary>
         </div>
         {navigation.area === "lighting" && <Boundary name="Lighting"><LightingWorkspace /></Boundary>}
         {navigation.area === "training" && <Boundary name="Training"><TrainingWorkspace /></Boundary>}

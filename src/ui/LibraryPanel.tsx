@@ -13,9 +13,11 @@ import type { StreamingProviderId } from "../providers/streamingTypes";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import type { App } from "../app/createApp";
 import { useFrameStore } from "./hooks";
-import { useStemIndex, useStemStatus } from "./stemHooks";
+import { useStemIndex, useStemProgress } from "./stemHooks";
+import { StemBadge, stemRank } from "./StemBadge";
 import { ArtTile } from "./ArtTile";
 import { AutoDJQueue, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
+import { TrackMenu } from "./TrackMenu";
 import { compatibility } from "../analysis/discovery";
 import { MashipsView } from "./MashipsPanel";
 import { PracticePanel } from "./PracticePanel";
@@ -67,7 +69,8 @@ const usePlayingFlags = () => useEngineValue((s) => s.decks.map((d) => (d.playin
 
 type LocalCollection = "all" | "recent" | "rated";
 
-export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { area: MainBrowserArea; id: number }; onNavigateArea?: (area: MainBrowserArea) => void }) {
+export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onToggleExpanded }: { navigation?: { area: MainBrowserArea; id: number }; onNavigateArea?: (area: MainBrowserArea) => void; expanded?: boolean; onToggleExpanded?: () => void }) {
+  const app = useApp();
   const navRef = useRef<HTMLElement>(null);
   const [source, setSource] = useState<Source>(() => {
     try {
@@ -81,6 +84,8 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
   const [playlistId, setPlaylistId] = useState<string | null>(null);
   const [playlistManagerOpen, setPlaylistManagerOpen] = useState(false);
   const [home, setHome] = useState<MainBrowserArea | null>(navigation?.area ?? null);
+  /** True when "Your Playlists" (not the PLAYLISTS heading itself) opened the playlists home: show just the grid, not the Auto DJ/Downloads/Mashups/Create tiles. */
+  const [playlistsGridOnly, setPlaylistsGridOnly] = useState(false);
   const [practiceView, setPracticeView] = useState<"practice" | "history">("practice");
   const [creatingMashup, setCreatingMashup] = useState(false);
   useEffect(() => { const show = () => setCreatingMashup(true); window.addEventListener("dbdj:create-mashup", show); return () => window.removeEventListener("dbdj:create-mashup", show); }, []);
@@ -89,6 +94,14 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
   const [spotifyLocalJob, setSpotifyLocalJob] = useState<string | null>(null);
   const openSpotifyLocal = (jobId: string | null = null) => { setHome(null); setSpotifyLocalJob(jobId); setSource("spotify-local"); };
   const openMaships = (kind: "auto" | "manual") => { setHome(null); setSource(kind === "manual" ? "manual-mashups" : "auto-mashups"); };
+  /** The same pinned "Downloads"/"Mashups" playlists the PLAYLISTS home tiles open (imported/downloaded tracks; rendered mashup files) — created on first visit if they don't exist yet. */
+  const openNamedPlaylist = (name: string, existing?: string) => {
+    const list = app.playlists.getState().playlists;
+    const p = (existing ? list.find((pl) => pl.id === existing) : undefined) ?? list.find((pl) => pl.name === name) ?? app.playlists.create(name);
+    openPlaylist(p.id);
+  };
+  const openDownloadsPlaylist = () => openNamedPlaylist("Downloads", app.spotifyLocal.downloadsJob()?.playlistId);
+  const openMashupsPlaylist = () => openNamedPlaylist("Mashups");
   const lib = useLibraryState();
   const streams = useStreamingState();
   const audiusState = useAudiusState();
@@ -108,7 +121,7 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
     }
   };
   const recent = lib.tracks.filter((t) => t.addedAt && Date.now() - t.addedAt < 30 * 86400_000).length;
-  const rated = lib.tracks.filter((t) => (t.rating ?? 0) >= 4).length;
+  const rated = lib.tracks.filter((t) => (t.rating ?? 0) > 0).length;
   useEffect(() => { if (navigation) { if (navigation.area === "transitions") { setHome(null); setSource("transitions"); } else setHome(navigation.area); } }, [navigation]);
   useLayoutEffect(() => {
     if (!navigation) return;
@@ -129,11 +142,11 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
   return (
     <div className="browser header-navigation">
       <nav className="browser-sources" ref={navRef}>
-        <button data-nav-area="collections" className={`browser-heading browser-section-link${activeArea === "collections" ? " active" : ""}`} onClick={() => { setHome("collections"); onNavigateArea?.("collections"); }}>COLLECTION <span>›</span></button>
+        <button data-nav-area="collections" className={`browser-heading browser-section-link${activeArea === "collections" ? " active" : ""}`} title={onToggleExpanded ? `${expanded ? "Show decks" : "Expand library"} (double-click)` : undefined} onClick={() => { setHome("collections"); onNavigateArea?.("collections"); }} onDoubleClick={onToggleExpanded}>COLLECTION <span>›</span></button>
         {item("local", <><span><span className="nav-icon" aria-hidden>♫</span>All Tracks</span><span className="count">{lib.tracks.length}</span></>, "all")}
         {item("local", <><span><span className="nav-icon" aria-hidden>⏱</span>Recently Added</span><span className="count">{recent}</span></>, "recent")}
         {item("local", <><span><span className="nav-icon" aria-hidden>★</span>Top Rated</span><span className="count">{rated}</span></>, "rated", "collections")}
-        <PlaylistNav selected={!home && source === "playlist" ? playlistId : null} mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} learnSelected={!home && source === "transitions" ? "transitions" : !home && source === "practice" ? practiceView : null} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onOpen={openPlaylist} onMaships={openMaships} onLearn={(view) => { if (view === "training") window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: "training" })); else if (view === "transitions") { open("transitions"); onNavigateArea?.("transitions"); } else { setPracticeView(view); open("practice"); } }} onQueue={openQueue} onArea={(area) => { setPlaylistManagerOpen(false); setHome(area); onNavigateArea?.(area); }} onManage={() => { setPlaylistManagerOpen(true); setHome("playlists"); onNavigateArea?.("playlists"); }} />
+        <PlaylistNav mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} learnSelected={!home && source === "transitions" ? "transitions" : !home && source === "practice" ? practiceView : null} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onMaships={openMaships} onLearn={(view) => { if (view === "training") window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: "training" })); else if (view === "transitions") { open("transitions"); onNavigateArea?.("transitions"); } else { setPracticeView(view); open("practice"); } }} onQueue={openQueue} onArea={(area) => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(false); setHome(area); onNavigateArea?.(area); }} onManage={() => { setPlaylistManagerOpen(true); setPlaylistsGridOnly(false); setHome("playlists"); onNavigateArea?.("playlists"); }} onDownloads={openDownloadsPlaylist} onMashups={openMashupsPlaylist} onYourPlaylists={() => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(true); setHome("playlists"); onNavigateArea?.("playlists"); }} />
         <button data-nav-area="streaming" className={`browser-heading browser-section-link${activeArea === "streaming" ? " active" : ""}`} onClick={() => { setHome("streaming"); onNavigateArea?.("streaming"); }}>AUDIO SOURCES <span>›</span></button>
         {item("spotify", <>{label("◉", "Spotify")}{status(streams.spotify)}</>)}
         {item("spotify-local", <>{label("⇄", "Spotify → Local")}</>)}
@@ -143,23 +156,24 @@ export function LibraryPanel({ navigation, onNavigateArea }: { navigation?: { ar
         {item("recorder", <>{label("●", "App Recorder")}</>, undefined, "streaming")}
       </nav>
       <div className="browser-body">
-        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setPlaylistManagerOpen(false); setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} managingPlaylists={playlistManagerOpen} setManagingPlaylists={setPlaylistManagerOpen} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "transitions" ? <TransitionWorkspace /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : source === "converter" || source === "recorder" ? <AudioSourcesWorkspace mode={source} /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}
+        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setPlaylistManagerOpen(false); setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} managingPlaylists={playlistManagerOpen} setManagingPlaylists={setPlaylistManagerOpen} playlistsGridOnly={playlistsGridOnly} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "transitions" ? <TransitionWorkspace /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} expanded={expanded} onToggleExpanded={onToggleExpanded} /> : source === "audius" ? <AudiusPane /> : source === "converter" || source === "recorder" ? <AudioSourcesWorkspace mode={source} /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}
       </div>
       {creatingMashup && <ManualMashupWizard onClose={() => setCreatingMashup(false)} />}
     </div>
   );
 }
 
-function SectionHome({ area, open, openPlaylist, openPractice, managingPlaylists, setManagingPlaylists }: { area: MainBrowserArea; open: (s: Source, c?: LocalCollection) => void; openPlaylist: (id: string) => void; openPractice: (view: "practice" | "history") => void; managingPlaylists: boolean; setManagingPlaylists: (open: boolean) => void }) {
+function SectionHome({ area, open, openPlaylist, openPractice, managingPlaylists, setManagingPlaylists, playlistsGridOnly }: { area: MainBrowserArea; open: (s: Source, c?: LocalCollection) => void; openPlaylist: (id: string) => void; openPractice: (view: "practice" | "history") => void; managingPlaylists: boolean; setManagingPlaylists: (open: boolean) => void; playlistsGridOnly?: boolean }) {
   const app = useApp(), lib = useLibraryState();
   const playlists = useFrameStore(useCallback((cb) => app.playlists.on("change", cb), [app.playlists]), () => app.playlists.getState());
   const mashups = useFrameStore(useCallback((cb) => app.liveMashup.on("change", cb), [app.liveMashup]), () => app.liveMashup.getState());
   const practice = useFrameStore(useCallback((cb) => app.practice.on("change", cb), [app.practice]), () => app.practice.getState());
   const streams = useStreamingState(), audius = useAudiusState();
-  const recent=lib.tracks.filter(t=>t.addedAt&&Date.now()-t.addedAt<30*86400_000).length,rated=lib.tracks.filter(t=>(t.rating??0)>=4).length;
+  const [playlistQuery, setPlaylistQuery] = useState("");
+  const recent=lib.tracks.filter(t=>t.addedAt&&Date.now()-t.addedAt<30*86400_000).length,rated=lib.tracks.filter(t=>(t.rating??0)>0).length;
   const Tile=({icon,title,detail,onClick,accent,featured=false}:{icon:string;title:string;detail:string;onClick:()=>void;accent?:string;featured?:boolean})=><button className={`nav-tile${featured ? " featured" : ""}`} onClick={onClick} style={{["--tile-accent" as string]:accent}}><span className="nav-tile-icon">{icon}</span><span><b>{title}</b><small>{detail}</small></span><i>›</i></button>;
   let title="COLLECTIONS",tiles:React.ReactNode;
-  if(area==="collections")tiles=<><Tile icon="♫" title="All Tracks" detail={`${lib.tracks.length} tracks`} onClick={()=>open("local","all")}/><Tile icon="◷" title="Recently Added" detail={`${recent} tracks from the last 30 days`} onClick={()=>open("local","recent")}/><Tile icon="★" title="Top Rated" detail={`${rated} tracks rated 4 stars or higher`} onClick={()=>open("local","rated")}/></>;
+  if(area==="collections")tiles=<><Tile icon="♫" title="All Tracks" detail={`${lib.tracks.length} tracks`} onClick={()=>open("local","all")}/><Tile icon="◷" title="Recently Added" detail={`${recent} tracks from the last 30 days`} onClick={()=>open("local","recent")}/><Tile icon="★" title="Top Rated" detail={`${rated} tracks with a star rating`} onClick={()=>open("local","rated")}/></>;
   else if(area==="playlists"){
     title="PLAYLISTS";
     const downloadsId=app.spotifyLocal.downloadsJob()?.playlistId;
@@ -167,25 +181,30 @@ function SectionHome({ area, open, openPlaylist, openPractice, managingPlaylists
     const mashupList=playlists.playlists.find(p=>p.name==="Mashups");
     const pinned=new Set([downloads?.id,mashupList?.id]);
     const openNamed=(name:string,current:typeof downloads)=>{const p=current??app.playlists.create(name);openPlaylist(p.id);};
-    const standard=playlists.playlists.filter(p=>!pinned.has(p.id));
+    const q=playlistQuery.trim().toLocaleLowerCase();
+    const matches=(name:string)=>!q||name.toLocaleLowerCase().includes(q);
+    const standard=playlists.playlists.filter(p=>!pinned.has(p.id)&&matches(p.name));
+    const matchingCount=playlists.playlists.filter(p=>matches(p.name)).length;
     tiles=<div className="playlist-home-groups">
-      <div className="playlist-featured-tiles" aria-label="Playlist tools">
+      <div className="playlist-home-search"><input className="search-input" aria-label="Search playlists" placeholder="Search playlists…" value={playlistQuery} onChange={e=>setPlaylistQuery(e.target.value)}/><span className="hint">{matchingCount} of {playlists.playlists.length} playlists</span></div>
+      {!playlistsGridOnly && <div className="playlist-featured-tiles" aria-label="Playlist tools">
         <Tile featured icon="↝" title="Auto DJ" detail="Open and manage the playback queue" onClick={()=>open("queue")} accent="#39dca0"/>
-        <Tile featured icon="⇩" title="Downloads" detail={`${downloads?.refs.length??0} tracks · imported and downloaded music`} onClick={()=>openNamed("Downloads",downloads)} accent="#4ca8ff"/>
-        <Tile featured icon="⚡" title="Mashups" detail={`${mashupList?.refs.length??0} tracks · rendered mashups`} onClick={()=>openNamed("Mashups",mashupList)} accent="#ff9f43"/>
+        {matches(downloads?.name??"Downloads")&&<Tile featured icon="⇩" title="Downloads" detail={`${downloads?.refs.length??0} tracks · imported and downloaded music`} onClick={()=>openNamed("Downloads",downloads)} accent="#4ca8ff"/>}
+        {matches(mashupList?.name??"Mashups")&&<Tile featured icon="⚡" title="Mashups" detail={`${mashupList?.refs.length??0} tracks · rendered mashups`} onClick={()=>openNamed("Mashups",mashupList)} accent="#ff9f43"/>}
         <Tile featured icon="＋" title="Create New Playlist" detail="Create an empty playlist, then add tracks" onClick={()=>{const p=app.playlists.create("New Playlist");openPlaylist(p.id)}} accent="#39dca0"/>
-      </div>
+      </div>}
       <div className="playlist-standard-heading"><b>YOUR PLAYLISTS</b><span>{standard.length} playlist{standard.length===1?"":"s"}</span></div>
       <div className="nav-tiles playlist-standard-tiles">
         {standard.map(p=><Tile key={p.id} icon="▤" title={p.name} detail={`${p.refs.length} tracks`} onClick={()=>openPlaylist(p.id)} accent="#4ca8ff"/>)}
-        {!standard.length&&<div className="playlist-home-empty">No playlists yet. Use <b>Create New Playlist</b> above to build your first set.</div>}
+        {!standard.length&&<div className="playlist-home-empty">{q?"No playlists match your search.":"No playlists yet. Use Create New Playlist above to build your first set."}</div>}
       </div>
     </div>;
   }
   else if(area==="mashups"){title="MASHUP PROJECTS";tiles=<><Tile icon="＋" title="Create New Mashup" detail="Choose two tracks and build a manual mashup step by step" onClick={()=>window.dispatchEvent(new Event("dbdj:create-mashup"))} accent="#39dca0" featured/><Tile icon="⚡" title="Auto Mashups" detail={`${mashups.recipes.filter(r=>!r.manual).length} saved projects`} onClick={()=>open("auto-mashups")} accent="#ff9f43"/><Tile icon="🎚" title="Manual Mashups" detail={`${mashups.recipes.filter(r=>!!r.manual).length} saved deck setups`} onClick={()=>open("manual-mashups")} accent="#d16cff"/></>}
   else if(area==="practice"){title="LEARN";tiles=<><Tile icon="⇄" title="Transition Guides" detail="Plan and rehearse transitions using both tracks' beat grids, phrases, energy and vocals" onClick={()=>open("transitions")} accent="#ff6bd6"/><Tile icon="◇" title="DJ Training Curriculum" detail="Seven guided lessons, from beatmatching to effects transitions" onClick={()=>window.dispatchEvent(new CustomEvent("dbdj:navigate",{detail:"training"}))} accent="#ffd166"/><Tile icon="🎓" title="Teach Me: Live Looping" detail="Hands-on lessons in the real Looper engine — no microphone needed" onClick={()=>window.dispatchEvent(new CustomEvent("dbdj:navigate",{detail:"teachloop"}))} accent="#ff9f43"/><Tile icon="▶" title="Start or Continue Practice" detail="Choose difficulty and begin a mixing challenge" onClick={()=>openPractice("practice")} accent="#39dca0"/><Tile icon="↗" title="Practice History" detail={`${practice.history.length} sessions · review your progress`} onClick={()=>openPractice("history")} accent="#4ca8ff"/></>}
   else {title="AUDIO SOURCES";tiles=<><Tile icon="◉" title="Spotify" detail={streams.spotify.status?.connected?"Connected":"Browse and configure Spotify"} onClick={()=>open("spotify")} accent="#1ed760"/><Tile icon="♪" title="Apple Music" detail={streams["apple-music"].status?.connected?"Connected":"Browse and configure Apple Music"} onClick={()=>open("apple-music")} accent="#fa586a"/><Tile icon="●" title="Audius" detail={audius.connection==="ok"?"Connected · free streaming":"Free music discovery"} onClick={()=>open("audius")} accent="#8b5cf6"/><Tile icon="⇩" title="High Speed Converter" detail="Convert local audio and import it into your library" onClick={()=>open("converter")} accent="#39dca0"/><Tile icon="●" title="App Recorder" detail="Record permitted Vivaldi audio as MP3 or WAV" onClick={()=>open("recorder")} accent="#4ca8ff"/></>}
-  return <div className={`section-home${area === "playlists" ? " playlist-home" : ""}`}><div className="section-home-title"><b>{title}</b><span>{managingPlaylists && area === "playlists" ? "Rename, duplicate or remove playlists" : "Choose where you want to go"}</span>{area === "playlists" && <button className={`playlist-manage-button${managingPlaylists ? " active" : ""}`} title={managingPlaylists ? "Back to playlist tiles" : "Manage playlists"} aria-label={managingPlaylists ? "Back to playlist tiles" : "Manage playlists"} onClick={()=>setManagingPlaylists(!managingPlaylists)}><span aria-hidden>{managingPlaylists ? "←" : "✎"}</span> {managingPlaylists ? "Done" : "Manage"}</button>}</div>{area === "playlists" && managingPlaylists ? <PlaylistManagement onOpen={openPlaylist}/> : area === "playlists" ? tiles : <div className="nav-tiles">{tiles}</div>}</div>;
+  const subtitle = managingPlaylists && area === "playlists" ? "Rename, duplicate or remove playlists" : playlistsGridOnly && area === "playlists" ? "Your saved playlists" : "Choose where you want to go";
+  return <div className={`section-home${area === "playlists" ? " playlist-home" : ""}`}><div className="section-home-title"><b>{title}</b><span>{subtitle}</span>{area === "playlists" && <button className={`playlist-manage-button${managingPlaylists ? " active" : ""}`} title={managingPlaylists ? "Back to playlist tiles" : "Manage playlists"} aria-label={managingPlaylists ? "Back to playlist tiles" : "Manage playlists"} onClick={()=>setManagingPlaylists(!managingPlaylists)}><span aria-hidden>{managingPlaylists ? "←" : "✎"}</span> {managingPlaylists ? "Done" : "Manage"}</button>}</div>{area === "playlists" && managingPlaylists ? <PlaylistManagement onOpen={openPlaylist}/> : area === "playlists" ? tiles : <div className="nav-tiles">{tiles}</div>}</div>;
 }
 
 function PlaylistManagement({ onOpen }: { onOpen: (id: string) => void }) {
@@ -208,7 +227,7 @@ function PlaylistManagement({ onOpen }: { onOpen: (id: string) => void }) {
 
 // ─────────────────────────────── Local ───────────────────────────────
 
-type SortKey = "title" | "artist" | "album" | "genre" | "bpm" | "key" | "camelot" | "energy" | "durationMs" | "rating" | "addedAt";
+type SortKey = "title" | "artist" | "album" | "genre" | "bpm" | "key" | "camelot" | "energy" | "durationMs" | "rating" | "addedAt" | "stems";
 const COLUMNS: { key: SortKey | null; label: string; cls?: string }[] = [
   { key: null, label: "", cls: "col-art" },
   { key: "title", label: "Title" },
@@ -223,6 +242,7 @@ const COLUMNS: { key: SortKey | null; label: string; cls?: string }[] = [
   { key: "durationMs", label: "Time", cls: "num" },
   { key: "rating", label: "Rating" },
   { key: null, label: "Source" },
+  { key: "stems", label: "Stems" },
   { key: "addedAt", label: "Added" },
   { key: null, label: "Load" },
 ];
@@ -252,8 +272,11 @@ interface RowHandlers {
 }
 
 /** One library row; re-renders only when its own track, selection or match changes. */
-const TrackRow = memo(function TrackRow({ track: t, selected, matchScore, matchReasons, stem, handlers }: {
-  track: TrackInfo; selected: boolean; matchScore: number | null; matchReasons?: string; stem?: string; handlers: RowHandlers;
+const TrackRow = memo(function TrackRow({ track: t, selected, matchScore, matchReasons, stem, stemProgress, liveStem, handlers }: {
+  track: TrackInfo; selected: boolean; matchScore: number | null; matchReasons?: string; stem?: "complete" | "partial"; stemProgress?: number;
+  /** This ref is loaded on a deck and actively loading/separating right now — takes priority over the cached index. */
+  liveStem?: { status: "loading" | "analysing"; progress: number };
+  handlers: RowHandlers;
 }) {
   return (
     <tr
@@ -281,12 +304,10 @@ const TrackRow = memo(function TrackRow({ track: t, selected, matchScore, matchR
         <Stars value={t.rating ?? 0} onChange={(n) => handlers.rate(t, n)} />
       </td>
       <td>
-        <span className="source-badge">LOCAL</span>{" "}
-        {stem && (
-          <span className={`lib-stem ${stem}`} title={stem === "complete" ? "STEMS analysed and cached" : "STEMS partly analysed"}>
-            {stem === "complete" ? "STEMS" : "STEMS…"}
-          </span>
-        )}
+        <span className="source-badge">LOCAL</span>
+      </td>
+      <td className="stems-cell">
+        <StemBadge stem={stem} stemProgress={stemProgress} liveStem={liveStem} />
       </td>
       <td className="hint">{t.addedAt ? new Date(t.addedAt).toLocaleDateString() : ""}</td>
       <td className="row-actions">
@@ -304,7 +325,7 @@ function AnalysisProgress() {
   return <><span className="hint">Analysing {s.done + 1}/{s.total}: {s.current}</span><button onClick={() => analysis.cancelBatch()}>Cancel</button></>;
 }
 
-function LocalView({ collection }: { collection: LocalCollection }) {
+function LocalView({ collection, expanded, onToggleExpanded }: { collection: LocalCollection; expanded: boolean; onToggleExpanded?: () => void }) {
   const app = useApp();
   const { library, platform, engine, log, browser } = app;
   const state = useLibraryState();
@@ -313,10 +334,23 @@ function LocalView({ collection }: { collection: LocalCollection }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: collection === "recent" ? "addedAt" : "artist", dir: collection === "recent" ? -1 : 1 });
   const stemIdx = useStemIndex();
+  const stemProgress = useStemProgress();
+  // A deck actively loading/separating STEMS is the most current state for that ref — it must
+  // win over the (possibly stale) cached index. Re-renders only on a whole-percent/status change.
+  const stemLiveKey = useEngineValue((s) => s.decks.map((d) => `${d.track?.ref ?? ""}:${d.stems.status}:${Math.round(d.stems.progress * 100)}`).join("|"));
+  const liveStemByRef = useMemo(() => {
+    const map = new Map<string, { status: "loading" | "analysing"; progress: number }>();
+    for (const d of engine.getState().decks) {
+      if (d.track && (d.stems.status === "loading" || d.stems.status === "analysing")) map.set(d.track.ref, { status: d.stems.status, progress: d.stems.progress });
+    }
+    return map;
+  }, [stemLiveKey, engine]);
   const [menu, setMenu] = useState<{ x: number; y: number; track: TrackInfo } | null>(null);
   const [selectedRefs, setSelectedRefs] = useState<string[]>([]);
   const [info, setInfo] = useState<TrackInfo | null>(null);
   const [advanced, setAdvanced] = useState({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" });
+  /** Top Rated: minimum stars a track needs to be included — 1 (any rating) by default. */
+  const [minRating, setMinRating] = useState(1);
   // Match % is measured against the playing track (else the selected one). Only the playing
   // track's ref is watched, so engine updates don't re-render the table.
   const playingRef = useEngineValue((s) => s.decks.find((d) => d.playing)?.track?.ref ?? null);
@@ -336,7 +370,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
     const q = query.trim().toLowerCase();
     let list = state.tracks;
     if (collection === "recent") list = list.filter((t) => t.addedAt && Date.now() - t.addedAt < 30 * 86400_000);
-    if (collection === "rated") list = list.filter((t) => (t.rating ?? 0) >= 4);
+    if (collection === "rated") list = list.filter((t) => (t.rating ?? 0) >= minRating);
     if (q) list = list.filter((t) => `${t.title} ${t.artist} ${t.album} ${t.genre ?? ""} ${t.key ?? ""}`.toLowerCase().includes(q));
     if (advanced.minBpm) list = list.filter((t) => (t.bpm ?? -Infinity) >= Number(advanced.minBpm));
     if (advanced.maxBpm) list = list.filter((t) => (t.bpm ?? Infinity) <= Number(advanced.maxBpm));
@@ -346,13 +380,16 @@ function LocalView({ collection }: { collection: LocalCollection }) {
     if (advanced.genre) list = list.filter((t) => t.genre?.toLowerCase().includes(advanced.genre.toLowerCase()));
     if (matchFilter) list = list.filter((t) => (matchFilter(t)?.score ?? 0) >= Number(advanced.minMatch));
     const k = sort.key;
+    if (k === "stems") {
+      return [...list].sort((a, b) => (stemRank(a.ref, stemIdx, stemProgress) - stemRank(b.ref, stemIdx, stemProgress)) * sort.dir);
+    }
     return [...list].sort((a, b) => {
       const va = (a as unknown as Record<string, unknown>)[k] ?? (typeof (b as unknown as Record<string, unknown>)[k] === "number" ? -1 : "");
       const vb = (b as unknown as Record<string, unknown>)[k] ?? (typeof va === "number" ? -1 : "");
       const c = typeof va === "number" && typeof vb === "number" ? va - vb : COLLATOR.compare(String(va), String(vb));
       return c * sort.dir;
     });
-  }, [state.tracks, query, sort, collection, advanced, matchFilter]);
+  }, [state.tracks, query, sort, collection, advanced, matchFilter, stemIdx, stemProgress, minRating]);
 
   const selectedTrack = state.tracks[state.selected];
   const visibleRef = useRef(visible);
@@ -430,6 +467,8 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         setSelectedRefs(vis.slice(Math.max(0, Math.min(a, b)), Math.max(a, b) + 1).map((x) => x.ref));
       } else setSelectedRefs(e.ctrlKey || e.metaKey ? refs.includes(t.ref) ? refs.filter((r) => r !== t.ref) : [...refs, t.ref] : [t.ref]);
       library.select(tracks.indexOf(t));
+      // If Track information is already open, keep it showing whichever track is now selected.
+      setInfo((cur) => (cur ? t : cur));
     },
     doubleClick: (t) => {
       const fd = live.current.freeDeck;
@@ -446,6 +485,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
       e.preventDefault();
       library.select(live.current.tracks.indexOf(t));
       if (!live.current.selectedRefs.includes(t.ref)) setSelectedRefs([t.ref]);
+      setInfo((cur) => (cur ? t : cur));
       setMenu({ x: e.clientX, y: e.clientY, track: t });
     },
     rate: (t, n) => void app.setRating(t.ref, n),
@@ -483,7 +523,16 @@ function LocalView({ collection }: { collection: LocalCollection }) {
     >
       <div className="library-controls">
       <div className="toolbar">
-        <input className="search-input" placeholder="Search title, artist, album, genre, key…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="search-input" aria-label="Search collection" placeholder="Search title, artist, album, genre, key…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        {collection === "rated" && (
+          <label className="min-rating-filter">
+            Show rated
+            <select aria-label="Minimum star rating" value={minRating} onChange={(e) => setMinRating(Number(e.target.value))}>
+              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{"★".repeat(n)}{n < 5 ? "+" : " only"}</option>)}
+            </select>
+          </label>
+        )}
+        {onToggleExpanded && <button className={`library-focus-toggle${expanded ? " active" : ""}`} aria-pressed={expanded} title={expanded ? "Return to the decks (Esc)" : "Give the collection the full workspace"} onClick={onToggleExpanded}><span aria-hidden>{expanded ? "▣" : "□"}</span>{expanded ? " Show decks" : " Expand Library"}</button>}
         <button className="primary" onClick={() => void add(false)}>+ Add files…</button>
         <button onClick={() => void add(true)}>+ Add folder…</button>
         {platform.kind === "browser" && <button onClick={() => void add(false)}>Reconnect files</button>}
@@ -535,6 +584,8 @@ function LocalView({ collection }: { collection: LocalCollection }) {
                   matchScore={m?.score ?? null}
                   matchReasons={m?.reasons.join(" · ")}
                   stem={stemIdx[t.ref]}
+                  stemProgress={stemProgress[t.ref]}
+                  liveStem={liveStemByRef.get(t.ref)}
                   handlers={rowHandlers}
                 />
               );
@@ -545,54 +596,6 @@ function LocalView({ collection }: { collection: LocalCollection }) {
       </div>
       {info && <TrackDetails track={state.tracks.find((t) => t.ref === info.ref) ?? info} onClose={() => setInfo(null)} />}
       {menu && <TrackMenu {...menu} refs={selectedRefs.includes(menu.track.ref) ? selectedRefs : [menu.track.ref]} cached={!!stemIdx[menu.track.ref]} onInfo={() => setInfo(menu.track)} onClose={() => setMenu(null)} />}
-    </div>
-  );
-}
-
-/** Right-click menu for a local track: load, and STEM cache management. */
-function TrackMenu({ x, y, track, refs, cached, onInfo, onClose }: { x: number; y: number; track: TrackInfo; refs: string[]; cached: boolean; onInfo: () => void; onClose: () => void }) {
-  const { engine, stems, platform, analysis, library } = useApp();
-  const libraryState = useLibraryState();
-  const s = useEngineState();
-  const stemStatus = useStemStatus();
-  useEffect(() => {
-    const close = (e?: Event) => { if (e?.target instanceof Element && e.target.closest(".modal-backdrop")) return; onClose(); };
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("blur", close);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("blur", close);
-      window.removeEventListener("keydown", key);
-    };
-  }, [onClose]);
-  const act = (fn: () => void) => (e: React.PointerEvent | React.MouseEvent) => {
-    e.stopPropagation();
-    fn();
-    onClose();
-  };
-  const canAnalyse = stemStatus.modelInstalled && platform.kind === "desktop";
-  return (
-    <div className="ctx-menu" style={{ left: Math.min(x, window.innerWidth - 210), top: Math.min(y, window.innerHeight - 160) }} onPointerDown={(e) => e.stopPropagation()}>
-      {s.decks.map((d, i) => (
-        <button key={i} disabled={d.playing} onClick={act(() => void engine.loadTrack(i, track))}>
-          Load to Deck {String.fromCharCode(65 + i)}
-        </button>
-      ))}
-      <hr />
-      <PlaylistActions refs={refs} onDone={onClose} />
-      <TrackDiscoveryActions compact track={track} tracks={libraryState.tracks} />
-      <hr />
-      <button onClick={act(onInfo)}>Track information</button>
-      <button onClick={act(() => void analysis.analyseTracks(refs.map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t)))}>Analyse selected</button>
-      <button onClick={act(() => void analysis.analyseTracks(refs.map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t), true))}>Reanalyse selected</button>
-      <button disabled={!canAnalyse} title={canAnalyse ? "" : stemStatus.reason} onClick={act(() => stems.analyse([track], (r) => platform.readAudio(r)))}>
-        Analyse STEMS
-      </button>
-      <button disabled={!cached} onClick={act(() => void stems.removeCache([track.ref]))}>
-        Remove STEM Cache
-      </button>
     </div>
   );
 }
