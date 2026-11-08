@@ -50,6 +50,10 @@ function deliverMiss(service: StemService): void {
   (service as unknown as { onWorker: (m: unknown) => void }).onWorker({ type: "cache", jobId: 1, state: "miss" });
 }
 
+function deliverPartial(service: StemService): void {
+  (service as unknown as { onWorker: (m: unknown) => void }).onWorker({ type: "cache", jobId: 1, state: "partial", total: 100, stride: 10, regions: 10 });
+}
+
 describe("StemService defers automatic separation for Auto DJ loads", () => {
   it("waits for the user instead of auto-running an Auto-DJ-loaded track in Automatic mode", async () => {
     const { service, setStemStatus } = await makeService("automatic", false);
@@ -85,6 +89,32 @@ describe("StemService defers automatic separation for Auto DJ loads", () => {
     registerDeckJob(service, "auto-dj");
 
     deliverMiss(service);
+
+    expect(setStemStatus).toHaveBeenCalledWith(0, { status: "analysing", message: "Analysing STEMS…" });
+    expect((service as unknown as { deckJobs: { runSent: boolean }[] }).deckJobs[0].runSent).toBe(true);
+  });
+
+  // A track with a *partial* on-disk cache entry (left over from an earlier run) used to always
+  // resume full separation to finish it, regardless of mode or source — the same compute/CPU/GPU
+  // cost as a fresh run, just reached through a different message ("cache: partial" instead of
+  // "cache: miss"). This is what a DJ saw as "STEMS looks off, but it's still analysing" during
+  // Auto DJ: the miss path was fixed, but the partial-resume path still bypassed it entirely.
+  it("waits for the user instead of resuming a partially-cached Auto-DJ-loaded track in Automatic mode", async () => {
+    const { service, setStemStatus } = await makeService("automatic", false);
+    registerDeckJob(service, "auto-dj");
+
+    deliverPartial(service);
+
+    expect(setStemStatus).toHaveBeenCalledWith(0, { status: "waiting", message: "Switch STEMS on to finish analysing this track" });
+    expect((service as unknown as { deckJobs: { runSent: boolean }[] }).deckJobs[0].runSent).toBe(false);
+    expect((service as unknown as { deckJobs: { awaitingUser: boolean }[] }).deckJobs[0].awaitingUser).toBe(true);
+  });
+
+  it("still resumes a partially-cached manually loaded track in Automatic mode (unchanged behaviour)", async () => {
+    const { service, setStemStatus } = await makeService("automatic", false);
+    registerDeckJob(service, "manual");
+
+    deliverPartial(service);
 
     expect(setStemStatus).toHaveBeenCalledWith(0, { status: "analysing", message: "Analysing STEMS…" });
     expect((service as unknown as { deckJobs: { runSent: boolean }[] }).deckJobs[0].runSent).toBe(true);

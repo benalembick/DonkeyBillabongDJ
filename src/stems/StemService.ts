@@ -397,7 +397,16 @@ export class StemService extends Emitter<Events> {
         } else {
           this.initDeck(job, m.total!, m.stride!, m.regions!);
           this.engine.setStemStatus(job.deck, { status: "loading", message: "Loading STEMS from cache…" });
-          if (m.state === "partial") void this.startRun(job); // continue where it stopped
+          // The cached portion above always streams in for free. Finishing a partial cache
+          // entry means running the model for the rest, same as a fresh separation — so it's
+          // gated the same way (an Auto DJ load waits for the DJ to switch STEMS on).
+          if (m.state === "partial") {
+            if (this.shouldAutoRun(job)) void this.startRun(job); // continue where it stopped
+            else {
+              job.awaitingUser = true;
+              this.engine.setStemStatus(job.deck, { status: "waiting", message: "Switch STEMS on to finish analysing this track" });
+            }
+          }
         }
         break;
       case "region":
