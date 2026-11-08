@@ -175,6 +175,12 @@ export interface EngineState {
   /** Deck whose tempo/phase synced decks follow (null = none yet). */
   masterDeck: number | null;
   autoEq: AutoEqState[];
+  /**
+   * Auto DJ's pre-transition tempo lead-in (see autodj/transition.ts tempoLeadInTarget):
+   * whether each deck is still eligible for it. Cleared the moment the DJ touches that
+   * deck's tempo fader or tempo-range button, re-armed on the deck's next track load.
+   */
+  tempoLeadInActive: boolean[];
 }
 
 /** Where hot cue pads get their data from: this app's own analysis, or the track's own embedded tag. */
@@ -435,6 +441,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       })),
       masterDeck: null,
       autoEq: Array.from({ length: this.deckCount }, initialAutoEq),
+      tempoLeadInActive: Array.from({ length: this.deckCount }, () => true),
     };
     this.loadTokens = new Array(this.deckCount).fill(0);
     this.preview = Array.from({ length: this.deckCount }, () => ({ origin: 0, latchPlay: false }));
@@ -742,6 +749,22 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.audio.setRate(deck, rate);
     this.patchDeck(deck, { tempo, rate, tempoRange: range });
     this.applyAllFx();
+  }
+
+  /**
+   * Auto DJ's pre-transition tempo lead-in: nudges this deck's rate toward `targetRate` by at
+   * most `maxStep`, recomputed fresh every call so it self-corrects as both decks move. A no-op
+   * once the DJ has taken manual control of this deck's tempo since its track loaded. Returns
+   * the deck's rate after the step (unchanged if not eligible).
+   */
+  stepTempoLeadIn(deck: number, targetRate: number, maxStep: number): number {
+    if (!this.state.tempoLeadInActive[deck]) return this.state.decks[deck].rate;
+    const current = this.state.decks[deck].rate;
+    const delta = clamp(targetRate - current, -maxStep, maxStep);
+    if (delta === 0) return current;
+    const next = current + delta;
+    this.setRateDirect(deck, next);
+    return next;
   }
 
   // ───────────────────────────── LOOPS ─────────────────────────────
@@ -1064,8 +1087,10 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       track = prepared.track ?? track;
       this.audio.setPlaying(deck, false);
       this.audio.loadDeck(deck, decoded);
-      // A newly loaded track must never inherit the previous track's in-flight Auto EQ cut.
+      // A newly loaded track must never inherit the previous track's in-flight Auto EQ cut
+      // or a tempo lead-in takeover from whatever was loaded here before.
       this.resetAutoEq(deck);
+      this.resetTempoLeadIn(deck);
       this.patchDeck(deck, {
         status: "ready",
         loadProgress: undefined,
@@ -1371,7 +1396,26 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       this.patchDeck(deck, { sync: false });
       this.log.info("engine", `Deck ${deckLetter(deck)}: SYNC off (tempo moved by hand)`);
     }
+    this.takeOverTempoLeadIn(deck);
     this.applyTempo(deck, bipolar);
+  }
+
+  /** The DJ touched this deck's tempo directly — Auto DJ's lead-in backs off for the rest of this track. */
+  private takeOverTempoLeadIn(deck: number): void {
+    this.patchTempoLeadInActive(deck, false);
+  }
+
+  /** A fresh track load re-arms the deck for Auto DJ's tempo lead-in. */
+  private resetTempoLeadIn(deck: number): void {
+    this.patchTempoLeadInActive(deck, true);
+  }
+
+  private patchTempoLeadInActive(deck: number, active: boolean): void {
+    if (this.state.tempoLeadInActive[deck] === active) return;
+    const tempoLeadInActive = this.state.tempoLeadInActive.slice();
+    tempoLeadInActive[deck] = active;
+    this.state = { ...this.state, tempoLeadInActive };
+    this.emit("state", this.state);
   }
 
   private applyTempo(deck: number, tempo: number): void {
@@ -1388,6 +1432,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     const i = TEMPO_RANGES.indexOf(d.tempoRange as (typeof TEMPO_RANGES)[number]);
     const tempoRange = TEMPO_RANGES[(i + 1) % TEMPO_RANGES.length];
     this.patchDeck(deck, { tempoRange });
+    this.takeOverTempoLeadIn(deck);
     this.applyTempo(deck, d.tempo);
   }
 

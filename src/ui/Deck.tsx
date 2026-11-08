@@ -6,12 +6,14 @@
 import { useEffect, useRef, useState } from "react";
 import { deckLetter, STEM_LABELS, STEM_NAMES } from "../core/actions";
 import { LOOP_SIZES, cueSourceFor, withCueSource } from "../core/engine/DJEngine";
+import { tempoGapOnly, tempoLeadInTarget } from "../autodj/transition";
 import { useApp, useEngineState, useSend } from "./context";
 import { formatTime, useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS } from "./layout";
 import { OverviewWaveform } from "./Waveforms";
 import { ArtTile } from "./ArtTile";
 import { EMBEDDED_CUE_FORMATS, fileExtension } from "../library/embeddedCues";
+import { useAutoDJ } from "./PlaylistPanel";
 
 const RANGE_LABEL: Record<string, string> = { "0.06": "±6", "0.1": "±10", "0.16": "±16", "1": "WIDE" };
 const SOURCE_LABEL: Record<string, string> = { "apple-music": "APPLE MUSIC" };
@@ -87,7 +89,18 @@ function JogDisplay({ deck, size }: { deck: number; size: number }) {
   const needle = useRef<SVGLineElement>(null);
   const bpmRef = useRef<HTMLSpanElement>(null);
   const lastAngle = useRef<number | null>(null);
-  const d = useEngineState().decks[deck];
+  const engineState = useEngineState();
+  const d = engineState.decks[deck];
+  const auto = useAutoDJ();
+  // Same checks AutoDJ.tick() itself uses, just to show a subtle "why is my tempo fader
+  // moving" hint — recomputed on render (cheap), not on every animation frame.
+  const leadInLive =
+    auto.status === "ACTIVE" &&
+    auto.settings.tempoLeadIn &&
+    (deck === auto.deck || deck === 1 - auto.deck) &&
+    engineState.tempoLeadInActive[deck] &&
+    tempoGapOnly(engineState.decks[auto.deck], engineState.decks[1 - auto.deck], auto.settings) &&
+    tempoLeadInTarget(engineState.decks[auto.deck], engineState.decks[1 - auto.deck]).feasible;
   const ring = `deck${deck + 1}.jog.ring`;
   useWheelNotches(root, (n) => send(ring, n * WHEEL_JOG_TICKS));
   /** Pointer angle in degrees (clockwise from 12 o'clock), or null too close to the centre to be stable. */
@@ -148,6 +161,7 @@ function JogDisplay({ deck, size }: { deck: number; size: number }) {
         </span>
         {d.scratching && <span className="jog-state">SCRATCH</span>}
         {d.loopOutAdjust && <span className="jog-state loop-adjust">ADJ LOOP OUT</span>}
+        {leadInLive && <span className="jog-state lead-in" title="Auto DJ is nudging this deck's tempo toward the next track so Beat Mix can work — move the tempo fader to take over">TEMPO LEAD-IN</span>}
       </div>
     </div>
   );

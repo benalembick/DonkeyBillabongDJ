@@ -5,8 +5,11 @@ import type { AudioEngine } from "../core/engine/types";
 import type { LibraryStore } from "../library/LibraryStore";
 import { moveItem, type PlaylistStore } from "../library/PlaylistStore";
 import type { AnalysisService } from "../analysis/AnalysisService";
-import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition, type AutoDJSettings, type TransitionPlan } from "./transition";
+import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition, tempoGapOnly, tempoLeadInTarget, type AutoDJSettings, type TransitionPlan } from "./transition";
 import { autoEqCurve, bassSwapOffset } from "./autoEq";
+
+/** ≈1%/sec at the engine's ~40ms tick rate — a 16% nudge takes about 16s, imperceptibly gradual. */
+const TEMPO_LEADIN_STEP = 0.0004;
 
 export interface AutoDJState {
   status: "OFF" | "ACTIVE" | "PAUSED" | "TRANSITIONING";
@@ -300,6 +303,13 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
       return;
     }
     if (!this.prepared) { void this.prepare(); return; }
+    if (this.state.settings.tempoLeadIn && tempoGapOnly(decks[deck], decks[incoming], this.state.settings)) {
+      const target = tempoLeadInTarget(decks[deck], decks[incoming]);
+      if (target.feasible) {
+        this.o.engine.stepTempoLeadIn(deck, target.outRate, TEMPO_LEADIN_STEP);
+        this.o.engine.stepTempoLeadIn(incoming, target.inRate, TEMPO_LEADIN_STEP);
+      }
+    }
     const plan = planTransition(decks[deck], decks[incoming], this.state.settings, this.o.analysis.get(deck), this.o.analysis.get(incoming));
     const position = this.o.audio.getPosition(deck);
     if (!decks[deck].playing) {

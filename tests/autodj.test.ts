@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AutoDJ } from "../src/autodj/AutoDJ";
-import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition, transitionRegion } from "../src/autodj/transition";
+import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition, tempoGapOnly, tempoLeadInTarget, transitionRegion } from "../src/autodj/transition";
 import { CommandBus } from "../src/core/commands";
 import { DJEngine } from "../src/core/engine/DJEngine";
 import { EventLog } from "../src/core/log";
@@ -340,6 +340,59 @@ describe("transition planning", () => {
   });
 });
 
+describe("tempo lead-in (pure helpers)", () => {
+  async function gridded(aBpm: number, bBpm: number, aRate = 1, bRate = 1, confidence = 3) {
+    const { engine, library } = await setup();
+    await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);
+    engine.setBeatGrid(0, { bpm: aBpm, firstBeat: 0, confidence, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: bBpm, firstBeat: 0, confidence, source: "analysis" });
+    if (aRate !== 1) engine.setRateDirect(0, aRate);
+    if (bRate !== 1) engine.setRateDirect(1, bRate);
+    const decks = engine.getState().decks;
+    return [decks[0], decks[1]] as const;
+  }
+
+  it("is false when the tempo gap is actually within the incoming deck's range", async () => {
+    const [a, b] = await gridded(120, 124);
+    expect(tempoGapOnly(a, b, DEFAULT_AUTO_DJ)).toBe(false);
+  });
+  it("is false when BPM Sync is off, even with a real gap", async () => {
+    const [a, b] = await gridded(120, 170);
+    expect(tempoGapOnly(a, b, { ...DEFAULT_AUTO_DJ, bpmSync: false })).toBe(false);
+  });
+  it("is false when a grid isn't reliable enough, even with a real gap", async () => {
+    const [a, b] = await gridded(120, 170, 1, 1, 0.5);
+    expect(tempoGapOnly(a, b, DEFAULT_AUTO_DJ)).toBe(false);
+  });
+  it("is true for a genuine tempo-only gap", async () => {
+    const [a, b] = await gridded(120, 138); // 13% gap: outside the default ±10%
+    expect(tempoGapOnly(a, b, DEFAULT_AUTO_DJ)).toBe(true);
+  });
+
+  it("splits a closeable gap evenly and keeps both decks within the ±16% cap", async () => {
+    const [a, b] = await gridded(120, 138); // geometric mean ≈128.67 → ~7.2% / ~6.8%
+    const target = tempoLeadInTarget(a, b);
+    expect(target.feasible).toBe(true);
+    expect(target.outRate).toBeCloseTo(Math.sqrt(120 * 138) / 120, 4);
+    expect(target.inRate).toBeCloseTo(Math.sqrt(120 * 138) / 138, 4);
+    expect(Math.abs(target.outRate - 1)).toBeLessThanOrEqual(0.16);
+    expect(Math.abs(target.inRate - 1)).toBeLessThanOrEqual(0.16);
+  });
+  it("reports infeasible when even a 16%-each split can't close the gap", async () => {
+    const [a, b] = await gridded(100, 150); // native gap far too wide for either deck alone
+    expect(tempoLeadInTarget(a, b).feasible).toBe(false);
+  });
+  it("builds on whatever manual tempo adjustment is already in place, not just the native BPMs", async () => {
+    // Both decks already pushed toward each other by hand (the screenshot's exact situation):
+    // native gap is small, so the *already-adjusted* gap the lead-in needs to close is tiny.
+    const [a, b] = await gridded(120, 124, 1.02, 0.98);
+    const target = tempoLeadInTarget(a, b);
+    const midFromCurrent = Math.sqrt(120 * 1.02 * 124 * 0.98);
+    expect(target.outRate).toBeCloseTo(midFromCurrent / 120, 4);
+    expect(target.inRate).toBeCloseTo(midFromCurrent / 124, 4);
+  });
+});
+
 describe("Auto DJ: Auto EQ integration", () => {
   /** Advances the fade's own clock (driven off the incoming deck's position) by `seconds` of real time. */
   function advance(audio: FakeAudioEngine, engine: DJEngine, incomingDeck: number, seconds: number) {
@@ -445,5 +498,57 @@ describe("Auto DJ: Auto EQ integration", () => {
       expect(engine.getState().autoEq[incoming].midDb).toBe(0);
       expect(engine.getState().autoEq[incoming].highDb).toBe(0);
     }
+  });
+});
+
+describe("Auto DJ: tempo lead-in integration", () => {
+  it("gradually closes a closeable tempo gap, over many ticks, until Beat Mix can engage on its own", async () => {
+    const { auto, playlist, engine } = await setup();
+    auto.configure({ tempoLeadIn: true });
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 138, firstBeat: 0, confidence: 3, source: "analysis" }); // 13% gap: outside ±10% alone
+    auto.tick();
+    expect(auto.getState().plan).toMatchObject({ sync: false, kind: "quick-fade" }); // Smart + known BPMs + tempo gap
+    for (let i = 0; i < 1000; i++) auto.tick();
+    expect(auto.getState().plan).toMatchObject({ sync: true, kind: "beat-mix" });
+    // Neither deck needed to move further than the lead-in's own cap.
+    expect(Math.abs(engine.getState().decks[0].rate - 1)).toBeLessThanOrEqual(0.16);
+    expect(Math.abs(engine.getState().decks[1].rate - 1)).toBeLessThanOrEqual(0.16);
+  });
+
+  it("never touches either deck's tempo when the setting is off (the default)", async () => {
+    const { auto, playlist, engine } = await setup();
+    await auto.start(playlist.id); // tempoLeadIn left at its default: false
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 138, firstBeat: 0, confidence: 3, source: "analysis" });
+    for (let i = 0; i < 200; i++) auto.tick();
+    expect(engine.getState().decks[0].rate).toBe(1);
+    expect(engine.getState().decks[1].rate).toBe(1);
+  });
+
+  it("doesn't bother nudging a gap wider than a 16%-each split could ever close", async () => {
+    const { auto, playlist, engine } = await setup();
+    auto.configure({ tempoLeadIn: true });
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 100, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 150, firstBeat: 0, confidence: 3, source: "analysis" }); // native 50% gap
+    for (let i = 0; i < 200; i++) auto.tick();
+    expect(engine.getState().decks[0].rate).toBe(1);
+    expect(engine.getState().decks[1].rate).toBe(1);
+  });
+
+  it("freezes a deck the moment its tempo fader is moved by hand, mid lead-in, while the other keeps converging", async () => {
+    const { auto, playlist, engine, bus } = await setup();
+    auto.configure({ tempoLeadIn: true });
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 138, firstBeat: 0, confidence: 3, source: "analysis" });
+    auto.tick();
+    bus.send("deck1.tempo", 0.5); // the DJ grabs deck A's fader
+    const frozenRate = engine.getState().decks[0].rate;
+    for (let i = 0; i < 300; i++) auto.tick();
+    expect(engine.getState().decks[0].rate).toBe(frozenRate);
+    expect(engine.getState().decks[1].rate).not.toBe(1); // deck B kept moving on its own
   });
 });

@@ -761,3 +761,44 @@ describe("Auto DJ EQ automation", () => {
     expect(engine.getState().autoEq[0]).toEqual({ lowDb: 0, midDb: 0, highDb: 0, lowActive: true, midActive: true, highActive: true });
   });
 });
+
+describe("Auto DJ tempo lead-in", () => {
+  it("steps the rate toward the target by at most maxStep per call, converging without overshoot", async () => {
+    await loaded(0);
+    engine.stepTempoLeadIn(0, 1.08, 0.0004);
+    expect(engine.getState().decks[0].rate).toBeCloseTo(1.0004, 6);
+    for (let i = 0; i < 1000; i++) engine.stepTempoLeadIn(0, 1.08, 0.0004);
+    expect(engine.getState().decks[0].rate).toBeCloseTo(1.08, 6);
+  });
+
+  it("is eligible by default and widens the tempo range if the target needs it (same honesty rule as setRateDirect)", async () => {
+    await loaded(0);
+    for (let i = 0; i < 500; i++) engine.stepTempoLeadIn(0, 1.14, 0.0004);
+    expect(engine.getState().decks[0].rate).toBeCloseTo(1.14, 5);
+    expect(engine.getState().decks[0].tempoRange).toBe(0.16);
+  });
+
+  it("a manual tempo-fader move hands the deck back and freezes it against further nudging", async () => {
+    await loaded(0);
+    engine.stepTempoLeadIn(0, 1.08, 0.0004);
+    bus.send("deck1.tempo", 0.5); // centre detent: the fader itself, not AutoDJ
+    const rateAfterTakeover = engine.getState().decks[0].rate;
+    expect(engine.getState().tempoLeadInActive[0]).toBe(false);
+    for (let i = 0; i < 100; i++) engine.stepTempoLeadIn(0, 1.08, 0.0004);
+    expect(engine.getState().decks[0].rate).toBe(rateAfterTakeover); // unchanged: the nudge is a no-op now
+  });
+
+  it("cycling the tempo range by hand is also a takeover", async () => {
+    await loaded(0);
+    bus.send("deck1.tempo.range");
+    expect(engine.getState().tempoLeadInActive[0]).toBe(false);
+  });
+
+  it("a fresh track load re-arms eligibility", async () => {
+    await loaded(0);
+    bus.send("deck1.tempo", 0.5);
+    expect(engine.getState().tempoLeadInActive[0]).toBe(false);
+    await loaded(0);
+    expect(engine.getState().tempoLeadInActive[0]).toBe(true);
+  });
+});

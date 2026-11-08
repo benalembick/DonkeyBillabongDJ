@@ -15,8 +15,14 @@ export interface AutoDJSettings {
   intelligentMashups: boolean;
   /** Optional automatic EQ blend during transitions — see autodj/autoEq.ts. Off by default. */
   autoEq: AutoEqSettings;
+  /**
+   * Optional: while just counting down to a transition (not yet mixing), gradually nudge both
+   * decks' tempo toward a shared middle point if the tempo gap alone is what's blocking Beat
+   * Mix — see tempoGapOnly/tempoLeadInTarget below. Off by default.
+   */
+  tempoLeadIn: boolean;
 }
-export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false, intelligentMashups: false, autoEq: DEFAULT_AUTO_EQ };
+export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false, intelligentMashups: false, autoEq: DEFAULT_AUTO_EQ, tempoLeadIn: false };
 export interface TransitionPlan { kind: "beat-mix" | "crossfade" | "quick-fade"; mixOut: number; mixIn: number; seconds: number; sync: boolean; reason: string }
 export interface TransitionRegion { role: "out" | "in"; label: "MIX OUT" | "MIX IN"; start: number; end: number }
 
@@ -76,6 +82,38 @@ function fallbackReason(out: DeckState, incoming: DeckState, settings: AutoDJSet
   if (gapPct > rangePct) return `Tempo gap too large for Beat Mix (needs ±${gapPct}%, Deck ${deckLetter(incoming.index)}'s tempo range is ±${rangePct}%) — widen it to cover a bigger gap`;
   if (settings.keyAware && keys === false) return "Clean fade; keys aren't compatible enough for Smart + key-aware ordering";
   return "Clean fade; Beat Mix isn't selected for this transition"; // explicit Crossfade/Quick Fade choice
+}
+
+/** Pre-transition tempo lead-in never pushes a deck further than this from its native pitch. */
+export const TEMPO_LEADIN_CAP = 0.16;
+
+/** True exactly when the tempo gap is the *only* thing stopping Beat Mix — reliable grids, BPM Sync on, both BPMs known, just too far apart for the incoming deck's own range. */
+export function tempoGapOnly(out: DeckState, incoming: DeckState, settings: AutoDJSettings): boolean {
+  if (!settings.bpmSync) return false;
+  const a = out.beatGrid?.bpm ?? out.track?.bpm;
+  const b = incoming.beatGrid?.bpm ?? incoming.track?.bpm;
+  if (!a || !b) return false;
+  const grids = !!out.beatGrid && !!incoming.beatGrid && out.beatGrid.confidence >= MIN_GRID_CONFIDENCE && incoming.beatGrid.confidence >= MIN_GRID_CONFIDENCE;
+  if (!grids) return false;
+  const ratio = (a * out.rate) / b;
+  return ratio < 1 - incoming.tempoRange || ratio > 1 + incoming.tempoRange;
+}
+
+/**
+ * Meets the two decks' *current* effective tempos (whatever manual adjustment is already
+ * dialed in) at their geometric mean, splitting the remaining gap evenly between them. Only
+ * `feasible` when both resulting rates land within TEMPO_LEADIN_CAP of native pitch — if even
+ * that can't close the gap, there's no point nudging either deck.
+ */
+export function tempoLeadInTarget(out: DeckState, incoming: DeckState): { feasible: boolean; outRate: number; inRate: number } {
+  const a = out.beatGrid?.bpm ?? out.track?.bpm;
+  const b = incoming.beatGrid?.bpm ?? incoming.track?.bpm;
+  if (!a || !b) return { feasible: false, outRate: out.rate, inRate: incoming.rate };
+  const midBpm = Math.sqrt(a * out.rate * b * incoming.rate);
+  const outRate = midBpm / a;
+  const inRate = midBpm / b;
+  const feasible = Math.abs(outRate - 1) <= TEMPO_LEADIN_CAP && Math.abs(inRate - 1) <= TEMPO_LEADIN_CAP;
+  return { feasible, outRate, inRate };
 }
 
 export function planTransition(out: DeckState, incoming: DeckState, settings: AutoDJSettings, outAnalysis?: TrackAnalysis | null, inAnalysis?: TrackAnalysis | null): TransitionPlan {

@@ -106,9 +106,9 @@ function AutoSettings() {
       <label>Crossfade duration <select value={settings.transitionSeconds} onChange={(e) => autoDJ.configure({ transitionSeconds: e.target.value === "auto" ? "auto" : Number(e.target.value) })}>
         <option value="auto">Auto</option>{[3, 5, 8, 10, 15, 20, 30, 45, 60].map((n) => <option key={n} value={n}>{n} sec</option>)}
       </select></label>
-      {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering'], ['intelligentMashups', 'Intelligent Mashups']] as const).map(([key, label]) =>
+      {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering'], ['intelligentMashups', 'Intelligent Mashups'], ['tempoLeadIn', 'Tempo Lead-in']] as const).map(([key, label]) =>
         <label key={key}><input type="checkbox" checked={settings[key]} onChange={(e) => autoDJ.configure({ [key]: e.target.checked })} />{label}</label>)}
-    </div><p className="hint">Shuffle and key-aware ordering apply when starting a set or repeating it. Beat Mix falls back to a fade when grids or tempos are unsuitable.</p>
+    </div><p className="hint">Shuffle and key-aware ordering apply when starting a set or repeating it. Beat Mix falls back to a fade when grids or tempos are unsuitable. Tempo Lead-in gradually nudges both decks' tempo toward each other beforehand (up to ±16%) when that's the only thing stopping Beat Mix — move either deck's tempo fader to take over.</p>
     <div className="toolbar auto-eq-settings">
       <label><input type="checkbox" checked={eq.enabled} onChange={(e) => patchEq({ enabled: e.target.checked })} />Auto EQ</label>
       {eq.enabled && <>
