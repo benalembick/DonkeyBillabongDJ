@@ -320,3 +320,111 @@ describe("transition planning", () => {
     expect(browserFileRef(f)).not.toBe(browserFileRef({ ...f, size: 101 }));
   });
 });
+
+describe("Auto DJ: Auto EQ integration", () => {
+  /** Advances the fade's own clock (driven off the incoming deck's position) by `seconds` of real time. */
+  function advance(audio: FakeAudioEngine, engine: DJEngine, incomingDeck: number, seconds: number) {
+    audio.positions[incomingDeck] += seconds * engine.getState().decks[incomingDeck].rate;
+  }
+  async function begin(autoEq: Partial<import("../src/autodj/autoEq").AutoEqSettings> = {}) {
+    const { auto, playlist, engine, audio, bus } = await setup();
+    auto.configure({ autoEq: { ...DEFAULT_AUTO_DJ.autoEq, enabled: true, ...autoEq } });
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0.1, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 120, firstBeat: 0.1, confidence: 3, source: "analysis" });
+    auto.tick();
+    const plan = auto.getState().plan!;
+    audio.positions[0] = plan.mixOut + 0.01;
+    auto.tick(); // this tick only opens the fade (mirrors the real per-frame loop)
+    expect(auto.getState().status).toBe("TRANSITIONING");
+    auto.tick(); // first tick *inside* the fade: applies the elapsed=0 curve values
+    return { auto, engine, audio, bus, plan };
+  }
+
+  it("stays off existing transitions by default — engine.autoEq is never touched", async () => {
+    const { auto, playlist, engine, audio } = await setup(); // DEFAULT_AUTO_DJ.autoEq.enabled === false
+    await auto.start(playlist.id);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    auto.tick();
+    audio.positions[0] = auto.getState().plan!.mixOut + 0.01;
+    auto.tick();
+    advance(audio, engine, 1, 2);
+    auto.tick();
+    expect(engine.getState().autoEq[0]).toEqual({ lowDb: 0, midDb: 0, highDb: 0, lowActive: true, midActive: true, highActive: true });
+    expect(engine.getState().autoEq[1]).toEqual(engine.getState().autoEq[0]);
+  });
+
+  it("cuts the incoming deck's lows at the start of the fade and the outgoing deck's by the end", async () => {
+    const { auto, engine, audio, plan } = await begin();
+    const deck = auto.getState().deck, incoming = 1 - deck;
+    expect(engine.getState().autoEq[incoming].lowDb).toBeLessThan(-1); // incoming starts cut
+    expect(engine.getState().autoEq[deck].lowDb).toBeCloseTo(0, 1); // outgoing still has its manual EQ
+    advance(audio, engine, incoming, plan.seconds - 0.1); // past the swap, but short of natural completion
+    auto.tick();
+    expect(engine.getState().autoEq[deck].lowDb).toBeLessThan(-1); // outgoing now cut, past the swap
+  });
+
+  it("restores both decks to neutral, re-armed, once the transition completes normally", async () => {
+    const { auto, engine, audio, plan } = await begin();
+    const deck = auto.getState().deck, incoming = 1 - deck;
+    advance(audio, engine, incoming, plan.seconds + 0.5); // past the end
+    auto.tick();
+    expect(auto.getState().status).toBe("ACTIVE");
+    for (const d of [deck, incoming]) expect(engine.getState().autoEq[d]).toEqual({ lowDb: 0, midDb: 0, highDb: 0, lowActive: true, midActive: true, highActive: true });
+  });
+
+  it("hands a band back to manual mid-transition through the real controller/action path, leaving the rest automated", async () => {
+    const { auto, engine, audio, bus, plan } = await begin();
+    const deck = auto.getState().deck, incoming = 1 - deck;
+    advance(audio, engine, incoming, plan.seconds * 0.4);
+    auto.tick();
+    const before = engine.getState().autoEq[incoming];
+    expect(before.midActive).toBe(true);
+    bus.send(`mixer.channel${incoming + 1}.eq.mid`, 0.5); // the real DDJ-SB/UI path
+    expect(engine.getState().autoEq[incoming].midActive).toBe(false);
+    expect(engine.getState().autoEq[incoming].lowActive).toBe(true); // other bands keep automating
+    advance(audio, engine, incoming, 1);
+    auto.tick();
+    expect(engine.getState().autoEq[incoming].lowDb).not.toBe(before.lowDb); // low kept moving
+  });
+
+  it("ramps a live cut back to neutral, rather than leaving it stuck, when Auto EQ is disabled mid-transition", async () => {
+    const { auto, engine, audio, plan } = await begin();
+    const deck = auto.getState().deck, incoming = 1 - deck;
+    advance(audio, engine, incoming, plan.seconds * 0.3);
+    auto.tick();
+    const cut = engine.getState().autoEq[incoming].lowDb;
+    expect(cut).toBeLessThan(-1);
+    auto.configure({ autoEq: { ...DEFAULT_AUTO_DJ.autoEq, enabled: false } });
+    auto.tick(); // hands every band back
+    expect(engine.getState().autoEq[incoming].lowActive).toBe(false);
+    for (let i = 0; i < 30; i++) engine.tick(); // the engine's own 40ms decay, independent of AutoDJ
+    expect(engine.getState().autoEq[incoming]).toMatchObject({ lowDb: 0, midDb: 0, highDb: 0 });
+  });
+
+  it("leaves no stale cut behind when Auto DJ is stopped mid-transition, and the next transition starts clean", async () => {
+    const { auto, engine, audio, plan } = await begin();
+    const deck = auto.getState().deck, incoming = 1 - deck;
+    advance(audio, engine, incoming, plan.seconds * 0.3);
+    auto.tick();
+    expect(engine.getState().autoEq[incoming].lowDb).toBeLessThan(-1);
+    auto.stop();
+    expect(engine.getState().autoEq[deck].lowActive).toBe(false);
+    expect(engine.getState().autoEq[incoming].lowActive).toBe(false);
+    for (let i = 0; i < 30; i++) engine.tick();
+    expect(engine.getState().autoEq[deck]).toMatchObject({ lowDb: 0, midDb: 0, highDb: 0 });
+    expect(engine.getState().autoEq[incoming]).toMatchObject({ lowDb: 0, midDb: 0, highDb: 0 });
+  });
+
+  it("a lows-only configuration leaves mids and highs untouched (0 dB) throughout", async () => {
+    const { engine, audio, plan, auto } = await begin({ bands: { lows: true, mids: false, highs: false } });
+    const incoming = 1 - auto.getState().deck;
+    for (let t = 0; t <= plan.seconds; t += plan.seconds / 5) {
+      advance(audio, engine, incoming, plan.seconds / 5);
+      auto.tick();
+      expect(engine.getState().autoEq[incoming].midDb).toBe(0);
+      expect(engine.getState().autoEq[incoming].highDb).toBe(0);
+    }
+  });
+});

@@ -152,12 +152,29 @@ export interface MixerState {
   headLevel: number;
 }
 
+/**
+ * Temporary Auto DJ EQ automation for one deck (see autodj/autoEq.ts). Deliberately separate
+ * from ChannelState: it must never be captured by captureManualMashupSetup/restoreManualMashupSetup,
+ * and it clears on every track load and transition boundary instead of persisting like a setting.
+ */
+export interface AutoEqState {
+  /** Currently applied attenuation, dB, always <= 0 (cut only — see DJEngine.applyMixer). */
+  lowDb: number;
+  midDb: number;
+  highDb: number;
+  /** False once that band on this deck has been taken over by a manual EQ move this transition. */
+  lowActive: boolean;
+  midActive: boolean;
+  highActive: boolean;
+}
+
 export interface EngineState {
   decks: DeckState[];
   mixer: MixerState;
   fx: FxUnitState[];
   /** Deck whose tempo/phase synced decks follow (null = none yet). */
   masterDeck: number | null;
+  autoEq: AutoEqState[];
 }
 
 /** Where hot cue pads get their data from: this app's own analysis, or the track's own embedded tag. */
@@ -254,6 +271,10 @@ function initialDeck(index: number): DeckState {
     loopIn: null,
     loopOutAdjust: false,
   };
+}
+
+function initialAutoEq(): AutoEqState {
+  return { lowDb: 0, midDb: 0, highDb: 0, lowActive: true, midActive: true, highActive: true };
 }
 
 function initialChannel(): ChannelState {
@@ -413,6 +434,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         decks: Array.from({ length: this.deckCount }, (_, i) => i === u),
       })),
       masterDeck: null,
+      autoEq: Array.from({ length: this.deckCount }, initialAutoEq),
     };
     this.loadTokens = new Array(this.deckCount).fill(0);
     this.preview = Array.from({ length: this.deckCount }, () => ({ origin: 0, latchPlay: false }));
@@ -584,6 +606,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
    * with tiny, inaudible speed corrections (never jumps).
    */
   tick(): void {
+    this.decayAutoEq();
     const m = this.state.masterDeck;
     if (m === null) return;
     for (let f = 0; f < this.deckCount; f++) {
@@ -1041,6 +1064,8 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       track = prepared.track ?? track;
       this.audio.setPlaying(deck, false);
       this.audio.loadDeck(deck, decoded);
+      // A newly loaded track must never inherit the previous track's in-flight Auto EQ cut.
+      this.resetAutoEq(deck);
       this.patchDeck(deck, {
         status: "ready",
         loadProgress: undefined,
@@ -1124,12 +1149,14 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       }
 
       on(`${m}.gain`, (v) => this.patchChannel(i, { gain: v }));
-      on(`${m}.eq.high`, (v) => this.patchChannel(i, { eqHigh: v }));
-      on(`${m}.eq.mid`, (v) => this.patchChannel(i, { eqMid: v }));
-      on(`${m}.eq.low`, (v) => this.patchChannel(i, { eqLow: v }));
-      on(`${m}.eq.high.kill`, pressed(() => this.patchChannel(i, { killHigh: !this.state.mixer.channels[i].killHigh })));
-      on(`${m}.eq.mid.kill`, pressed(() => this.patchChannel(i, { killMid: !this.state.mixer.channels[i].killMid })));
-      on(`${m}.eq.low.kill`, pressed(() => this.patchChannel(i, { killLow: !this.state.mixer.channels[i].killLow })));
+      // Any of these is genuine manual input on that band — including the hardware re-sending the
+      // same value while held — so it always takes the band back from Auto EQ for this transition.
+      on(`${m}.eq.high`, (v) => { this.takeOverAutoEq(i, "high"); this.patchChannel(i, { eqHigh: v }); });
+      on(`${m}.eq.mid`, (v) => { this.takeOverAutoEq(i, "mid"); this.patchChannel(i, { eqMid: v }); });
+      on(`${m}.eq.low`, (v) => { this.takeOverAutoEq(i, "low"); this.patchChannel(i, { eqLow: v }); });
+      on(`${m}.eq.high.kill`, pressed(() => { this.takeOverAutoEq(i, "high"); this.patchChannel(i, { killHigh: !this.state.mixer.channels[i].killHigh }); }));
+      on(`${m}.eq.mid.kill`, pressed(() => { this.takeOverAutoEq(i, "mid"); this.patchChannel(i, { killMid: !this.state.mixer.channels[i].killMid }); }));
+      on(`${m}.eq.low.kill`, pressed(() => { this.takeOverAutoEq(i, "low"); this.patchChannel(i, { killLow: !this.state.mixer.channels[i].killLow }); }));
       on(`${m}.filter`, (v) => this.patchChannel(i, { filter: v }));
       on(`${m}.volume`, (v) => this.patchChannel(i, { volume: v }));
       on(`${m}.cue`, pressed(() => this.patchChannel(i, { pfl: !this.state.mixer.channels[i].pfl })));
@@ -1447,13 +1474,15 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     const [xl, xr] = crossfaderGains(mx.crossfader, this.settings.crossfaderCurve);
     for (let i = 0; i < this.deckCount; i++) {
       const c = mx.channels[i];
+      const a = this.state.autoEq[i];
       const assign = this.settings.crossfaderAssign[i] ?? "thru";
       const xg = assign === "left" ? xl : assign === "right" ? xr : 1;
       this.audio.setChannel(i, {
         trimGain: dbToGain(gainKnobToDb(c.gain)),
-        eqHighDb: c.killHigh ? EQ_KILL_DB : eqKnobToDb(c.eqHigh),
-        eqMidDb: c.killMid ? EQ_KILL_DB : eqKnobToDb(c.eqMid),
-        eqLowDb: c.killLow ? EQ_KILL_DB : eqKnobToDb(c.eqLow),
+        // Auto EQ only ever cuts further from wherever the manual knob (or kill) already sits.
+        eqHighDb: Math.max(EQ_KILL_DB, (c.killHigh ? EQ_KILL_DB : eqKnobToDb(c.eqHigh)) + a.highDb),
+        eqMidDb: Math.max(EQ_KILL_DB, (c.killMid ? EQ_KILL_DB : eqKnobToDb(c.eqMid)) + a.midDb),
+        eqLowDb: Math.max(EQ_KILL_DB, (c.killLow ? EQ_KILL_DB : eqKnobToDb(c.eqLow)) + a.lowDb),
         filter: filterKnobToParams(c.filter),
         outputGain: c.mute ? 0 : faderToGain(c.volume) * xg,
         pfl: c.pfl,
@@ -1466,6 +1495,69 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       headMasterGain: mstG,
       headphoneGain: faderToGain(mx.headLevel),
     });
+  }
+
+  // ───────────────────────────── Auto EQ ─────────────────────────────
+  // Temporary per-band attenuation Auto DJ drives during a transition (autodj/autoEq.ts computes
+  // the curves; this just applies and retires them). Never touches the stored manual EQ knobs.
+
+  /** Auto DJ calls this every tick while a transition's automation is live, for whichever bands on this deck haven't been manually taken over. */
+  setAutoEq(deck: number, db: { low: number; mid: number; high: number }): void {
+    const a = this.state.autoEq[deck];
+    if (!a) return;
+    const next: AutoEqState = {
+      ...a,
+      lowDb: a.lowActive ? db.low : a.lowDb,
+      midDb: a.midActive ? db.mid : a.midDb,
+      highDb: a.highActive ? db.high : a.highDb,
+    };
+    this.patchAutoEq(deck, next);
+  }
+
+  /** Clears a deck's automation immediately (normal completion once inaudible, or a freshly loaded track) and re-arms all bands for the next transition. */
+  resetAutoEq(deck: number): void {
+    this.patchAutoEq(deck, initialAutoEq());
+  }
+
+  /** A transition ended early (skip/stop/pause/Auto EQ disabled) with the deck possibly still audible: hand every band back to manual and let the per-tick decay ramp its current cut out smoothly instead of snapping it to neutral. */
+  cancelAutoEq(deck: number): void {
+    const a = this.state.autoEq[deck];
+    if (!a) return;
+    this.patchAutoEq(deck, { ...a, lowActive: false, midActive: false, highActive: false });
+  }
+
+  /** The user moved this band's physical/on-screen knob: hand just that band back for the rest of the transition, leaving the others automated. Always counts as a takeover, even if the hardware re-sends the same value. */
+  private takeOverAutoEq(deck: number, band: "low" | "mid" | "high"): void {
+    const a = this.state.autoEq[deck];
+    if (!a || !a[`${band}Active`]) return;
+    this.patchAutoEq(deck, { [`${band}Active`]: false });
+  }
+
+  /** Every tick: bands no longer under automation decay their leftover cut toward 0 dB, smoothly and without clicks (the same AudioParam smoothing setChannel always uses). */
+  private decayAutoEq(): void {
+    const DECAY = 0.75; // ≈540ms to negligible at the engine's 40ms tick rate
+    let changed = false;
+    const next = this.state.autoEq.map((a) => {
+      // `db === 0` isn't checked here: -0 === 0 is true in JS, which would return -0 unchanged
+      // forever instead of letting it fall through and snap to a normal +0 below.
+      const decay = (active: boolean, db: number) => (active ? db : Math.abs(db) < 0.02 ? 0 : db * DECAY);
+      const lowDb = decay(a.lowActive, a.lowDb);
+      const midDb = decay(a.midActive, a.midDb);
+      const highDb = decay(a.highActive, a.highDb);
+      if (lowDb !== a.lowDb || midDb !== a.midDb || highDb !== a.highDb) changed = true;
+      return { ...a, lowDb, midDb, highDb };
+    });
+    if (changed) {
+      this.state = { ...this.state, autoEq: next };
+      this.applyMixer();
+    }
+  }
+
+  private patchAutoEq(deck: number, patch: Partial<AutoEqState>): void {
+    const autoEq = this.state.autoEq.slice();
+    autoEq[deck] = { ...autoEq[deck], ...patch };
+    this.state = { ...this.state, autoEq };
+    this.applyMixer();
   }
 
   // ───────────────────────────── FX ─────────────────────────────

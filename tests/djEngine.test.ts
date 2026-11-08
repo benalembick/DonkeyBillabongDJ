@@ -682,3 +682,68 @@ describe("sync", () => {
     expect(audio.rates[1]).toBeGreaterThan(0.97); // correction is gentle
   });
 });
+
+describe("Auto DJ EQ automation", () => {
+  it("adds on top of the manual EQ and clamps at the kill floor, without changing the stored knob", () => {
+    engine.setAutoEq(0, { low: -6, mid: 0, high: 0 }); // flat manual EQ (0.5) minus a 6 dB auto cut
+    expect(audio.channels[0].eqLowDb).toBeCloseTo(-6, 5);
+    bus.send("mixer.channel1.gain", 0.9); // touch something unrelated — the knob stays exactly where it was
+    engine.setAutoEq(0, { low: -6, mid: 0, high: 0 });
+    expect(engine.getState().mixer.channels[0].eqLow).toBe(0.5); // automation never writes the stored knob
+    engine.setAutoEq(0, { low: -60, mid: 0, high: 0 }); // far past the kill floor
+    expect(audio.channels[0].eqLowDb).toBe(-40);
+  });
+
+  it("only writes bands that are still under automation", () => {
+    engine.setAutoEq(0, { low: -10, mid: -5, high: -2 });
+    expect(engine.getState().autoEq[0]).toMatchObject({ lowDb: -10, midDb: -5, highDb: -2 });
+    bus.send("mixer.channel1.eq.low", 0.5); // manual move: low is handed back
+    expect(engine.getState().autoEq[0].lowActive).toBe(false);
+    engine.setAutoEq(0, { low: -30, mid: -8, high: -3 }); // further pushes ignore the taken-over band
+    expect(engine.getState().autoEq[0].midDb).toBe(-8);
+    expect(engine.getState().autoEq[0].highDb).toBe(-3);
+    expect(engine.getState().autoEq[0].lowDb).toBe(-10); // frozen at its last automated value, not re-targeted
+  });
+
+  it("treats a kill press the same as a knob move: hands back only that band", () => {
+    engine.setAutoEq(0, { low: -10, mid: -10, high: -10 });
+    bus.send("mixer.channel1.eq.high.kill", 1);
+    expect(engine.getState().autoEq[0]).toMatchObject({ lowActive: true, midActive: true, highActive: false });
+  });
+
+  it("decays a taken-over band smoothly toward neutral over subsequent ticks, without affecting an active band", () => {
+    engine.setAutoEq(0, { low: -10, mid: -10, high: -10 });
+    bus.send("mixer.channel1.eq.low", 0.5); // hands back low only
+    const before = engine.getState().autoEq[0].lowDb;
+    engine.tick();
+    const afterOneTick = engine.getState().autoEq[0].lowDb;
+    expect(afterOneTick).toBeLessThan(0);
+    expect(Math.abs(afterOneTick)).toBeLessThan(Math.abs(before)); // decaying toward 0
+    expect(engine.getState().autoEq[0].midDb).toBe(-10); // mid is still active and untouched by decay
+    for (let i = 0; i < 30; i++) engine.tick();
+    expect(engine.getState().autoEq[0].lowDb).toBe(0); // settles at exactly neutral, not asymptotically close
+  });
+
+  it("cancelAutoEq hands every band back at once and lets them all decay out", () => {
+    engine.setAutoEq(0, { low: -10, mid: -10, high: -10 });
+    engine.cancelAutoEq(0);
+    expect(engine.getState().autoEq[0]).toMatchObject({ lowActive: false, midActive: false, highActive: false });
+    for (let i = 0; i < 30; i++) engine.tick();
+    expect(engine.getState().autoEq[0]).toMatchObject({ lowDb: 0, midDb: 0, highDb: 0 });
+  });
+
+  it("resetAutoEq clears everything immediately and re-arms every band for the next transition", () => {
+    engine.setAutoEq(0, { low: -10, mid: -10, high: -10 });
+    bus.send("mixer.channel1.eq.low", 0.5);
+    engine.resetAutoEq(0);
+    expect(engine.getState().autoEq[0]).toEqual({ lowDb: 0, midDb: 0, highDb: 0, lowActive: true, midActive: true, highActive: true });
+  });
+
+  it("a newly loaded track never inherits the previous track's in-flight automation", async () => {
+    await loaded(0);
+    engine.setAutoEq(0, { low: -10, mid: -10, high: -10 });
+    bus.send("mixer.channel1.eq.mid", 0.5);
+    await loaded(0);
+    expect(engine.getState().autoEq[0]).toEqual({ lowDb: 0, midDb: 0, highDb: 0, lowActive: true, midActive: true, highActive: true });
+  });
+});

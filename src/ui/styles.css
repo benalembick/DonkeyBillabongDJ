@@ -343,6 +343,9 @@ img.art-tile { object-fit: cover; display: block; }
 .strip.channel-a { box-shadow: inset 0 2px 0 var(--deck-a); }
 .strip.channel-b { box-shadow: inset 0 2px 0 var(--deck-b); }
 .strip-name { font-weight: 900; font-size: 11px; }
+.auto-eq-badge { margin-left: 5px; padding: 1px 4px; border-radius: 3px; font-size: 8px; font-weight: 800; letter-spacing: 0.04em; color: #000; background: var(--ok); vertical-align: middle; }
+.auto-eq-settings label { white-space: nowrap; }
+.auto-eq-settings input[type="range"] { vertical-align: middle; margin: 0 4px; }
 .knob { display: flex; flex-direction: column; align-items: center; }
 .knob-dial { position: relative; border-radius: 50%; background: radial-gradient(circle at 50% 40%, #394150, #171b22); }
 .knob-dial svg { position: absolute; inset: -3px; width: calc(100% + 6px); height: calc(100% + 6px); pointer-events: none; }

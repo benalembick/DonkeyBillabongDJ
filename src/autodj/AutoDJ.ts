@@ -6,6 +6,7 @@ import type { LibraryStore } from "../library/LibraryStore";
 import { moveItem, type PlaylistStore } from "../library/PlaylistStore";
 import type { AnalysisService } from "../analysis/AnalysisService";
 import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition, type AutoDJSettings, type TransitionPlan } from "./transition";
+import { autoEqCurve, bassSwapOffset } from "./autoEq";
 
 export interface AutoDJState {
   status: "OFF" | "ACTIVE" | "PAUSED" | "TRANSITIONING";
@@ -35,7 +36,7 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   private generation = 0;
   private loadingDeck: number | null = null;
   private prepared: string | null = null;
-  private fade: { from: number; elapsed: number; duration: number; incoming: string; lastPosition: number; mashup: boolean } | null = null;
+  private fade: { from: number; elapsed: number; duration: number; incoming: string; lastPosition: number; mashup: boolean; eqSwapAt: number } | null = null;
   private unsub: (() => void)[];
   constructor(private o: Options) {
     super();
@@ -58,6 +59,11 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     this.set({ settings, plan: this.state.status === "TRANSITIONING" ? this.state.plan : null });
   }
   private send(action: string, value = 1) { this.o.bus.send(action, value, "system"); }
+  /** Only call cancelAutoEq when there's actually something to release — Auto EQ may never have run this fade. */
+  private releaseAutoEqIfEngaged(deck: number) {
+    const a = this.o.engine.getState().autoEq[deck];
+    if (a.lowDb || a.midDb || a.highDb || !a.lowActive || !a.midActive || !a.highActive) this.o.engine.cancelAutoEq(deck);
+  }
   private play(deck: number, playing: boolean) { if (this.o.engine.getState().decks[deck].playing !== playing) this.send(`deck${deck + 1}.play`); }
   private cancelLoad() {
     ++this.generation;
@@ -70,7 +76,11 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     this.set({ status: "PAUSED", preparing: false, message });
   }
   stop() {
-    this.cancelLoad(); this.fade = null; this.prepared = null;
+    this.cancelLoad();
+    // Stop (unlike Pause) never resumes this transition, so let any live automation ramp back
+    // to neutral — from wherever it currently is — instead of leaving a stale cut in place.
+    if (this.fade) { this.releaseAutoEqIfEngaged(this.state.deck); this.releaseAutoEqIfEngaged(1 - this.state.deck); }
+    this.fade = null; this.prepared = null;
     this.set({ status: "OFF", preparing: false, queueLocked: false, plan: null, nextSeconds: null, message: "Auto DJ stopped; decks remain under manual control" });
   }
   /** Restart the preserved session after STOP without rebuilding or losing queue edits. */
@@ -240,7 +250,8 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
       engine.setStemMix(incoming, [true, false, false, false], [.78, 0, 0, 0]);
       this.send("mixer.crossfader", .5);
     }
-    this.fade = { from: engine.getState().mixer.crossfader, elapsed: 0, duration: plan.seconds, incoming: this.prepared, lastPosition: this.o.audio.getPosition(incoming), mashup };
+    const eqSwapAt = bassSwapOffset(plan, decks[out], this.state.settings.autoEq);
+    this.fade = { from: engine.getState().mixer.crossfader, elapsed: 0, duration: plan.seconds, incoming: this.prepared, lastPosition: this.o.audio.getPosition(incoming), mashup, eqSwapAt };
     this.set({ status: "TRANSITIONING", queueLocked: true, plan, nextSeconds: 0, message: mashup ? "Intelligent Mashup: vocal overlay, then instrumental handover" : plan.reason });
   }
   tick() {
@@ -257,11 +268,25 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
         this.o.engine.setStemMix(deck, [true, true, true, true], [.72 * (1 - progress), .82 * (1 - progress), .82 * (1 - progress), .72 * (1 - progress)]);
         this.o.engine.setStemMix(incoming, [true, true, true, true], [.78, .82 * progress, .82 * progress, .72 * progress]);
       } else this.send("mixer.crossfader", this.fade.from + (incoming - this.fade.from) * progress);
+      if (this.state.settings.autoEq.enabled) {
+        const outCurve = autoEqCurve("out", this.fade.elapsed, this.fade.duration, this.fade.eqSwapAt, this.state.settings.autoEq);
+        const inCurve = autoEqCurve("in", this.fade.elapsed, this.fade.duration, this.fade.eqSwapAt, this.state.settings.autoEq);
+        this.o.engine.setAutoEq(deck, { low: outCurve.lowDb, mid: outCurve.midDb, high: outCurve.highDb });
+        this.o.engine.setAutoEq(incoming, { low: inCurve.lowDb, mid: inCurve.midDb, high: inCurve.highDb });
+      } else {
+        // Covers disabling Auto EQ mid-transition: stop driving it and let any live cut ramp out.
+        // Guarded so a transition that was never automated (the common, off-by-default case)
+        // doesn't get its pristine autoEq state needlessly marked as "taken over".
+        this.releaseAutoEqIfEngaged(deck);
+        this.releaseAutoEqIfEngaged(incoming);
+      }
       if (progress >= 1) {
         if (this.fade.mashup) { this.o.engine.setStemMix(incoming, [true, true, true, true], [1, 1, 1, 1]); this.send("mixer.crossfader", incoming); }
         this.play(deck, false);
         if (decks[deck].sync) this.send(`deck${deck + 1}.sync`);
         this.o.engine.setMaster(incoming);
+        this.o.engine.resetAutoEq(deck);
+        this.o.engine.resetAutoEq(incoming);
         this.fade = null; this.prepared = null;
         this.set({ status: "ACTIVE", queueLocked: false, deck: incoming, played: [...this.state.played, this.state.current!], current: this.state.upcoming[0], upcoming: this.state.upcoming.slice(1), plan: null, message: "Transition complete" });
         void this.prepare();

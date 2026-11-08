@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TrackInfo } from "../core/engine/types";
 import { PlaylistStore } from "../library/PlaylistStore";
 import type { AutoDJSettings } from "../autodj/transition";
+import type { AutoEqSettings } from "../autodj/autoEq";
 import { useApp, useEngineState, useLibraryState } from "./context";
 import { useFrameStore } from "./hooks";
 import { ArtTile } from "./ArtTile";
@@ -91,6 +92,9 @@ export function PlaylistActions({ refs, onDone }: { refs: string[]; onDone?: () 
 function AutoSettings() {
   const { autoDJ } = useApp();
   const { settings } = useAutoDJ();
+  const eq = settings.autoEq;
+  const patchEq = (patch: Partial<AutoEqSettings>) => autoDJ.configure({ autoEq: { ...eq, ...patch } });
+  const patchBand = (band: keyof AutoEqSettings["bands"], on: boolean) => patchEq({ bands: { ...eq.bands, [band]: on } });
   return <details className="auto-settings"><summary>Auto DJ settings · {settings.style} · {settings.bars} bars</summary>
     <div className="toolbar">
       <label>Transition style <select value={settings.style} onChange={(e) => autoDJ.configure({ style: e.target.value as AutoDJSettings["style"] })}>
@@ -105,6 +109,18 @@ function AutoSettings() {
       {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering'], ['intelligentMashups', 'Intelligent Mashups']] as const).map(([key, label]) =>
         <label key={key}><input type="checkbox" checked={settings[key]} onChange={(e) => autoDJ.configure({ [key]: e.target.checked })} />{label}</label>)}
     </div><p className="hint">Shuffle and key-aware ordering apply when starting a set or repeating it. Beat Mix falls back to a fade when grids or tempos are unsuitable.</p>
+    <div className="toolbar auto-eq-settings">
+      <label><input type="checkbox" checked={eq.enabled} onChange={(e) => patchEq({ enabled: e.target.checked })} />Auto EQ</label>
+      {eq.enabled && <>
+        {([['lows', 'Lows'], ['mids', 'Mids'], ['highs', 'Highs']] as const).map(([band, label]) =>
+          <label key={band}><input type="checkbox" checked={eq.bands[band]} onChange={(e) => patchBand(band, e.target.checked)} />{label}</label>)}
+        <label>Strength <input type="range" min={0} max={1} step={0.05} value={eq.strength} onChange={(e) => patchEq({ strength: Number(e.target.value) })} /> {Math.round(eq.strength * 100)}%</label>
+        {eq.bands.lows && <label>Bass swap <select value={eq.bassSwapTiming} onChange={(e) => patchEq({ bassSwapTiming: e.target.value as AutoEqSettings["bassSwapTiming"] })}>
+          <option value="early">Early</option><option value="middle">Middle</option><option value="late">Late</option>
+        </select></label>}
+      </>}
+    </div>
+    {eq.enabled && <p className="hint">Auto EQ blends the enabled bands between decks during each transition — lows swap around the bass-swap point, mids and highs blend gradually. It only cuts, on top of your manual EQ; moving an EQ knob during a transition hands that band straight back to you.</p>}
   </details>;
 }
 

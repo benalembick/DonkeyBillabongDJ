@@ -1,5 +1,6 @@
 import type { DeckState } from "../core/engine/DJEngine";
 import type { TrackAnalysis } from "../analysis/analyzeTrack";
+import { DEFAULT_AUTO_EQ, type AutoEqSettings } from "./autoEq";
 
 export interface AutoDJSettings {
   style: "smart" | "beat-mix" | "crossfade" | "quick-fade";
@@ -11,8 +12,10 @@ export interface AutoDJSettings {
   bpmSync: boolean;
   keyAware: boolean;
   intelligentMashups: boolean;
+  /** Optional automatic EQ blend during transitions — see autodj/autoEq.ts. Off by default. */
+  autoEq: AutoEqSettings;
 }
-export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false, intelligentMashups: false };
+export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false, intelligentMashups: false, autoEq: DEFAULT_AUTO_EQ };
 export interface TransitionPlan { kind: "beat-mix" | "crossfade" | "quick-fade"; mixOut: number; mixIn: number; seconds: number; sync: boolean; reason: string }
 export interface TransitionRegion { role: "out" | "in"; label: "MIX OUT" | "MIX IN"; start: number; end: number }
 

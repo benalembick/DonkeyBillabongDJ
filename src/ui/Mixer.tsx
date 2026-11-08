@@ -146,10 +146,12 @@ export function Mixer({ dense }: { dense?: boolean }) {
 
   const strip = (i: number) => {
     const c = mx.channels[i];
+    const a = state.autoEq[i];
+    const autoEqActive = a.lowDb !== 0 || a.midDb !== 0 || a.highDb !== 0;
     const m = `mixer.channel${i + 1}`;
     return (
       <div key={i} className={`strip channel-${deckLetter(i).toLowerCase()}`}>
-        <div className="strip-name">{deckLetter(i)}</div>
+        <div className="strip-name">{deckLetter(i)}{autoEqActive && <span className="auto-eq-badge" title="Auto EQ is temporarily cutting this deck's EQ for the transition — move a knob to take a band back">AUTO EQ</span>}</div>
         <div className="strip-knobs">
           <Knob size={k} label="TRIM" value={c.gain} action={`${m}.gain`} bipolar />
           <Knob size={k} label="HI" value={c.eqHigh} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar />
