@@ -1,3 +1,4 @@
+import { deckLetter } from "../core/actions";
 import type { DeckState } from "../core/engine/DJEngine";
 import type { TrackAnalysis } from "../analysis/analyzeTrack";
 import { DEFAULT_AUTO_EQ, type AutoEqSettings } from "./autoEq";
@@ -52,6 +53,31 @@ function bounds(d: DeckState, a?: TrackAnalysis | null): [number, number] {
   return [first / a.rms.length * d.duration, (last + 1) / a.rms.length * d.duration];
 }
 
+const MIN_GRID_CONFIDENCE = 1.4;
+
+/**
+ * Explains, specifically, why Beat Mix didn't happen — the badge alone ("Beat Mix unavailable")
+ * doesn't say which of several possible reasons applies, or what to change about it. Checked in
+ * the same priority Beat Mix itself is gated on, so this always names the actual blocker.
+ */
+function fallbackReason(out: DeckState, incoming: DeckState, settings: AutoDJSettings, a: number | null | undefined, b: number | null | undefined, ratio: number, grids: boolean, keys: boolean | null): string {
+  if (!settings.bpmSync) return "Clean fade; BPM Sync is switched off in Auto DJ settings";
+  const noBpm = [!a ? deckLetter(out.index) : null, !b ? deckLetter(incoming.index) : null].filter((x): x is string => x !== null);
+  if (noBpm.length) return `Clean fade; BPM unknown for Deck ${noBpm.join(" and Deck ")}`;
+  if (!grids) {
+    const unreliable = [
+      !out.beatGrid || out.beatGrid.confidence < MIN_GRID_CONFIDENCE ? deckLetter(out.index) : null,
+      !incoming.beatGrid || incoming.beatGrid.confidence < MIN_GRID_CONFIDENCE ? deckLetter(incoming.index) : null,
+    ].filter((x): x is string => x !== null);
+    return `Clean fade; beat grid isn't reliable enough for Deck ${unreliable.join(" and Deck ")}`;
+  }
+  const gapPct = Math.round(Math.abs(ratio - 1) * 100);
+  const rangePct = Math.round(incoming.tempoRange * 100);
+  if (gapPct > rangePct) return `Tempo gap too large for Beat Mix (needs ±${gapPct}%, Deck ${deckLetter(incoming.index)}'s tempo range is ±${rangePct}%) — widen it to cover a bigger gap`;
+  if (settings.keyAware && keys === false) return "Clean fade; keys aren't compatible enough for Smart + key-aware ordering";
+  return "Clean fade; Beat Mix isn't selected for this transition"; // explicit Crossfade/Quick Fade choice
+}
+
 export function planTransition(out: DeckState, incoming: DeckState, settings: AutoDJSettings, outAnalysis?: TrackAnalysis | null, inAnalysis?: TrackAnalysis | null): TransitionPlan {
   const a = out.beatGrid?.bpm ?? out.track?.bpm;
   const b = incoming.beatGrid?.bpm ?? incoming.track?.bpm;
@@ -82,5 +108,6 @@ export function planTransition(out: DeckState, incoming: DeckState, settings: Au
     mixIn = inOrigin + Math.ceil(Math.max(0, mixIn - inOrigin) / inPhrase) * inPhrase;
   }
   mixIn = Math.max(0, Math.min(mixIn, incoming.duration - seconds * (beatMix ? ratio : 1) - 0.1));
-  return { kind, mixOut, mixIn, seconds, sync: beatMix, reason: beatMix ? "Compatible tempo; estimated phrase boundaries" : !safeTempo && a && b ? "Tempo gap: keep original speed" : "Clean fade; no reliable compatible beat grids" };
+  const reason = beatMix ? "Compatible tempo; estimated phrase boundaries" : fallbackReason(out, incoming, settings, a, b, ratio, grids, keys);
+  return { kind, mixOut, mixIn, seconds, sync: beatMix, reason };
 }

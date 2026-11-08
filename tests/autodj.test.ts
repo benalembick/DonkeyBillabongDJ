@@ -71,7 +71,7 @@ describe("Auto DJ", () => {
     const { auto, playlist } = await setup();
     auto.configure({ style: "beat-mix" }); await auto.start(playlist.id); auto.tick();
     expect(auto.getState().settings.style).toBe("beat-mix");
-    expect(auto.getState().plan).toMatchObject({ kind: "crossfade", sync: false, reason: "Clean fade; no reliable compatible beat grids" });
+    expect(auto.getState().plan).toMatchObject({ kind: "crossfade", sync: false, reason: "Clean fade; BPM unknown for Deck A and Deck B" });
   });
 
   it("uses cached STEM routing for an enabled Intelligent Mashup transition", async () => {
@@ -285,7 +285,10 @@ describe("transition planning", () => {
     engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
     engine.setBeatGrid(1, { bpm: 170, firstBeat: 0, confidence: 3, source: "analysis" }); // ~29% gap: outside every range but Wide
     const decks = () => engine.getState().decks;
-    expect(planTransition(decks()[0], decks()[1], DEFAULT_AUTO_DJ).sync).toBe(false); // deck 2 still at the default ±10%
+    expect(planTransition(decks()[0], decks()[1], DEFAULT_AUTO_DJ)).toMatchObject({
+      sync: false, // deck 2 still at the default ±10%
+      reason: "Tempo gap too large for Beat Mix (needs ±29%, Deck B's tempo range is ±10%) — widen it to cover a bigger gap",
+    });
     bus.send("deck2.tempo.range"); // ±10% → ±16%
     expect(decks()[1].tempoRange).toBe(0.16);
     expect(planTransition(decks()[0], decks()[1], DEFAULT_AUTO_DJ).sync).toBe(false); // still short of ~29%
@@ -299,6 +302,22 @@ describe("transition planning", () => {
     engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
     engine.setBeatGrid(1, { bpm: 128, firstBeat: 0, confidence: 3, source: "analysis" });
     expect(planTransition(engine.getState().decks[0], engine.getState().decks[1], DEFAULT_AUTO_DJ)).toMatchObject({ sync: true, kind: "beat-mix" });
+  });
+  it("names BPM Sync being off, rather than a generic message, when that's the actual blocker", async () => {
+    const { engine, library } = await setup();
+    await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 124, firstBeat: 0, confidence: 3, source: "analysis" });
+    const plan = planTransition(engine.getState().decks[0], engine.getState().decks[1], { ...DEFAULT_AUTO_DJ, bpmSync: false });
+    expect(plan.reason).toBe("Clean fade; BPM Sync is switched off in Auto DJ settings");
+  });
+  it("names which deck's beat grid is unreliable, not just 'no reliable compatible beat grids'", async () => {
+    const { engine, library } = await setup();
+    await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 124, firstBeat: 0, confidence: 0.5, source: "analysis" }); // below the reliability bar
+    const plan = planTransition(engine.getState().decks[0], engine.getState().decks[1], DEFAULT_AUTO_DJ);
+    expect(plan.reason).toBe("Clean fade; beat grid isn't reliable enough for Deck B");
   });
   it("handles Camelot, musical keys and unknown keys without inventing analysis", () => {
     expect(compatibleKeys("Am", "C major")).toBe(true);
