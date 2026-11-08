@@ -118,9 +118,9 @@ export function StemSettings() {
       </div>
 
       <p className="hint">
-        {st.settings.mode === "automatic" && "Automatic: each loaded track is separated from the playhead. "}
+        {st.settings.mode === "automatic" && "Automatic: a track loaded onto a deck by hand is separated from the playhead. Auto DJ loads wait until you switch STEMS on for that deck, so an unattended set doesn't spend CPU/GPU separating tracks nobody's listening to in stems. "}
         {st.settings.mode === "preanalyse" && "Pre-analyse: separation starts when you switch STEMS on, or from the library (right-click → Analyse STEMS). "}
-        {st.settings.mode === "realtime" && "Real-time: each loaded track is separated just ahead of the playhead. "}
+        {st.settings.mode === "realtime" && "Real-time: a track loaded onto a deck by hand is separated just ahead of the playhead. Auto DJ loads wait until you switch STEMS on for that deck. "}
         Quality sets segment overlap (10 / 25 / 50%). {platform.os === "darwin" ? "This model uses CPU on Apple Silicon; CoreML is incompatible." : "Device Auto uses the GPU only if it passes a test run."}
       </p>
       <p className="hint">

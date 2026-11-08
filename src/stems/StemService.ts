@@ -65,6 +65,8 @@ interface DeckJob {
   deck: number;
   track: TrackInfo;
   persist: boolean;
+  /** Where this track was loaded from — Auto DJ never needs stems pre-computed unless the DJ asks for them. */
+  source: "manual" | "auto-dj";
   key: string;
   buffer: AudioBuffer;
   total: number;
@@ -165,14 +167,14 @@ export class StemService extends Emitter<Events> {
       this.deckJobs = [];
       if (retry.length) {
         setTimeout(() => {
-          for (const j of retry) if (this.loadedBuffers[j.deck] === j.buffer) void this.onDeckLoaded(j.deck, j.track, j.buffer);
+          for (const j of retry) if (this.loadedBuffers[j.deck] === j.buffer) void this.onDeckLoaded(j.deck, j.track, j.buffer, j.source);
         }, 1500);
       }
       for (const lj of this.libJobs.values()) lj.reject(new Error("stem worker stopped"));
       this.libJobs.clear();
     });
     engine.on("event", (e) => {
-      if (e.type === "trackLoaded") void this.onDeckLoaded(e.deck, e.track, e.audioHandle as AudioBuffer);
+      if (e.type === "trackLoaded") void this.onDeckLoaded(e.deck, e.track, e.audioHandle as AudioBuffer, e.source);
       if (e.type === "trackUnloaded") this.cancelDeck(e.deck);
     });
     // A rebuilt audio graph (e.g. output device/routing change in Settings) means fresh
@@ -430,11 +432,16 @@ export class StemService extends Emitter<Events> {
   private platformReason: string | null = null;
 
   private shouldAutoRun(job: DeckJob): boolean {
+    if (this.engine.getState().decks[job.deck].stems.enabled) return true;
+    // Auto DJ never opens the STEMS panel on its own, so eagerly separating every
+    // auto-advanced track would burn CPU/GPU/memory for a feature nobody asked for
+    // this track — wait for the DJ to actually switch STEMS on for that deck instead.
+    if (job.source === "auto-dj") return false;
     const mode = this.st.settings.mode;
-    return mode === "automatic" || mode === "realtime" || this.engine.getState().decks[job.deck].stems.enabled;
+    return mode === "automatic" || mode === "realtime";
   }
 
-  private async onDeckLoaded(deck: number, track: TrackInfo, buffer: AudioBuffer): Promise<void> {
+  private async onDeckLoaded(deck: number, track: TrackInfo, buffer: AudioBuffer, source: "manual" | "auto-dj" = "manual"): Promise<void> {
     this.loadedBuffers[deck] = buffer;
     this.cancelDeck(deck);
     this.envs[deck] = null;
@@ -445,7 +452,7 @@ export class StemService extends Emitter<Events> {
       return;
     }
     const persist = track.source === "local";
-    const job: DeckJob = { id: this.nextId++, deck, track, persist, key: "", buffer, total: 0, inited: false, runSent: false, awaitingUser: false, regionsDone: 0, regions: 0, started: performance.now() };
+    const job: DeckJob = { id: this.nextId++, deck, track, persist, source, key: "", buffer, total: 0, inited: false, runSent: false, awaitingUser: false, regionsDone: 0, regions: 0, started: performance.now() };
     this.deckJobs[deck] = job;
     try {
       // Content-based cache key (tags excluded) so renamed/moved/re-tagged files still hit the cache.

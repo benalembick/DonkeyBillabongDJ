@@ -248,7 +248,7 @@ export interface PreparationPort {
 
 export type EngineEvent =
   | { type: "loadRequested"; deck: number; source: "manual" | "auto-dj" }
-  | { type: "trackLoaded"; deck: number; track: TrackInfo; audioHandle: unknown }
+  | { type: "trackLoaded"; deck: number; track: TrackInfo; audioHandle: unknown; source: "manual" | "auto-dj" }
   | { type: "trackUnloaded"; deck: number };
 
 function initialDeck(index: number): DeckState {
@@ -1113,7 +1113,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       this.applyStems(deck);
       this.applyTempo(deck, this.state.decks[deck].tempo);
       this.log.info("engine", `Loaded "${track.title}" into deck ${deckLetter(deck)} (${decoded.duration.toFixed(1)} s)`);
-      this.emit("event", { type: "trackLoaded", deck, track, audioHandle: decoded.handle });
+      this.emit("event", { type: "trackLoaded", deck, track, audioHandle: decoded.handle, source });
     } catch (err) {
       if (token !== this.loadTokens[deck]) return;
       const message = err instanceof Error ? err.message : String(err);

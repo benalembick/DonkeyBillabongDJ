@@ -57,9 +57,9 @@ Speed varies with the CPU and GPU; use the measured result on your computer. On 
 | Mode | Behaviour |
 |---|---|
 | Off | No separation; STEMS controls are disabled. |
-| Automatic (default) | Every loaded local/Audius track starts separating from the playhead immediately. |
+| Automatic (default) | A local/Audius track loaded onto a deck by hand starts separating from the playhead immediately. A track loaded by Auto DJ waits for STEMS to be switched on for that deck instead (same as Pre-analyse) — an unattended set never spends CPU/GPU separating tracks nobody puts into stems. |
 | Pre-analyse | Nothing runs automatically. Separation starts when you switch STEMS on for a deck, or from the library (right-click → *Analyse STEMS*). Cached tracks are always used. |
-| Real-time | Selectable only when the measured speed is at least 2× real time; behaves like Automatic. |
+| Real-time | Selectable only when the measured speed is at least 2× real time; behaves like Automatic, including the Auto DJ deferral above. |
 
 Quality sets the segment overlap: Performance 10%, Balanced 25%, High 50% (≈ 1.5× slower, smoother segment joins).
 
