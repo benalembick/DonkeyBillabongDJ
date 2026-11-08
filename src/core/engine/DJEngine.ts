@@ -1550,6 +1550,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     if (changed) {
       this.state = { ...this.state, autoEq: next };
       this.applyMixer();
+      this.emit("state", this.state);
     }
   }
 
@@ -1558,6 +1559,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     autoEq[deck] = { ...autoEq[deck], ...patch };
     this.state = { ...this.state, autoEq };
     this.applyMixer();
+    this.emit("state", this.state);
   }
 
   // ───────────────────────────── FX ─────────────────────────────

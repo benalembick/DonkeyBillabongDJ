@@ -355,6 +355,10 @@ img.art-tile { object-fit: cover; display: block; }
 .knob-dial { cursor: ns-resize; touch-action: none; user-select: none; outline: none; }
 .knob-dial:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .knob.killed .knob-dial { box-shadow: 0 0 0 2px var(--danger); }
+.knob.auto-driven .knob-dial { box-shadow: 0 0 0 2px var(--ok); }
+.knob.auto-driven .knob-arc { stroke: var(--ok); }
+.knob.auto-driven .knob-dial::after { background: var(--ok); }
+.knob.auto-driven .knob-readout { border-color: var(--ok); }
 .knob-readout { position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); z-index: 20; padding: 3px 7px; border-radius: 4px; background: #0c1017f2; border: 1px solid var(--accent); color: #fff; font-size: 10px; font-weight: 700; white-space: nowrap; pointer-events: none; box-shadow: 0 3px 10px #0008; }
 .knob-readout::after { content: ""; position: absolute; left: 50%; top: 100%; width: 6px; height: 6px; margin-left: -3px; margin-top: -3px; background: inherit; border: inherit; border-top: none; border-left: none; transform: rotate(45deg); }
 .knob-label { font-size: 9px; color: var(--muted); letter-spacing: 0.06em; display: flex; gap: 3px; align-items: center; }

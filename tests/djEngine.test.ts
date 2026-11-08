@@ -684,6 +684,20 @@ describe("sync", () => {
 });
 
 describe("Auto DJ EQ automation", () => {
+  it("emits a state change for the UI on every automation step — the engine state alone isn't enough for the mixer to re-render", () => {
+    const seen: number[] = [];
+    const off = engine.on("state", (s) => seen.push(s.autoEq[0].lowDb));
+    engine.setAutoEq(0, { low: -5, mid: 0, high: 0 });
+    expect(seen.at(-1)).toBe(-5);
+    bus.send("mixer.channel1.eq.low", 0.5); // takeover
+    engine.cancelAutoEq(0);
+    engine.tick(); // the decay step
+    expect(seen.at(-1)).toBeLessThan(-0.01); // decaying, and the UI was told about it
+    engine.resetAutoEq(0);
+    expect(seen.at(-1)).toBe(0);
+    off();
+  });
+
   it("adds on top of the manual EQ and clamps at the kill floor, without changing the stored knob", () => {
     engine.setAutoEq(0, { low: -6, mid: 0, high: 0 }); // flat manual EQ (0.5) minus a 6 dB auto cut
     expect(audio.channels[0].eqLowDb).toBeCloseTo(-6, 5);

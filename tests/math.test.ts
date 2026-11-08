@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_JOG_SETTINGS, jogIntent } from "../src/core/engine/jog";
-import { crossfaderGains, describeEqKnob, describeFaderKnob, describeFilterKnob, describeGainKnob, describeHeadMixKnob, eqKnobToDb, filterKnobToParams, gainKnobToDb, headMixGains } from "../src/core/engine/mixerMath";
+import { crossfaderGains, dbToEqKnob, describeEqKnob, describeFaderKnob, describeFilterKnob, describeGainKnob, describeHeadMixKnob, eqKnobToDb, filterKnobToParams, gainKnobToDb, headMixGains } from "../src/core/engine/mixerMath";
 
 describe("mixer maths", () => {
   it("EQ centre is flat, extremes are kill / +6 dB, monotonic", () => {
@@ -43,6 +43,13 @@ describe("mixer maths", () => {
     const [c, m] = headMixGains(0.3);
     expect(c * c + m * m).toBeCloseTo(1);
     expect(headMixGains(0)[0]).toBe(1);
+  });
+
+  it("dbToEqKnob round-trips eqKnobToDb — the knob position that would draw this dB on its own", () => {
+    expect(dbToEqKnob(0)).toBe(0.5);
+    for (const v of [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1]) expect(dbToEqKnob(eqKnobToDb(v))).toBeCloseTo(v, 5);
+    expect(dbToEqKnob(-100)).toBe(0); // clamps at the kill floor rather than going negative
+    expect(dbToEqKnob(100)).toBe(1); // clamps at the top rather than exceeding the dial
   });
 });
 

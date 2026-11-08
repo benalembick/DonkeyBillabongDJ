@@ -1,7 +1,7 @@
 /** Mixer console (between the decks): per-channel TRIM / EQ / FILTER / CUE / fader + meters, master, crossfader. */
 import { useEffect, useRef, useState } from "react";
 import { deckLetter } from "../core/actions";
-import { describeEqKnob, describeFaderKnob, describeFilterKnob, describeGainKnob, describeHeadMixKnob } from "../core/engine/mixerMath";
+import { dbToEqKnob, describeEqKnob, describeFaderKnob, describeFilterKnob, describeGainKnob, describeHeadMixKnob, eqKnobToDb, EQ_KILL_DB } from "../core/engine/mixerMath";
 import { useApp, useEngineState, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
 import { clampRaw, dragDelta, FINE_FACTOR, KEY_STEP, rawToValue, stepValue, valueToRaw, wheelDelta } from "./knobMath";
@@ -15,7 +15,26 @@ const READOUT_LINGER_MS = 1200;
  * `describe`, when given, drives a live floating readout (e.g. "+2.3 dB") while the knob is being
  * turned — a "what is this actually doing" aid, not a permanent fixture on the dense mixer.
  */
-export function Knob(props: { label: string; value: number; action: string; kill?: boolean; killAction?: string; bipolar?: boolean; size?: number; /** Training: control id for highlighting */ train?: string; describe?: (value: number) => string }) {
+export function Knob(props: {
+  label: string;
+  value: number;
+  action: string;
+  kill?: boolean;
+  killAction?: string;
+  bipolar?: boolean;
+  size?: number;
+  /** Training: control id for highlighting */
+  train?: string;
+  describe?: (value: number) => string;
+  /**
+   * Where the dial is actually drawn (0..1), when that differs from the stored knob position —
+   * e.g. Auto EQ cutting the band further than `value` alone says. Dragging/stepping still moves
+   * the real `value`; only the needle, arc and readout reflect this. Defaults to `value`.
+   */
+  effectiveValue?: number;
+  /** True while something other than the user is actively driving `effectiveValue` (e.g. Auto EQ). */
+  auto?: boolean;
+}) {
   const send = useSend();
   const size = props.size ?? 30;
   const bipolar = !!props.bipolar;
@@ -30,10 +49,18 @@ export function Knob(props: { label: string; value: number; action: string; kill
     hideTimer.current = setTimeout(() => setShowReadout(false), READOUT_LINGER_MS);
   };
   useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
+  const display = props.effectiveValue ?? props.value;
+  // Surfaces automated movement too (Auto EQ etc.), not just the user's own drag/scroll/keys.
+  const prevDisplay = useRef(display);
+  useEffect(() => {
+    if (Math.abs(display - prevDisplay.current) > 0.001) bumpReadout();
+    prevDisplay.current = display;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [display]);
   // Latest props for the native wheel listener, which is attached once.
   const live = useRef({ value: props.value, action: props.action, bipolar, send, bumpReadout });
   live.current = { value: props.value, action: props.action, bipolar, send, bumpReadout };
-  const deg = (props.value - 0.5) * 270;
+  const deg = (display - 0.5) * 270;
   const fine = (e: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean }) => e.shiftKey || e.ctrlKey || e.altKey;
 
   // React's onWheel is passive and can't stop the page scrolling, so listen natively.
@@ -88,7 +115,7 @@ export function Knob(props: { label: string; value: number; action: string; kill
   };
 
   return (
-    <div className={`knob ${props.kill ? "killed" : ""}`} data-train={props.train}>
+    <div className={`knob ${props.kill ? "killed" : ""} ${props.auto ? "auto-driven" : ""}`} data-train={props.train}>
       <div
         ref={dial}
         className="knob-dial"
@@ -98,7 +125,7 @@ export function Knob(props: { label: string; value: number; action: string; kill
         aria-label={props.label}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Math.round(props.value * 100)}
+        aria-valuenow={Math.round(display * 100)}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
@@ -109,9 +136,9 @@ export function Knob(props: { label: string; value: number; action: string; kill
       >
         <svg viewBox="0 0 40 40">
           <circle cx="20" cy="20" r="17" className="knob-track" />
-          <path d={arcPath(bipolar ? 0.5 : 0, props.value)} className="knob-arc" />
+          <path d={arcPath(bipolar ? 0.5 : 0, display)} className="knob-arc" />
         </svg>
-        {props.describe && showReadout && <div className="knob-readout" role="status">{props.describe(props.value)}</div>}
+        {props.describe && showReadout && <div className="knob-readout" role="status">{props.describe(display)}</div>}
       </div>
       <span className="knob-label">
         {props.label}
@@ -123,6 +150,22 @@ export function Knob(props: { label: string; value: number; action: string; kill
       </span>
     </div>
   );
+}
+
+/**
+ * An EQ knob's view when Auto DJ's Auto EQ may be cutting the band further than the knob itself
+ * says: the dial is drawn at the combined (manual + auto) position, coloured to show it's live,
+ * and the readout names the auto contribution — without ever changing the stored knob value.
+ */
+function eqKnobView(manual: number, killed: boolean, autoDb: number) {
+  if (killed || autoDb === 0) return { effectiveValue: manual, auto: false, describe: (v: number) => describeEqKnob(v, killed) };
+  const manualDb = killed ? EQ_KILL_DB : eqKnobToDb(manual);
+  const combinedDb = Math.max(EQ_KILL_DB, manualDb + autoDb);
+  return {
+    effectiveValue: dbToEqKnob(combinedDb),
+    auto: true,
+    describe: () => `${describeEqKnob(dbToEqKnob(combinedDb), false)} — Auto EQ (manual: ${describeEqKnob(manual, false)})`,
+  };
 }
 
 /** SVG arc on a 270° knob from value a to b (0..1). */
@@ -168,15 +211,18 @@ export function Mixer({ dense }: { dense?: boolean }) {
     const c = mx.channels[i];
     const a = state.autoEq[i];
     const autoEqActive = a.lowDb !== 0 || a.midDb !== 0 || a.highDb !== 0;
+    const hi = eqKnobView(c.eqHigh, c.killHigh, a.highDb);
+    const mid = eqKnobView(c.eqMid, c.killMid, a.midDb);
+    const low = eqKnobView(c.eqLow, c.killLow, a.lowDb);
     const m = `mixer.channel${i + 1}`;
     return (
       <div key={i} className={`strip channel-${deckLetter(i).toLowerCase()}`}>
         <div className="strip-name">{deckLetter(i)}{autoEqActive && <span className="auto-eq-badge" title="Auto EQ is temporarily cutting this deck's EQ for the transition — move a knob to take a band back">AUTO EQ</span>}</div>
         <div className="strip-knobs">
           <Knob size={k} label="TRIM" value={c.gain} action={`${m}.gain`} bipolar describe={describeGainKnob} />
-          <Knob size={k} label="HI" value={c.eqHigh} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar describe={(v) => describeEqKnob(v, c.killHigh)} />
-          <Knob size={k} label="MID" value={c.eqMid} action={`${m}.eq.mid`} train={`eq-mid-${deckLetter(i)}`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar describe={(v) => describeEqKnob(v, c.killMid)} />
-          <Knob size={k} label="LOW" value={c.eqLow} action={`${m}.eq.low`} train={`eq-low-${deckLetter(i)}`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar describe={(v) => describeEqKnob(v, c.killLow)} />
+          <Knob size={k} label="HI" value={c.eqHigh} effectiveValue={hi.effectiveValue} auto={hi.auto} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar describe={hi.describe} />
+          <Knob size={k} label="MID" value={c.eqMid} effectiveValue={mid.effectiveValue} auto={mid.auto} action={`${m}.eq.mid`} train={`eq-mid-${deckLetter(i)}`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar describe={mid.describe} />
+          <Knob size={k} label="LOW" value={c.eqLow} effectiveValue={low.effectiveValue} auto={low.auto} action={`${m}.eq.low`} train={`eq-low-${deckLetter(i)}`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar describe={low.describe} />
           <Knob size={k} label="FILTER" value={c.filter} action={`${m}.filter`} train={`filter-${deckLetter(i)}`} bipolar describe={describeFilterKnob} />
         </div>
         <div className="strip-fader">

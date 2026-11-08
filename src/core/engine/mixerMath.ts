@@ -25,6 +25,20 @@ export function eqKnobToDb(v: number): number {
   return Math.max(EQ_KILL_DB, 20 * Math.log10(amp));
 }
 
+/**
+ * Inverse of eqKnobToDb: the knob position that would produce `db` on its own. Used to show the
+ * knob visually sitting where it's effectively acting once Auto EQ's temporary cut is added in —
+ * the stored knob value itself never changes, only how the dial is drawn.
+ */
+export function dbToEqKnob(db: number): number {
+  db = clamp(db, EQ_KILL_DB, EQ_MAX_DB);
+  if (db === 0) return 0.5;
+  if (db > 0) return 0.5 + CENTER_DEADZONE + (db / EQ_MAX_DB) * (0.5 - CENTER_DEADZONE);
+  if (db <= EQ_KILL_DB) return 0;
+  const amp = Math.pow(10, db / 20);
+  return Math.sqrt(amp) * (0.5 - CENTER_DEADZONE);
+}
+
 /** Trim/gain knob (0..1, centre = 0 dB) → dB in ±12. */
 export function gainKnobToDb(v: number): number {
   v = clamp(v, 0, 1);
