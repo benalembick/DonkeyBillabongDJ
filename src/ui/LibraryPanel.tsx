@@ -16,7 +16,7 @@ import { useFrameStore } from "./hooks";
 import { useStemIndex, useStemProgress } from "./stemHooks";
 import { StemBadge, stemRank } from "./StemBadge";
 import { ArtTile } from "./ArtTile";
-import { AutoDJQueue, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
+import { AutoDJQueue, LearnNav, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
 import { TrackMenu } from "./TrackMenu";
 import { compatibility } from "../analysis/discovery";
 import { MashipsView } from "./MashipsPanel";
@@ -102,6 +102,16 @@ export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onT
   };
   const openDownloadsPlaylist = () => openNamedPlaylist("Downloads", app.spotifyLocal.downloadsJob()?.playlistId);
   const openMashupsPlaylist = () => openNamedPlaylist("Mashups");
+  const playlistsState = useFrameStore(useCallback((cb) => app.playlists.on("change", cb), [app.playlists]), () => app.playlists.getState());
+  const downloadsPlaylistId = playlistsState.playlists.find((p) => p.id === app.spotifyLocal.downloadsJob()?.playlistId)?.id ?? playlistsState.playlists.find((p) => p.name === "Downloads")?.id;
+  const mashupsPlaylistId = playlistsState.playlists.find((p) => p.name === "Mashups")?.id;
+  /** Which pinned PLAYLISTS sub-item (not the section heading) is currently open, so exactly one lights up. */
+  const playlistsSelected: "your" | "queue" | "downloads" | "mashups" | null =
+    home === "playlists" && playlistsGridOnly && !playlistManagerOpen ? "your"
+    : !home && source === "queue" ? "queue"
+    : !home && source === "playlist" && playlistId != null && playlistId === downloadsPlaylistId ? "downloads"
+    : !home && source === "playlist" && playlistId != null && playlistId === mashupsPlaylistId ? "mashups"
+    : null;
   const lib = useLibraryState();
   const streams = useStreamingState();
   const audiusState = useAudiusState();
@@ -146,7 +156,7 @@ export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onT
         {item("local", <><span><span className="nav-icon" aria-hidden>♫</span>All Tracks</span><span className="count">{lib.tracks.length}</span></>, "all")}
         {item("local", <><span><span className="nav-icon" aria-hidden>⏱</span>Recently Added</span><span className="count">{recent}</span></>, "recent")}
         {item("local", <><span><span className="nav-icon" aria-hidden>★</span>Top Rated</span><span className="count">{rated}</span></>, "rated", "collections")}
-        <PlaylistNav mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} learnSelected={!home && source === "transitions" ? "transitions" : !home && source === "practice" ? practiceView : null} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onMaships={openMaships} onLearn={(view) => { if (view === "training") window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: "training" })); else if (view === "transitions") { open("transitions"); onNavigateArea?.("transitions"); } else { setPracticeView(view); open("practice"); } }} onQueue={openQueue} onArea={(area) => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(false); setHome(area); onNavigateArea?.(area); }} onManage={() => { setPlaylistManagerOpen(true); setPlaylistsGridOnly(false); setHome("playlists"); onNavigateArea?.("playlists"); }} onDownloads={openDownloadsPlaylist} onMashups={openMashupsPlaylist} onYourPlaylists={() => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(true); setHome("playlists"); onNavigateArea?.("playlists"); }} />
+        <PlaylistNav mashipsSelected={!home && source === "manual-mashups" ? "manual" : !home && source === "auto-mashups" ? "auto" : null} playlistsSelected={playlistsSelected} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onMaships={openMaships} onQueue={openQueue} onArea={(area) => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(false); setHome(area); onNavigateArea?.(area); }} onManage={() => { setPlaylistManagerOpen(true); setPlaylistsGridOnly(false); setHome("playlists"); onNavigateArea?.("playlists"); }} onDownloads={openDownloadsPlaylist} onMashups={openMashupsPlaylist} onYourPlaylists={() => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(true); setHome("playlists"); onNavigateArea?.("playlists"); }} />
         <button data-nav-area="streaming" className={`browser-heading browser-section-link${activeArea === "streaming" ? " active" : ""}`} onClick={() => { setHome("streaming"); onNavigateArea?.("streaming"); }}>AUDIO SOURCES <span>›</span></button>
         {item("spotify", <>{label("◉", "Spotify")}{status(streams.spotify)}</>)}
         {item("spotify-local", <>{label("⇄", "Spotify → Local")}</>)}
@@ -154,6 +164,7 @@ export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onT
         {item("audius", <>{label("◎", "Audius")}<span className={`count nav-status${audiusState.connection === "ok" ? " on" : ""}`} title={audiusState.connection === "error" ? "Can't reach Audius" : "Free streaming"}>{audiusState.connection === "ok" ? "● free" : audiusState.connection === "error" ? "▲ offline" : "○ free"}</span></>)}
         {item("converter", <>{label("⇩", "High Speed Converter")}</>)}
         {item("recorder", <>{label("●", "App Recorder")}</>, undefined, "streaming")}
+        <LearnNav learnSelected={!home && source === "transitions" ? "transitions" : !home && source === "practice" ? practiceView : null} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onArea={(area) => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(false); setHome(area); onNavigateArea?.(area); }} onLearn={(view) => { if (view === "training") window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: "training" })); else if (view === "transitions") { open("transitions"); onNavigateArea?.("transitions"); } else { setPracticeView(view); open("practice"); } }} />
       </nav>
       <div className="browser-body">
         {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setPlaylistManagerOpen(false); setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} managingPlaylists={playlistManagerOpen} setManagingPlaylists={setPlaylistManagerOpen} playlistsGridOnly={playlistsGridOnly} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "transitions" ? <TransitionWorkspace /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} expanded={expanded} onToggleExpanded={onToggleExpanded} /> : source === "audius" ? <AudiusPane /> : source === "converter" || source === "recorder" ? <AudioSourcesWorkspace mode={source} /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}

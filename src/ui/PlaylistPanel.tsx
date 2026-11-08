@@ -44,29 +44,34 @@ export function useAutoDJ() {
   return useFrameStore(useCallback((cb) => autoDJ.on("change", cb), [autoDJ]), () => autoDJ.getState());
 }
 
-export function PlaylistNav({ mashipsSelected, learnSelected, activeArea, onMaships, onLearn, onQueue, onArea, onManage, onDownloads, onMashups, onYourPlaylists }: { mashipsSelected: "auto" | "manual" | null; learnSelected: "transitions" | "practice" | "history" | null; activeArea: "playlists" | "mashups" | "practice" | null; onMaships: (kind: "auto" | "manual") => void; onLearn: (view: "transitions" | "training" | "practice" | "history") => void; onQueue: () => void; onArea: (area: "playlists" | "mashups" | "practice") => void; onManage: () => void; onDownloads: () => void; onMashups: () => void; onYourPlaylists: () => void }) {
-  const app = useApp();
+export function PlaylistNav({ mashipsSelected, playlistsSelected, activeArea, onMaships, onQueue, onArea, onManage, onDownloads, onMashups, onYourPlaylists }: { mashipsSelected: "auto" | "manual" | null; playlistsSelected: "your" | "queue" | "downloads" | "mashups" | null; activeArea: "playlists" | "mashups" | "practice" | null; onMaships: (kind: "auto" | "manual") => void; onQueue: () => void; onArea: (area: "playlists" | "mashups" | "practice") => void; onManage: () => void; onDownloads: () => void; onMashups: () => void; onYourPlaylists: () => void }) {
   const auto = useAutoDJ();
   const maships = useMashipProjects();
-  const practice = useFrameStore(useCallback((cb) => app.practice.on("change", cb), [app.practice]), () => app.practice.getState());
   return <>
     <div className="browser-heading-row">
       <button data-nav-area="playlists" className={`browser-heading browser-section-link${activeArea === "playlists" ? " active" : ""}`} onClick={() => onArea("playlists")}>PLAYLISTS</button>
       <button className="playlist-heading-manage" title="Manage playlists" aria-label="Manage playlists" onClick={onManage}><span aria-hidden>✎</span></button>
     </div>
-    <button data-source="your-playlists" className={`pinned-playlist${activeArea === "playlists" ? " active" : ""}`} onClick={onYourPlaylists}><span><span className="nav-icon" aria-hidden>▤</span>Your Playlists</span></button>
-    <button data-source="auto-dj" className="pinned-playlist auto-dj-nav" onClick={onQueue}><span><span className="nav-icon" aria-hidden>↝</span>Auto DJ Queue</span><span className={`auto-status ${auto.status.toLowerCase()}`}>{auto.status}</span></button>
-    <button data-source="playlists-downloads" className="pinned-playlist" onClick={onDownloads}><span><span className="nav-icon" aria-hidden>⇣</span>Downloads</span></button>
-    <button data-source="playlists-mashups" data-nav-end="playlists" className="pinned-playlist" onClick={onMashups}><span><span className="nav-icon" aria-hidden>⚡</span>Mashups</span></button>
+    <button data-source="your-playlists" className={`pinned-playlist${playlistsSelected === "your" ? " active" : ""}`} onClick={onYourPlaylists}><span><span className="nav-icon" aria-hidden>▤</span>Your Playlists</span></button>
+    <button data-source="auto-dj" className={`pinned-playlist auto-dj-nav${playlistsSelected === "queue" ? " active" : ""}`} onClick={onQueue}><span><span className="nav-icon" aria-hidden>↝</span>Auto DJ Queue</span><span className={`auto-status ${auto.status.toLowerCase()}`}>{auto.status}</span></button>
+    <button data-source="playlists-downloads" className={`pinned-playlist${playlistsSelected === "downloads" ? " active" : ""}`} onClick={onDownloads}><span><span className="nav-icon" aria-hidden>⇣</span>Downloads</span></button>
+    <button data-source="playlists-mashups" data-nav-end="playlists" className={`pinned-playlist${playlistsSelected === "mashups" ? " active" : ""}`} onClick={onMashups}><span><span className="nav-icon" aria-hidden>⚡</span>Mashups</span></button>
+    <button data-nav-area="mashups" className={`browser-heading browser-section-link${activeArea === "mashups" ? " active" : ""}`} onClick={() => onArea("mashups")}>MASHUP PROJECTS <span>›</span></button>
+    <button data-source="auto-mashups" className={mashipsSelected === "auto" ? "active" : ""} onClick={() => onMaships("auto")}><span><span className="nav-icon" aria-hidden>⚡</span>Auto Mashups</span><span className="count">{maships.recipes.filter((r) => !r.manual).length}</span></button>
+    <button data-source="manual-mashups" className={mashipsSelected === "manual" ? "active" : ""} onClick={() => onMaships("manual")}><span><span className="nav-icon" aria-hidden>✎</span>Manual Mashups</span><span className="count">{maships.recipes.filter((r) => !!r.manual).length}</span></button>
+    <button className="create-mashup-nav" data-nav-end="mashups" onClick={() => window.dispatchEvent(new Event("dbdj:create-mashup"))}><span><span className="nav-icon" aria-hidden>＋</span>Create New Mashup</span></button>
+  </>;
+}
+
+export function LearnNav({ learnSelected, activeArea, onArea, onLearn }: { learnSelected: "transitions" | "practice" | "history" | null; activeArea: "playlists" | "mashups" | "practice" | null; onArea: (area: "playlists" | "mashups" | "practice") => void; onLearn: (view: "transitions" | "training" | "practice" | "history") => void }) {
+  const app = useApp();
+  const practice = useFrameStore(useCallback((cb) => app.practice.on("change", cb), [app.practice]), () => app.practice.getState());
+  return <>
     <button data-nav-area="practice" className={`browser-heading browser-section-link${activeArea === "practice" ? " active" : ""}`} onClick={() => onArea("practice")}>LEARN <span>›</span></button>
     <button data-source="learn-transitions" className={learnSelected === "transitions" ? "active" : ""} onClick={() => onLearn("transitions")}><span><span className="nav-icon" aria-hidden>⇄</span>Transition Guides</span></button>
     <button data-source="learn-training" onClick={() => onLearn("training")}><span><span className="nav-icon" aria-hidden>◇</span>DJ Training</span></button>
     <button data-source="learn-practice" className={learnSelected === "practice" ? "active" : ""} onClick={() => onLearn("practice")}><span><span className="nav-icon" aria-hidden>▶</span>Practice Mode</span></button>
     <button data-source="learn-history" data-nav-end="practice" className={learnSelected === "history" ? "active" : ""} onClick={() => onLearn("history")}><span><span className="nav-icon" aria-hidden>↗</span>Practice History</span><span className="count">{practice.history.length}</span></button>
-    <button data-nav-area="mashups" className={`browser-heading browser-section-link${activeArea === "mashups" ? " active" : ""}`} onClick={() => onArea("mashups")}>MASHUP PROJECTS <span>›</span></button>
-    <button data-source="auto-mashups" className={mashipsSelected === "auto" ? "active" : ""} onClick={() => onMaships("auto")}><span><span className="nav-icon" aria-hidden>⚡</span>Auto Mashups</span><span className="count">{maships.recipes.filter((r) => !r.manual).length}</span></button>
-    <button data-source="manual-mashups" className={mashipsSelected === "manual" ? "active" : ""} onClick={() => onMaships("manual")}><span><span className="nav-icon" aria-hidden>✎</span>Manual Mashups</span><span className="count">{maships.recipes.filter((r) => !!r.manual).length}</span></button>
-    <button className="create-mashup-nav" data-nav-end="mashups" onClick={() => window.dispatchEvent(new Event("dbdj:create-mashup"))}><span><span className="nav-icon" aria-hidden>＋</span>Create New Mashup</span></button>
   </>;
 }
 
