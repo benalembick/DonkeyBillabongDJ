@@ -13,9 +13,9 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch1 0x47 <br><sub>SHIFT+PLAY (Mixxx: reverse roll)</sub> | `deck1.reverse` | _not implemented yet (logged once)_ |  | ☐ |
 | **Cue A** | Note ch1 0x0C  | `deck1.cue` | CDJ cue: set / return / preview while held | 0x0C→deck1.cue<br>0x48→deck1.cue | ☐ |
 |  | Note ch1 0x48 <br><sub>SHIFT+CUE (Mixxx: brake)</sub> | `deck1.brake` | _not implemented yet (logged once)_ |  | ☐ |
-| **Sync A** | Note ch1 0x58  | `deck1.sync` | _not implemented yet (logged once)_ | 0x58→deck1.sync | ☐ |
+| **Sync A** | Note ch1 0x58  | `deck1.sync` | Sync A | 0x58→deck1.sync | ☐ |
 |  | Note ch1 0x5C <br><sub>SHIFT+SYNC</sub> | `deck1.quantize` | _not implemented yet (logged once)_ |  | ☐ |
-| **Key Lock A** | Note ch1 0x1A  | `deck1.keylock` | _not implemented yet (logged once)_ | 0x1A→deck1.keylock | ☐ |
+| **Key Lock A** | Note ch1 0x1A  | `deck1.keylock` | Key Lock A | 0x1A→deck1.keylock | ☐ |
 |  | Note ch1 0x60 <br><sub>SHIFT+KEY LOCK = TEMPO RANGE (Mixxx uses it as deck 3/4 toggle)</sub> | `deck1.tempo.range` | Tempo range cycle A |  | ☐ |
 | **Vinyl A** | Note ch1 0x17  | `deck1.vinyl` | Vinyl/Scratch mode A | 0x17→deck1.vinyl | ☐ |
 |  | Note ch1 0x4E <br><sub>SHIFT+VINYL</sub> | `deck1.slip` | _not implemented yet (logged once)_ |  | ☐ |
@@ -42,77 +42,77 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch8 0x08  | `deck1.hotcue.1.clear` | Clear hot cue 1 A |  | ☐ |
 |  | Note ch8 0x40  | `deck1.hotcue.5` | Hot cue 5 A |  | ☐ |
 |  | Note ch8 0x48  | `deck1.hotcue.5.clear` | Clear hot cue 5 A |  | ☐ |
-|  | Note ch8 0x10  | `deck1.beatloop.1` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x18  | `deck1.beatloop.16` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x50  | `deck1.beatloop.roll.0.0625` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x58  | `deck1.beatloop.roll.1` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x10  | `deck1.beatloop.1` | Auto loop 1 beats A |  | ☐ |
+|  | Note ch8 0x18  | `deck1.beatloop.16` | Auto loop 16 beats A |  | ☐ |
+|  | Note ch8 0x50  | `deck1.beatloop.roll.0.0625` | Loop roll 0.0625 beats A |  | ☐ |
+|  | Note ch8 0x58  | `deck1.beatloop.roll.1` | Loop roll 1 beats A |  | ☐ |
 |  | Note ch8 0x30  | `deck1.stem.vocals.toggle` | Vocals mute/unmute A |  | ☐ |
 |  | Note ch8 0x38  | `deck1.stem.vocals.isolate` | Vocals solo A |  | ☐ |
-|  | Note ch8 0x70  | `sampler1.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x78  | `sampler1.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x20  | `deck1.loop.in` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x28  | `deck1.loop.move.back` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x70  | `sampler1.load` | Sampler pad 1 load (Sampler editor sample) |  | ☐ |
+|  | Note ch8 0x78  | `sampler1.eject` | Sampler pad 1 eject |  | ☐ |
+|  | Note ch8 0x20  | `deck1.loop.in` | Loop in A |  | ☐ |
+|  | Note ch8 0x28  | `deck1.loop.move.back` | Loop move back A |  | ☐ |
 |  | Note ch8 0x60  | `mixer.channel1.eq.low.kill` | EQ Low kill ch1 |  | ☐ |
-|  | Note ch8 0x68 <br><sub>Mixxx: prev_chain</sub> | `fx.unit1.chain.prev` | FX1 previous effect |  | ☐ |
+|  | Note ch8 0x68 <br><sub>SHIFT+pad in MANUAL LOOP mode: FX beat length shorter</sub> | `fx.unit1.beats.prev` | FX1 shorter beat |  | ☐ |
 | **Pad A2** | Note ch8 0x01  | `deck1.hotcue.2` | Hot cue 2 A | 0x01→deck1.hotcue.2<br>0x09→deck1.hotcue.2<br>0x41→deck1.hotcue.6<br>0x49→deck1.hotcue.6<br>0x31→deck1.stem.drums<br>0x39→deck1.stem.drums<br>0x61→mixer.channel1.eq.mid.kill | ☐ |
 |  | Note ch8 0x09  | `deck1.hotcue.2.clear` | Clear hot cue 2 A |  | ☐ |
 |  | Note ch8 0x41  | `deck1.hotcue.6` | Hot cue 6 A |  | ☐ |
 |  | Note ch8 0x49  | `deck1.hotcue.6.clear` | Clear hot cue 6 A |  | ☐ |
-|  | Note ch8 0x11  | `deck1.beatloop.2` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x19  | `deck1.beatloop.32` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x51  | `deck1.beatloop.roll.0.125` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x59  | `deck1.beatloop.roll.2` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x11  | `deck1.beatloop.2` | Auto loop 2 beats A |  | ☐ |
+|  | Note ch8 0x19  | `deck1.beatloop.32` | Auto loop 32 beats A |  | ☐ |
+|  | Note ch8 0x51  | `deck1.beatloop.roll.0.125` | Loop roll 0.125 beats A |  | ☐ |
+|  | Note ch8 0x59  | `deck1.beatloop.roll.2` | Loop roll 2 beats A |  | ☐ |
 |  | Note ch8 0x31  | `deck1.stem.drums.toggle` | Drums mute/unmute A |  | ☐ |
 |  | Note ch8 0x39  | `deck1.stem.drums.isolate` | Drums solo A |  | ☐ |
-|  | Note ch8 0x71  | `sampler2.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x79  | `sampler2.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x21  | `deck1.loop.out` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x29  | `deck1.loop.move.forward` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x71  | `sampler2.load` | Sampler pad 2 load (Sampler editor sample) |  | ☐ |
+|  | Note ch8 0x79  | `sampler2.eject` | Sampler pad 2 eject |  | ☐ |
+|  | Note ch8 0x21  | `deck1.loop.out` | Loop out A |  | ☐ |
+|  | Note ch8 0x29  | `deck1.loop.move.forward` | Loop move forward A |  | ☐ |
 |  | Note ch8 0x61  | `mixer.channel1.eq.mid.kill` | EQ Mid kill ch1 |  | ☐ |
-|  | Note ch8 0x69 <br><sub>Mixxx: next_chain</sub> | `fx.unit1.chain.next` | FX1 next effect |  | ☐ |
+|  | Note ch8 0x69 <br><sub>SHIFT+pad in MANUAL LOOP mode: FX beat length longer</sub> | `fx.unit1.beats.next` | FX1 longer beat |  | ☐ |
 | **Pad A3** | Note ch8 0x02  | `deck1.hotcue.3` | Hot cue 3 A | 0x02→deck1.hotcue.3<br>0x0A→deck1.hotcue.3<br>0x42→deck1.hotcue.7<br>0x4A→deck1.hotcue.7<br>0x32→deck1.stem.bass<br>0x3A→deck1.stem.bass<br>0x62→mixer.channel1.eq.high.kill | ☐ |
 |  | Note ch8 0x0A  | `deck1.hotcue.3.clear` | Clear hot cue 3 A |  | ☐ |
 |  | Note ch8 0x42  | `deck1.hotcue.7` | Hot cue 7 A |  | ☐ |
 |  | Note ch8 0x4A  | `deck1.hotcue.7.clear` | Clear hot cue 7 A |  | ☐ |
-|  | Note ch8 0x12  | `deck1.beatloop.4` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x1A  | `deck1.beatloop.64` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x52  | `deck1.beatloop.roll.0.25` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x5A  | `deck1.beatloop.roll.4` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x12  | `deck1.beatloop.4` | Auto loop 4 beats A |  | ☐ |
+|  | Note ch8 0x1A  | `deck1.beatloop.64` | Auto loop 64 beats A |  | ☐ |
+|  | Note ch8 0x52  | `deck1.beatloop.roll.0.25` | Loop roll 0.25 beats A |  | ☐ |
+|  | Note ch8 0x5A  | `deck1.beatloop.roll.4` | Loop roll 4 beats A |  | ☐ |
 |  | Note ch8 0x32  | `deck1.stem.bass.toggle` | Bass mute/unmute A |  | ☐ |
 |  | Note ch8 0x3A  | `deck1.stem.bass.isolate` | Bass solo A |  | ☐ |
-|  | Note ch8 0x72  | `sampler3.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x7A  | `sampler3.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x22  | `deck1.loop.exit` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x72  | `sampler3.load` | Sampler pad 3 load (Sampler editor sample) |  | ☐ |
+|  | Note ch8 0x7A  | `sampler3.eject` | Sampler pad 3 eject |  | ☐ |
+|  | Note ch8 0x22  | `deck1.loop.exit` | Loop exit/reloop A |  | ☐ |
 |  | Note ch8 0x62  | `mixer.channel1.eq.high.kill` | EQ High kill ch1 |  | ☐ |
 | **Pad A4** | Note ch8 0x03  | `deck1.hotcue.4` | Hot cue 4 A | 0x03→deck1.hotcue.4<br>0x0B→deck1.hotcue.4<br>0x43→deck1.hotcue.8<br>0x4B→deck1.hotcue.8<br>0x33→deck1.stem.instruments<br>0x3B→deck1.stem.instruments<br>0x63→mixer.channel1.mute | ☐ |
 |  | Note ch8 0x0B  | `deck1.hotcue.4.clear` | Clear hot cue 4 A |  | ☐ |
 |  | Note ch8 0x43  | `deck1.hotcue.8` | Hot cue 8 A |  | ☐ |
 |  | Note ch8 0x4B  | `deck1.hotcue.8.clear` | Clear hot cue 8 A |  | ☐ |
-|  | Note ch8 0x13  | `deck1.beatloop.8` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x53  | `deck1.beatloop.roll.0.5` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x5B  | `deck1.beatloop.roll.8` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x13  | `deck1.beatloop.8` | Auto loop 8 beats A |  | ☐ |
+|  | Note ch8 0x53  | `deck1.beatloop.roll.0.5` | Loop roll 0.5 beats A |  | ☐ |
+|  | Note ch8 0x5B  | `deck1.beatloop.roll.8` | Loop roll 8 beats A |  | ☐ |
 |  | Note ch8 0x33  | `deck1.stem.instruments.toggle` | Instruments mute/unmute A |  | ☐ |
 |  | Note ch8 0x3B  | `deck1.stem.instruments.isolate` | Instruments solo A |  | ☐ |
-|  | Note ch8 0x73  | `sampler4.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x7B  | `sampler4.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x23  | `deck1.loop.halve` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch8 0x2B  | `deck1.loop.double` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch8 0x73  | `sampler4.load` | Sampler pad 4 load (Sampler editor sample) |  | ☐ |
+|  | Note ch8 0x7B  | `sampler4.eject` | Sampler pad 4 eject |  | ☐ |
+|  | Note ch8 0x23  | `deck1.loop.halve` | Loop halve A |  | ☐ |
+|  | Note ch8 0x2B  | `deck1.loop.double` | Loop double A |  | ☐ |
 |  | Note ch8 0x63  | `mixer.channel1.mute` | Mute ch1 |  | ☐ |
-| **FX1 button 1** | Note ch5 0x47  | `fx.unit1.button1` | FX1 on/off | 0x47→fx.unit1.on<br>0x63→fx.unit1.on | ☐ |
-|  | Note ch5 0x63 <br><sub>SHIFT layer</sub> | `fx.unit1.button1` | FX1 on/off |  | ☐ |
-| **FX1 button 2** | Note ch5 0x48  | `fx.unit1.button2` | FX1 next effect |  | ☐ |
-|  | Note ch5 0x64 <br><sub>SHIFT layer</sub> | `fx.unit1.button2` | FX1 next effect |  | ☐ |
-| **FX1 button 3** | Note ch5 0x49  | `fx.unit1.button3` | FX1 beat length |  | ☐ |
-|  | Note ch5 0x65 <br><sub>SHIFT layer</sub> | `fx.unit1.button3` | FX1 beat length |  | ☐ |
-| **FX1 knob** | CC14 ch5 0x06/0x26  | `fx.unit1.knob` | FX1 level (dry/wet) |  | ☐ |
-|  | CC14 ch5 0x00/0x20 <br><sub>SHIFT + FX knob</sub> | `fx.unit1.knob.shift` | FX1 parameter |  | ☐ |
+| **FX1 button 1** | Note ch5 0x47  | `fx.unit1.slot1.toggle` | FX1 slot 1 on/off | 0x47→fx.unit1.slot1.on<br>0x63→fx.unit1.slot1.on | ☐ |
+|  | Note ch5 0x63 <br><sub>SHIFT + FX button: next effect for this slot</sub> | `fx.unit1.slot1.next` | FX1 slot 1 next effect |  | ☐ |
+| **FX1 button 2** | Note ch5 0x48  | `fx.unit1.slot2.toggle` | FX1 slot 2 on/off | 0x48→fx.unit1.slot2.on<br>0x64→fx.unit1.slot2.on | ☐ |
+|  | Note ch5 0x64 <br><sub>SHIFT + FX button: next effect for this slot</sub> | `fx.unit1.slot2.next` | FX1 slot 2 next effect |  | ☐ |
+| **FX1 button 3** | Note ch5 0x49  | `fx.unit1.slot3.toggle` | FX1 slot 3 on/off | 0x49→fx.unit1.slot3.on<br>0x65→fx.unit1.slot3.on | ☐ |
+|  | Note ch5 0x65 <br><sub>SHIFT + FX button: next effect for this slot</sub> | `fx.unit1.slot3.next` | FX1 slot 3 next effect |  | ☐ |
+| **FX1 knob** | CC14 ch5 0x06/0x26 <br><sub>FX level (dry/wet) of all three slots</sub> | `fx.unit1.knob` | FX1 level (dry/wet) |  | ☐ |
+|  | CC14 ch5 0x00/0x20 <br><sub>SHIFT + FX knob: effect parameter (feedback / size / rate / depth)</sub> | `fx.unit1.knob.shift` | FX1 parameter (all slots) |  | ☐ |
 | **Play/Pause B** | Note ch2 0x0B  | `deck2.play` | Deck B toggles play/pause | 0x0B→deck2.playing<br>0x47→deck2.playing | ☐ |
 |  | Note ch2 0x47 <br><sub>SHIFT+PLAY (Mixxx: reverse roll)</sub> | `deck2.reverse` | _not implemented yet (logged once)_ |  | ☐ |
 | **Cue B** | Note ch2 0x0C  | `deck2.cue` | CDJ cue: set / return / preview while held | 0x0C→deck2.cue<br>0x48→deck2.cue | ☐ |
 |  | Note ch2 0x48 <br><sub>SHIFT+CUE (Mixxx: brake)</sub> | `deck2.brake` | _not implemented yet (logged once)_ |  | ☐ |
-| **Sync B** | Note ch2 0x58  | `deck2.sync` | _not implemented yet (logged once)_ | 0x58→deck2.sync | ☐ |
+| **Sync B** | Note ch2 0x58  | `deck2.sync` | Sync B | 0x58→deck2.sync | ☐ |
 |  | Note ch2 0x5C <br><sub>SHIFT+SYNC</sub> | `deck2.quantize` | _not implemented yet (logged once)_ |  | ☐ |
-| **Key Lock B** | Note ch2 0x1A  | `deck2.keylock` | _not implemented yet (logged once)_ | 0x1A→deck2.keylock | ☐ |
+| **Key Lock B** | Note ch2 0x1A  | `deck2.keylock` | Key Lock B | 0x1A→deck2.keylock | ☐ |
 |  | Note ch2 0x60 <br><sub>SHIFT+KEY LOCK = TEMPO RANGE (Mixxx uses it as deck 3/4 toggle)</sub> | `deck2.tempo.range` | Tempo range cycle B |  | ☐ |
 | **Vinyl B** | Note ch2 0x17  | `deck2.vinyl` | Vinyl/Scratch mode B | 0x17→deck2.vinyl | ☐ |
 |  | Note ch2 0x4E <br><sub>SHIFT+VINYL</sub> | `deck2.slip` | _not implemented yet (logged once)_ |  | ☐ |
@@ -139,70 +139,70 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch9 0x08  | `deck2.hotcue.1.clear` | Clear hot cue 1 B |  | ☐ |
 |  | Note ch9 0x40  | `deck2.hotcue.5` | Hot cue 5 B |  | ☐ |
 |  | Note ch9 0x48  | `deck2.hotcue.5.clear` | Clear hot cue 5 B |  | ☐ |
-|  | Note ch9 0x10  | `deck2.beatloop.1` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x18  | `deck2.beatloop.16` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x50  | `deck2.beatloop.roll.0.0625` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x58  | `deck2.beatloop.roll.1` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x10  | `deck2.beatloop.1` | Auto loop 1 beats B |  | ☐ |
+|  | Note ch9 0x18  | `deck2.beatloop.16` | Auto loop 16 beats B |  | ☐ |
+|  | Note ch9 0x50  | `deck2.beatloop.roll.0.0625` | Loop roll 0.0625 beats B |  | ☐ |
+|  | Note ch9 0x58  | `deck2.beatloop.roll.1` | Loop roll 1 beats B |  | ☐ |
 |  | Note ch9 0x30  | `deck2.stem.vocals.toggle` | Vocals mute/unmute B |  | ☐ |
 |  | Note ch9 0x38  | `deck2.stem.vocals.isolate` | Vocals solo B |  | ☐ |
-|  | Note ch9 0x70  | `sampler1.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x78  | `sampler1.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x20  | `deck2.loop.in` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x28  | `deck2.loop.move.back` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x70  | `sampler1.load` | Sampler pad 1 load (Sampler editor sample) |  | ☐ |
+|  | Note ch9 0x78  | `sampler1.eject` | Sampler pad 1 eject |  | ☐ |
+|  | Note ch9 0x20  | `deck2.loop.in` | Loop in B |  | ☐ |
+|  | Note ch9 0x28  | `deck2.loop.move.back` | Loop move back B |  | ☐ |
 |  | Note ch9 0x60  | `mixer.channel2.eq.low.kill` | EQ Low kill ch2 |  | ☐ |
-|  | Note ch9 0x68 <br><sub>Mixxx: prev_chain</sub> | `fx.unit2.chain.prev` | FX2 previous effect |  | ☐ |
+|  | Note ch9 0x68 <br><sub>SHIFT+pad in MANUAL LOOP mode: FX beat length shorter</sub> | `fx.unit2.beats.prev` | FX2 shorter beat |  | ☐ |
 | **Pad B2** | Note ch9 0x01  | `deck2.hotcue.2` | Hot cue 2 B | 0x01→deck2.hotcue.2<br>0x09→deck2.hotcue.2<br>0x41→deck2.hotcue.6<br>0x49→deck2.hotcue.6<br>0x31→deck2.stem.drums<br>0x39→deck2.stem.drums<br>0x61→mixer.channel2.eq.mid.kill | ☐ |
 |  | Note ch9 0x09  | `deck2.hotcue.2.clear` | Clear hot cue 2 B |  | ☐ |
 |  | Note ch9 0x41  | `deck2.hotcue.6` | Hot cue 6 B |  | ☐ |
 |  | Note ch9 0x49  | `deck2.hotcue.6.clear` | Clear hot cue 6 B |  | ☐ |
-|  | Note ch9 0x11  | `deck2.beatloop.2` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x19  | `deck2.beatloop.32` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x51  | `deck2.beatloop.roll.0.125` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x59  | `deck2.beatloop.roll.2` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x11  | `deck2.beatloop.2` | Auto loop 2 beats B |  | ☐ |
+|  | Note ch9 0x19  | `deck2.beatloop.32` | Auto loop 32 beats B |  | ☐ |
+|  | Note ch9 0x51  | `deck2.beatloop.roll.0.125` | Loop roll 0.125 beats B |  | ☐ |
+|  | Note ch9 0x59  | `deck2.beatloop.roll.2` | Loop roll 2 beats B |  | ☐ |
 |  | Note ch9 0x31  | `deck2.stem.drums.toggle` | Drums mute/unmute B |  | ☐ |
 |  | Note ch9 0x39  | `deck2.stem.drums.isolate` | Drums solo B |  | ☐ |
-|  | Note ch9 0x71  | `sampler2.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x79  | `sampler2.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x21  | `deck2.loop.out` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x29  | `deck2.loop.move.forward` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x71  | `sampler2.load` | Sampler pad 2 load (Sampler editor sample) |  | ☐ |
+|  | Note ch9 0x79  | `sampler2.eject` | Sampler pad 2 eject |  | ☐ |
+|  | Note ch9 0x21  | `deck2.loop.out` | Loop out B |  | ☐ |
+|  | Note ch9 0x29  | `deck2.loop.move.forward` | Loop move forward B |  | ☐ |
 |  | Note ch9 0x61  | `mixer.channel2.eq.mid.kill` | EQ Mid kill ch2 |  | ☐ |
-|  | Note ch9 0x69 <br><sub>Mixxx: next_chain</sub> | `fx.unit2.chain.next` | FX2 next effect |  | ☐ |
+|  | Note ch9 0x69 <br><sub>SHIFT+pad in MANUAL LOOP mode: FX beat length longer</sub> | `fx.unit2.beats.next` | FX2 longer beat |  | ☐ |
 | **Pad B3** | Note ch9 0x02  | `deck2.hotcue.3` | Hot cue 3 B | 0x02→deck2.hotcue.3<br>0x0A→deck2.hotcue.3<br>0x42→deck2.hotcue.7<br>0x4A→deck2.hotcue.7<br>0x32→deck2.stem.bass<br>0x3A→deck2.stem.bass<br>0x62→mixer.channel2.eq.high.kill | ☐ |
 |  | Note ch9 0x0A  | `deck2.hotcue.3.clear` | Clear hot cue 3 B |  | ☐ |
 |  | Note ch9 0x42  | `deck2.hotcue.7` | Hot cue 7 B |  | ☐ |
 |  | Note ch9 0x4A  | `deck2.hotcue.7.clear` | Clear hot cue 7 B |  | ☐ |
-|  | Note ch9 0x12  | `deck2.beatloop.4` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x1A  | `deck2.beatloop.64` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x52  | `deck2.beatloop.roll.0.25` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x5A  | `deck2.beatloop.roll.4` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x12  | `deck2.beatloop.4` | Auto loop 4 beats B |  | ☐ |
+|  | Note ch9 0x1A  | `deck2.beatloop.64` | Auto loop 64 beats B |  | ☐ |
+|  | Note ch9 0x52  | `deck2.beatloop.roll.0.25` | Loop roll 0.25 beats B |  | ☐ |
+|  | Note ch9 0x5A  | `deck2.beatloop.roll.4` | Loop roll 4 beats B |  | ☐ |
 |  | Note ch9 0x32  | `deck2.stem.bass.toggle` | Bass mute/unmute B |  | ☐ |
 |  | Note ch9 0x3A  | `deck2.stem.bass.isolate` | Bass solo B |  | ☐ |
-|  | Note ch9 0x72  | `sampler3.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x7A  | `sampler3.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x22  | `deck2.loop.exit` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x72  | `sampler3.load` | Sampler pad 3 load (Sampler editor sample) |  | ☐ |
+|  | Note ch9 0x7A  | `sampler3.eject` | Sampler pad 3 eject |  | ☐ |
+|  | Note ch9 0x22  | `deck2.loop.exit` | Loop exit/reloop B |  | ☐ |
 |  | Note ch9 0x62  | `mixer.channel2.eq.high.kill` | EQ High kill ch2 |  | ☐ |
 | **Pad B4** | Note ch9 0x03  | `deck2.hotcue.4` | Hot cue 4 B | 0x03→deck2.hotcue.4<br>0x0B→deck2.hotcue.4<br>0x43→deck2.hotcue.8<br>0x4B→deck2.hotcue.8<br>0x33→deck2.stem.instruments<br>0x3B→deck2.stem.instruments<br>0x63→mixer.channel2.mute | ☐ |
 |  | Note ch9 0x0B  | `deck2.hotcue.4.clear` | Clear hot cue 4 B |  | ☐ |
 |  | Note ch9 0x43  | `deck2.hotcue.8` | Hot cue 8 B |  | ☐ |
 |  | Note ch9 0x4B  | `deck2.hotcue.8.clear` | Clear hot cue 8 B |  | ☐ |
-|  | Note ch9 0x13  | `deck2.beatloop.8` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x53  | `deck2.beatloop.roll.0.5` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x5B  | `deck2.beatloop.roll.8` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x13  | `deck2.beatloop.8` | Auto loop 8 beats B |  | ☐ |
+|  | Note ch9 0x53  | `deck2.beatloop.roll.0.5` | Loop roll 0.5 beats B |  | ☐ |
+|  | Note ch9 0x5B  | `deck2.beatloop.roll.8` | Loop roll 8 beats B |  | ☐ |
 |  | Note ch9 0x33  | `deck2.stem.instruments.toggle` | Instruments mute/unmute B |  | ☐ |
 |  | Note ch9 0x3B  | `deck2.stem.instruments.isolate` | Instruments solo B |  | ☐ |
-|  | Note ch9 0x73  | `sampler4.load` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x7B  | `sampler4.eject` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x23  | `deck2.loop.halve` | _not implemented yet (logged once)_ |  | ☐ |
-|  | Note ch9 0x2B  | `deck2.loop.double` | _not implemented yet (logged once)_ |  | ☐ |
+|  | Note ch9 0x73  | `sampler4.load` | Sampler pad 4 load (Sampler editor sample) |  | ☐ |
+|  | Note ch9 0x7B  | `sampler4.eject` | Sampler pad 4 eject |  | ☐ |
+|  | Note ch9 0x23  | `deck2.loop.halve` | Loop halve B |  | ☐ |
+|  | Note ch9 0x2B  | `deck2.loop.double` | Loop double B |  | ☐ |
 |  | Note ch9 0x63  | `mixer.channel2.mute` | Mute ch2 |  | ☐ |
-| **FX2 button 1** | Note ch6 0x47  | `fx.unit2.button1` | FX2 on/off | 0x47→fx.unit2.on<br>0x63→fx.unit2.on | ☐ |
-|  | Note ch6 0x63 <br><sub>SHIFT layer</sub> | `fx.unit2.button1` | FX2 on/off |  | ☐ |
-| **FX2 button 2** | Note ch6 0x48  | `fx.unit2.button2` | FX2 next effect |  | ☐ |
-|  | Note ch6 0x64 <br><sub>SHIFT layer</sub> | `fx.unit2.button2` | FX2 next effect |  | ☐ |
-| **FX2 button 3** | Note ch6 0x49  | `fx.unit2.button3` | FX2 beat length |  | ☐ |
-|  | Note ch6 0x65 <br><sub>SHIFT layer</sub> | `fx.unit2.button3` | FX2 beat length |  | ☐ |
-| **FX2 knob** | CC14 ch6 0x06/0x26  | `fx.unit2.knob` | FX2 level (dry/wet) |  | ☐ |
-|  | CC14 ch6 0x00/0x20 <br><sub>SHIFT + FX knob</sub> | `fx.unit2.knob.shift` | FX2 parameter |  | ☐ |
+| **FX2 button 1** | Note ch6 0x47  | `fx.unit2.slot1.toggle` | FX2 slot 1 on/off | 0x47→fx.unit2.slot1.on<br>0x63→fx.unit2.slot1.on | ☐ |
+|  | Note ch6 0x63 <br><sub>SHIFT + FX button: next effect for this slot</sub> | `fx.unit2.slot1.next` | FX2 slot 1 next effect |  | ☐ |
+| **FX2 button 2** | Note ch6 0x48  | `fx.unit2.slot2.toggle` | FX2 slot 2 on/off | 0x48→fx.unit2.slot2.on<br>0x64→fx.unit2.slot2.on | ☐ |
+|  | Note ch6 0x64 <br><sub>SHIFT + FX button: next effect for this slot</sub> | `fx.unit2.slot2.next` | FX2 slot 2 next effect |  | ☐ |
+| **FX2 button 3** | Note ch6 0x49  | `fx.unit2.slot3.toggle` | FX2 slot 3 on/off | 0x49→fx.unit2.slot3.on<br>0x65→fx.unit2.slot3.on | ☐ |
+|  | Note ch6 0x65 <br><sub>SHIFT + FX button: next effect for this slot</sub> | `fx.unit2.slot3.next` | FX2 slot 3 next effect |  | ☐ |
+| **FX2 knob** | CC14 ch6 0x06/0x26 <br><sub>FX level (dry/wet) of all three slots</sub> | `fx.unit2.knob` | FX2 level (dry/wet) |  | ☐ |
+|  | CC14 ch6 0x00/0x20 <br><sub>SHIFT + FX knob: effect parameter (feedback / size / rate / depth)</sub> | `fx.unit2.knob.shift` | FX2 parameter (all slots) |  | ☐ |
 | **Crossfader** | CC14 ch7 0x1F/0x3F  | `mixer.crossfader` | Crossfader moves; A/B levels change |  | ☐ |
 | **Headphone mix** | CC14 ch7 0x05/0x25  | `mixer.headphone.mix` | Headphone cue/master mix |  | ☐ |
 | **Browse encoder** | CC ch7 0x40  | `browser.scroll` | Library selection moves |  | ☐ |
@@ -210,4 +210,4 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 | **Browse push** | Note ch7 0x41  | `browser.select` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch7 0x42 <br><sub>SHIFT + push</sub> | `browser.back` | _not implemented yet (logged once)_ |  | ☐ |
 
-Totals: 52 physical controls, 200 input bindings, 78 LED outputs.
+Totals: 52 physical controls, 200 input bindings, 86 LED outputs.

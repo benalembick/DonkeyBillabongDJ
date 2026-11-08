@@ -205,6 +205,8 @@ export function createApp(): App {
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   // MIDI keyboards and drum controllers without a DJ mapping play the Sampler pads / chromatic instrument.
   controllers.on("monitor", (entry) => { if (!entry.mapping && entry.message.deviceId !== "simulator") production.handleSamplerMidi(entry.message); });
+  // No jog wheel left to drive it: a live Adjust Loop Out would otherwise get stuck showing its indicator.
+  controllers.on("controllers", (list) => { if (!list.some((c) => c.connected)) engine.exitAllLoopOutAdjust(); });
   const keyboard = new KeyboardShortcuts(bus);
   const streaming = new StreamingStore(platform.streaming, log);
   const spotifyPlayback = new SpotifyPlaybackAdapter(async (url) => { platform.openExternal(url); });

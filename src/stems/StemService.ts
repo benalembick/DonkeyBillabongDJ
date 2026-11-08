@@ -175,6 +175,19 @@ export class StemService extends Emitter<Events> {
       if (e.type === "trackLoaded") void this.onDeckLoaded(e.deck, e.track, e.audioHandle as AudioBuffer);
       if (e.type === "trackUnloaded") this.cancelDeck(e.deck);
     });
+    // A rebuilt audio graph (e.g. output device/routing change in Settings) means fresh
+    // AudioWorkletNodes with no STEM data, even though the deck still shows "ready" and the
+    // on-disk cache still has it. Re-prime every already-loaded deck from that cache.
+    audio.on((e) => {
+      if (e.type !== "rebuilt") return;
+      this.engine.getState().decks.forEach((d, i) => {
+        const buf = this.loadedBuffers[i];
+        if (d.status === "ready" && d.track && buf) {
+          void this.onDeckLoaded(i, d.track, buf);
+          this.engine.setStemsEnabled(i, d.stems.enabled); // re-send the mix gains/mutes too
+        }
+      });
+    });
     // Switching STEMS on in Pre-analyse mode starts separation for that deck.
     engine.on("state", (s) => {
       s.decks.forEach((d, i) => {

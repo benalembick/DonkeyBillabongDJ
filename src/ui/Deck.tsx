@@ -110,9 +110,13 @@ function JogDisplay({ deck, size }: { deck: number; size: number }) {
     <div
       ref={root}
       data-train={`jog-${deckLetter(deck)}`}
-      className={`jog ${d.jogTouched ? "touched" : ""} ${d.playing ? "playing" : ""}`}
+      className={`jog ${d.jogTouched ? "touched" : ""} ${d.playing ? "playing" : ""} ${d.loopOutAdjust ? "loop-adjust" : ""}`}
       style={size ? { width: size, height: size } : undefined}
-      title={`Drag round or scroll to nudge (playing) or fine-position (paused). Jog ticks: ${engine.getJogTicks(deck)}`}
+      title={
+        d.loopOutAdjust
+          ? "Adjusting loop out — turn to move the loop's end"
+          : `Drag round or scroll to nudge (playing) or fine-position (paused). Jog ticks: ${engine.getJogTicks(deck)}`
+      }
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -143,6 +147,7 @@ function JogDisplay({ deck, size }: { deck: number; size: number }) {
           {pct.toFixed(1)}% <small>{RANGE_LABEL[String(d.tempoRange)]}</small>
         </span>
         {d.scratching && <span className="jog-state">SCRATCH</span>}
+        {d.loopOutAdjust && <span className="jog-state loop-adjust">ADJ LOOP OUT</span>}
       </div>
     </div>
   );
@@ -310,7 +315,14 @@ function LoopSection({ deck }: { deck: number }) {
         AUTO
       </button>
       <button className={`tiny ${d.loopIn != null ? "lit" : ""}`} onClick={() => send(`${p}.loop.in`)} disabled={d.status !== "ready"}>IN</button>
-      <button className="tiny" onClick={() => send(`${p}.loop.out`)} disabled={d.status !== "ready" || (d.loopIn == null && !lp)}>OUT</button>
+      <button
+        className={`tiny ${d.loopOutAdjust ? "lit adjusting" : ""}`}
+        onClick={() => send(`${p}.loop.out`)}
+        disabled={d.status !== "ready" || (d.loopIn == null && !lp)}
+        title={d.loopOutAdjust ? "Adjusting loop out — turn the jog wheel, press OUT again to finish" : active && d.loopIn == null ? "Press again to adjust the loop's end with the jog wheel" : "Set loop out"}
+      >
+        OUT
+      </button>
       <button className={`tiny ${active ? "lit" : ""}`} onClick={() => send(`${p}.loop.exit`)} disabled={!lp}>
         {lp && !active ? "RELOOP" : "EXIT"}
       </button>

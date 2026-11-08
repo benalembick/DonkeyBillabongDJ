@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { CommandBus } from "../src/core/commands";
-import { DJEngine } from "../src/core/engine/DJEngine";
+import { DJEngine, type DeckState } from "../src/core/engine/DJEngine";
 import type { TrackInfo } from "../src/core/engine/types";
 import { EventLog } from "../src/core/log";
 import { FakeAudioEngine } from "./fakes";
@@ -456,6 +456,176 @@ describe("loops", () => {
     bus.send("deck1.beatloop.roll.0.5", 0);
     expect(audio.loops[0]).toBeNull();
     expect(audio.positions[0]).toBeCloseTo(10.3); // paused deck: no time passed
+  });
+
+  describe("live Adjust Loop Out (DDJ-SB: LOOP OUT again, then jog)", () => {
+    it("OUT on an active manual loop enters adjust mode; the jog wheel then moves only the end", async () => {
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1); // loop [10, 12]
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(false);
+      bus.send("deck1.loop.out", 1); // enter
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(true);
+      bus.send("deck1.jog.ring", -360, "midi"); // half a revolution back: shortens by 0.9s
+      const lp = engine.getState().decks[0].loop!;
+      expect(lp.start).toBeCloseTo(10);
+      expect(lp.end).toBeCloseTo(11.1);
+      expect(audio.loops[0]).toEqual({ start: expect.closeTo(10), end: expect.closeTo(11.1) });
+      bus.send("deck1.loop.out", 1); // finish
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(false);
+      expect(engine.getState().decks[0].loop?.active).toBe(true); // the edited loop stays active
+    });
+
+    it("turning the other way lengthens the loop; the IN point never moves", async () => {
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1); // loop [10, 12]
+      bus.send("deck1.loop.out", 1);
+      bus.send("deck1.jog.platter", 720, "midi"); // one full revolution forward: +1.8s
+      const lp = engine.getState().decks[0].loop!;
+      expect(lp.start).toBeCloseTo(10);
+      expect(lp.end).toBeCloseTo(13.8);
+    });
+
+    it("shrinking past the playhead wraps playback back to IN, clamped at the minimum length", async () => {
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1); // loop [10, 12]
+      audio.positions[0] = 11.9; // playhead near the (old) end
+      bus.send("deck1.loop.out", 1);
+      bus.send("deck1.jog.ring", -1200, "midi"); // way more than the loop's own length
+      const lp = engine.getState().decks[0].loop!;
+      expect(lp.end).toBeCloseTo(lp.start + 0.01, 2); // clamped to the minimum playable length
+      // the old playhead (11.9) was left of the new end: wrapped back inside [start, end)
+      expect(audio.positions[0]).toBeGreaterThanOrEqual(lp.start);
+      expect(audio.positions[0]).toBeLessThan(lp.end + 1e-6);
+    });
+
+    it("extending back out towards the end of the track keeps the endpoint valid", async () => {
+      await loaded(); // duration 300
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1);
+      bus.send("deck1.loop.out", 1);
+      bus.send("deck1.jog.ring", 1_000_000, "midi"); // absurdly large: clamp at the track's duration
+      const lp = engine.getState().decks[0].loop!;
+      expect(lp.end).toBeCloseTo(300);
+      expect(lp.end).toBeLessThanOrEqual(300);
+      bus.send("deck1.loop.out", 1);
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(false);
+    });
+
+    it("touching or releasing the wheel while adjusting never scratches, nudges or seeks", async () => {
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.vinyl", 1); // ensure vinyl mode is on (initialDeck default)
+      bus.send("deck1.beatloop.4", 1);
+      bus.send("deck1.loop.out", 1);
+      bus.send("deck1.jog.touch", 1, "midi");
+      expect(audio.scratching[0]).toBe(false);
+      expect(engine.getState().decks[0].jogTouched).toBe(true);
+      bus.send("deck1.jog.platter", -10, "midi");
+      expect(audio.last("scratchMove")).toBeUndefined();
+      expect(audio.last("nudge")).toBeUndefined();
+      bus.send("deck1.jog.touch", 0, "midi");
+      expect(audio.scratching[0]).toBe(false);
+    });
+
+    it("deactivating (EXIT) or replacing the loop leaves adjust mode", async () => {
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1);
+      bus.send("deck1.loop.out", 1);
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(true);
+      bus.send("deck1.loop.exit", 1); // deactivate
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(false);
+      expect(engine.getState().decks[0].loop?.active).toBe(false);
+    });
+
+    it("pressing IN to start a new loop leaves adjust mode on the old one", async () => {
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1);
+      bus.send("deck1.loop.out", 1);
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(true);
+      bus.send("deck1.loop.in", 1);
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(false);
+    });
+
+    it("loading a new track onto the deck leaves adjust mode", async () => {
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1);
+      bus.send("deck1.loop.out", 1);
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(true);
+      await engine.loadTrack(0, track("replacement"));
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(false);
+    });
+
+    it("exitAllLoopOutAdjust leaves adjust mode on every deck independently (e.g. the controller disconnects)", async () => {
+      await loaded(0);
+      await loaded(1);
+      engine.setBeatGrid(0, grid(120, 0));
+      engine.setBeatGrid(1, grid(120, 0));
+      audio.positions[0] = 10;
+      audio.positions[1] = 20;
+      bus.send("deck1.beatloop.4", 1);
+      bus.send("deck2.beatloop.4", 1);
+      bus.send("deck1.loop.out", 1);
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(true);
+      expect(engine.getState().decks[1].loopOutAdjust).toBe(false); // deck 2 never entered it
+      engine.exitAllLoopOutAdjust();
+      expect(engine.getState().decks[0].loopOutAdjust).toBe(false);
+      expect(engine.getState().decks[0].loop?.active).toBe(true); // the loop itself is untouched
+      expect(engine.getState().decks[1].loopOutAdjust).toBe(false);
+    });
+
+    it("other deck, auto loops and the other manual loop controls are unaffected", async () => {
+      await loaded(0);
+      await loaded(1);
+      engine.setBeatGrid(0, grid(120, 0));
+      engine.setBeatGrid(1, grid(120, 0));
+      audio.positions[0] = 10;
+      audio.positions[1] = 10;
+      bus.send("deck1.beatloop.4", 1);
+      bus.send("deck1.loop.out", 1); // deck 1 adjusting
+      bus.send("deck2.beatloop.4", 1); // deck 2: ordinary auto loop, untouched by deck 1's mode
+      expect(audio.loops[1]).toEqual({ start: expect.closeTo(10), end: expect.closeTo(12) });
+      bus.send("deck1.jog.ring", -360, "midi"); // shortens to [10, 11.1]
+      bus.send("deck1.loop.out", 1); // finish deck 1
+      bus.send("deck1.loop.halve", 1); // normal loop control still works afterwards
+      expect(engine.getState().decks[0].loop?.end).toBeCloseTo(10.55);
+    });
+
+    it("a live drag does not push the loop to preparation on every tick, only once it finishes", async () => {
+      const changes: Partial<DeckState>[] = [];
+      engine.setPreparationPort({
+        restore: async () => ({}),
+        changed: (_previous, _next, patch) => {
+          if ("loop" in patch) changes.push(patch);
+        },
+      });
+      await loaded();
+      engine.setBeatGrid(0, grid(120, 0));
+      audio.positions[0] = 10;
+      bus.send("deck1.beatloop.4", 1); // a durable loop change: reaches preparation once
+      expect(changes).toHaveLength(1);
+      bus.send("deck1.loop.out", 1); // enter adjust (no "loop" key in this patch)
+      bus.send("deck1.jog.ring", -120, "midi");
+      bus.send("deck1.jog.ring", -120, "midi");
+      bus.send("deck1.jog.ring", -120, "midi");
+      expect(changes).toHaveLength(1); // none of the drag ticks reached preparation
+      bus.send("deck1.loop.out", 1); // finish: the settled end reaches preparation once
+      expect(changes).toHaveLength(2);
+      expect(changes[1].loop?.end).toBeCloseTo(engine.getState().decks[0].loop!.end);
+    });
   });
 });
 

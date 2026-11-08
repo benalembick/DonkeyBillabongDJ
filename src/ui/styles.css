@@ -300,6 +300,7 @@ img.art-tile { object-fit: cover; display: block; }
 .pad-clear { position: absolute; top: 1px; right: 1px; padding: 0 4px; font-size: 10px; line-height: 12px; }
 
 .loops { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.loops button.adjusting { background: var(--ok); border-color: var(--ok); color: #000; }
 .loops.soon { opacity: 0.5; }
 .loop-size { display: flex; align-items: center; gap: 3px; font-weight: 800; }
 .loop-size span { min-width: 26px; text-align: center; }
@@ -311,6 +312,7 @@ img.art-tile { object-fit: cover; display: block; }
 .jog-ring { fill: none; stroke: #2b313c; stroke-width: 5; }
 .jog.playing .jog-ring { stroke: var(--accent); }
 .jog.touched .jog-ring { stroke: var(--warn); }
+.jog.loop-adjust .jog-ring { stroke: var(--ok); }
 .jog-inner { fill: #0c0e12; stroke: #1f242d; stroke-width: 1; }
 .jog-needle { stroke: var(--danger); stroke-width: 4; stroke-linecap: round; }
 .jog-text { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
@@ -320,6 +322,7 @@ img.art-tile { object-fit: cover; display: block; }
 .deck.compact .jog-pct { font-size: 9px; }
 .jog-pct small { color: var(--accent); }
 .jog-state { font-size: 9px; font-weight: 900; color: var(--warn); }
+.jog-state.loop-adjust { color: var(--ok); }
 
 .tempo { display: flex; align-items: center; gap: 4px; }
 .tempo.vertical { flex-direction: column; height: 100%; min-height: 120px; }

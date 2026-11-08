@@ -122,6 +122,12 @@ export interface DeckState {
   loop: LoopState | null;
   /** Pending LOOP IN point (manual loop), until LOOP OUT. */
   loopIn: number | null;
+  /**
+   * While true, the jog wheel moves this deck's active loop's end point (fine, relative
+   * adjustment) instead of scratching, pitch-bending or seeking. Entered/left with LOOP OUT
+   * pressed again while a manual loop is active (see `loopOut`/`toggleLoopOutAdjust`).
+   */
+  loopOutAdjust: boolean;
 }
 
 export interface ChannelState {
@@ -246,6 +252,7 @@ function initialDeck(index: number): DeckState {
     stems: { enabled: false, volume: [1, 1, 1, 1], muted: [false, false, false, false], status: "off", progress: 0 },
     loop: null,
     loopIn: null,
+    loopOutAdjust: false,
   };
 }
 
@@ -728,8 +735,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.audio.seek(deck, t);
   }
 
-  private setLoop(deck: number, loop: LoopState | null): void {
-    this.patchDeck(deck, { loop });
+  /** `keepAdjust`: used by the live jog drag itself, so it doesn't cancel the mode it's driving. */
+  private setLoop(deck: number, loop: LoopState | null, keepAdjust = false): void {
+    const patch: Partial<DeckState> = { loop };
+    if (!keepAdjust && this.state.decks[deck].loopOutAdjust) patch.loopOutAdjust = false;
+    this.patchDeck(deck, patch);
     this.audio.setLoop(deck, loop?.active ? { start: loop.start, end: loop.end } : null);
   }
 
@@ -796,12 +806,20 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
   private loopIn(deck: number): void {
     const d = this.state.decks[deck];
     if (d.status !== "ready") return;
-    this.patchDeck(deck, { loopIn: this.quantize(deck, this.audio.getPosition(deck)) });
+    this.patchDeck(deck, {
+      loopIn: this.quantize(deck, this.audio.getPosition(deck)),
+      ...(d.loopOutAdjust ? { loopOutAdjust: false } : null),
+    });
   }
 
+  /** LOOP OUT: create the manual loop, or — pressed again on an already-active one — toggle live Adjust Loop Out. */
   private loopOut(deck: number): void {
     const d = this.state.decks[deck];
     if (d.status !== "ready") return;
+    if (d.loopIn == null && d.loop?.active) {
+      this.toggleLoopOutAdjust(deck);
+      return;
+    }
     const start = d.loopIn ?? d.loop?.start ?? null;
     if (start === null) return;
     const end = this.quantize(deck, this.audio.getPosition(deck));
@@ -845,6 +863,43 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     if (lp.start + shift < 0 || lp.end + shift > d.duration) return;
     this.setLoop(deck, { ...lp, start: lp.start + shift, end: lp.end + shift });
     if (lp.active) this.audio.seek(deck, clamp(this.audio.getPosition(deck) + shift, 0, d.duration));
+  }
+
+  /** LOOP OUT pressed again on an active manual loop: enter/leave live jog-driven Adjust Loop Out. */
+  private toggleLoopOutAdjust(deck: number): void {
+    const d = this.state.decks[deck];
+    if (!d.loop?.active) return;
+    if (d.loopOutAdjust) {
+      this.setLoop(deck, d.loop); // finish: persist the edited end, hand the jog wheel back to normal behaviour
+      return;
+    }
+    this.patchDeck(deck, { loopOutAdjust: true });
+  }
+
+  /**
+   * Live-drag the active loop's end by `deltaSeconds` (IN stays fixed). Clamped to the track
+   * and the engine's minimum loop length; if the new end falls behind the playhead, wraps it
+   * back into the loop (the normal loop-wrap behaviour `resizeLoop`/`moveLoop` already use).
+   */
+  private adjustLoopOutBy(deck: number, deltaSeconds: number): void {
+    const d = this.state.decks[deck];
+    const lp = d.loop;
+    if (!lp?.active) return;
+    const MIN_LOOP_S = 0.01;
+    const end = clamp(lp.end + deltaSeconds, lp.start + MIN_LOOP_S, d.duration);
+    if (end === lp.end) return;
+    this.setLoop(deck, { ...lp, end, beats: null }, true);
+    const len = end - lp.start;
+    const pos = this.audio.getPosition(deck);
+    if (pos >= end) this.audio.seek(deck, lp.start + ((pos - lp.start) % len));
+  }
+
+  /** Leaves Adjust Loop Out on every deck that's in it — e.g. its controller disconnected. */
+  exitAllLoopOutAdjust(): void {
+    for (let i = 0; i < this.deckCount; i++) {
+      const d = this.state.decks[i];
+      if (d.loopOutAdjust) this.setLoop(i, d.loop);
+    }
   }
 
   /** Current tempo of a deck in BPM (analysed or metadata BPM x pitch), or null. */
@@ -1001,6 +1056,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         stems: { ...this.state.decks[deck].stems, muted: [false, false, false, false], status: this.stemsSupport.ok ? "waiting" : "unavailable", progress: 0, message: undefined },
         loop: null,
         loopIn: null,
+        loopOutAdjust: false,
         ...prepared,
       });
       this.rolls[deck] = null;
@@ -1316,6 +1372,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
 
   private onJogTouch(deck: number, touched: boolean): void {
     const d = this.state.decks[deck];
+    // Adjusting a loop's end: touching/releasing the wheel must never start a scratch.
+    if (d.loopOutAdjust) {
+      this.patchDeck(deck, { jogTouched: touched });
+      return;
+    }
     if (d.vinyl && d.status === "ready") {
       this.audio.setScratching(deck, touched);
       this.patchDeck(deck, { jogTouched: touched, scratching: touched });
@@ -1350,6 +1411,13 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
   private onJog(deck: number, surface: "platter" | "ring" | "search", ticks: number): void {
     if (surface !== "search") this.jogTicks[deck] += ticks;
     const d = this.state.decks[deck];
+    // Adjusting a loop's end: platter/ring rotation moves it instead of scratching/nudging/seeking
+    // (fine positioning, same feel as a paused seek). SHIFT+jog ("search") still fast-seeks normally.
+    if (d.loopOutAdjust && surface !== "search") {
+      const revolutions = ticks / this.settings.jog.ticksPerRevolution;
+      this.adjustLoopOutBy(deck, revolutions * this.settings.jog.secondsPerRevolution * this.settings.jog.jogSensitivity);
+      return;
+    }
     const intent = jogIntent(
       surface,
       ticks,
@@ -1456,8 +1524,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.state = { ...this.state, decks };
     this.emit("state", this.state);
     if (!this.restoringPreparation && previous.status === "ready" && decks[deck].status === "ready" && !("status" in patch)) {
-      const durablePatch = this.rolls[deck] && "loop" in patch ? { ...patch, loop: undefined } : patch;
-      if (this.rolls[deck]) delete durablePatch.loop;
+      // A held loop roll, or a live jog Adjust Loop Out drag, must not push its in-progress loop
+      // to persistence on every tick — only the settled result (release / adjust finished) does.
+      const transientLoop = this.rolls[deck] || decks[deck].loopOutAdjust;
+      const durablePatch = transientLoop && "loop" in patch ? { ...patch, loop: undefined } : patch;
+      if (transientLoop) delete durablePatch.loop;
       this.preparation?.changed(previous, decks[deck], durablePatch);
     }
   }

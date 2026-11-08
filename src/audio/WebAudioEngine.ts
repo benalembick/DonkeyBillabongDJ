@@ -197,6 +197,9 @@ export class WebAudioEngine implements AudioEngine {
       this.fail(`Audio engine start failed: ${err instanceof Error ? err.message : String(err)}`);
       throw err;
     }
+    // Fresh AudioWorkletNodes: anyone keeping per-deck worklet-side state (e.g. loaded STEM
+    // regions) needs to re-send it now. Harmless on the very first build (nothing loaded yet).
+    this.emit({ type: "rebuilt" });
     this.emitStatus();
   }
 

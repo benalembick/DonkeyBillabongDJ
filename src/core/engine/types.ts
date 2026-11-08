@@ -145,7 +145,11 @@ export interface OutputDevice {
 export type AudioEngineEvent =
   | { type: "status"; status: AudioStatus }
   | { type: "ended"; deck: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /** The whole graph (AudioContext + every deck's AudioWorkletNode) was torn down and rebuilt
+   *  (e.g. an output device/routing change) — per-deck worklet state such as loaded STEM
+   *  regions is gone and needs re-priming by whoever owns it (the deck buffer survives). */
+  | { type: "rebuilt" };
 
 /**
  * Backend-neutral audio engine contract. The Web Audio implementation lives in
