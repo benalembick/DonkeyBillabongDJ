@@ -359,6 +359,7 @@ function LocalView({ collection, expanded, onToggleExpanded }: { collection: Loc
   const match = useCallback((t: TrackInfo) => reference && reference.ref !== t.ref ? compatibility(reference, t, app.preparation.forRef(reference.ref), app.preparation.forRef(t.ref)) : null, [reference, app.preparation]);
   // The list only depends on the reference while the Min match % filter is in use.
   const matchFilter = advanced.minMatch && reference ? match : null;
+  const genres = useMemo(() => [...new Set(state.tracks.map((t) => t.genre).filter((g): g is string => !!g))].sort(COLLATOR.compare), [state.tracks]);
 
   useEffect(() => {
     if (collection === "recent") setSort({ key: "addedAt", dir: -1 });
@@ -548,7 +549,7 @@ function LocalView({ collection, expanded, onToggleExpanded }: { collection: Loc
       </div>
       <div className="advanced-filters">
         <input type="number" placeholder="Min BPM" value={advanced.minBpm} onChange={(e) => setAdvanced({ ...advanced, minBpm: e.target.value })}/><input type="number" placeholder="Max BPM" value={advanced.maxBpm} onChange={(e) => setAdvanced({ ...advanced, maxBpm: e.target.value })}/>
-        <input placeholder="Key / Camelot" value={advanced.key} onChange={(e) => setAdvanced({ ...advanced, key: e.target.value })}/><input type="number" min="1" max="10" placeholder="Min energy" value={advanced.minEnergy} onChange={(e) => setAdvanced({ ...advanced, minEnergy: e.target.value })}/><input type="number" min="1" max="10" placeholder="Max energy" value={advanced.maxEnergy} onChange={(e) => setAdvanced({ ...advanced, maxEnergy: e.target.value })}/><input placeholder="Genre" value={advanced.genre} onChange={(e) => setAdvanced({ ...advanced, genre: e.target.value })}/><input type="number" min="0" max="100" placeholder="Min match %" value={advanced.minMatch} onChange={(e) => setAdvanced({ ...advanced, minMatch: e.target.value })}/>
+        <input placeholder="Key / Camelot" value={advanced.key} onChange={(e) => setAdvanced({ ...advanced, key: e.target.value })}/><input type="number" min="1" max="10" placeholder="Min energy" value={advanced.minEnergy} onChange={(e) => setAdvanced({ ...advanced, minEnergy: e.target.value })}/><input type="number" min="1" max="10" placeholder="Max energy" value={advanced.maxEnergy} onChange={(e) => setAdvanced({ ...advanced, maxEnergy: e.target.value })}/><select aria-label="Genre" value={advanced.genre} onChange={(e) => setAdvanced({ ...advanced, genre: e.target.value })}><option value="">Genre</option>{genres.map((g) => <option key={g} value={g}>{g}</option>)}</select><input type="number" min="0" max="100" placeholder="Min match %" value={advanced.minMatch} onChange={(e) => setAdvanced({ ...advanced, minMatch: e.target.value })}/>
         <button onClick={() => setAdvanced({ ...advanced, minEnergy: "4", maxEnergy: "6" })}>Warm Up</button><button onClick={() => setAdvanced({ ...advanced, minEnergy: "7", maxEnergy: "10" })}>Peak Hour Bangers</button><button onClick={() => setAdvanced({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" })}>Clear</button>
       </div>
       </div>

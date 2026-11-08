@@ -102,7 +102,7 @@ select { padding: 2px 4px; }
 .playlist-nav-empty { padding: 5px 8px; color: var(--muted); font-size: 11px; }
 .playlist-title { font-size: 14px; margin-right: 4px; }
 .playlist-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 8px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.playlist-filters input:not(.search-input) { width: 82px; padding: 4px 6px; }
+.playlist-filters input:not(.search-input), .playlist-filters select { width: 82px; padding: 4px 6px; }
 .playlist-filters .search-input { flex: 1 1 280px; }
 .tracks tr:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* Playlist sidebar: pinned entries and the create button stand out */
@@ -728,7 +728,7 @@ tr.stream-only td { color: var(--muted); }
 .ctx-menu button:hover:not(:disabled) { background: var(--accent); color: #fff; }
 .ctx-menu hr { border: none; border-top: 1px solid #333; margin: 3px 0; }
 .advanced-filters { display: flex; gap: 5px; flex-wrap: wrap; padding: 3px 0 6px; }
-.advanced-filters input { width: 88px; min-width: 70px; background: #11151c; color: #ddd; border: 1px solid #39414d; border-radius: 4px; padding: 3px 5px; }
+.advanced-filters input, .advanced-filters select { width: 88px; min-width: 70px; background: #11151c; color: #ddd; border: 1px solid #39414d; border-radius: 4px; padding: 3px 5px; }
 .discovery { display: flex; flex-direction: column; }
 .discovery .table-wrap { max-height: 60vh; }
 .discovery td:nth-child(3) { max-width: 380px; white-space: normal; }

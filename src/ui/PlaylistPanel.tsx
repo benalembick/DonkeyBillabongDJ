@@ -164,7 +164,7 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
   const { playlists, library, engine, autoDJ } = app;
   const { settings: autoSettings } = useAutoDJ();
   const ps = usePlaylists();
-  useLibraryState();
+  const libraryState = useLibraryState();
   const decks = useEngineState().decks;
   const stemIdx = useStemIndex();
   const stemProgress = useStemProgress();
@@ -185,6 +185,7 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
   const fallbackMenuPos = useMenuPosition(menu?.x ?? 0, menu?.y ?? 0);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({ minBpm: "", maxBpm: "", key: "", genre: "", minEnergy: "", maxEnergy: "" });
+  const genres = useMemo(() => [...new Set(libraryState.tracks.map((t) => t.genre).filter((g): g is string => !!g))].sort((a, b) => a.localeCompare(b)), [libraryState.tracks]);
   useEffect(() => { setSelected([]); setName(null); setDeleting(false); setInfo(null); }, [id]);
   useEffect(() => {
     const port = { moveSelection: (delta: number) => {
@@ -261,7 +262,7 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
       <input type="number" aria-label="Minimum BPM" placeholder="Min BPM" value={filters.minBpm} onChange={(e) => setFilters({ ...filters, minBpm: e.target.value })} />
       <input type="number" aria-label="Maximum BPM" placeholder="Max BPM" value={filters.maxBpm} onChange={(e) => setFilters({ ...filters, maxBpm: e.target.value })} />
       <input aria-label="Key" placeholder="Key" value={filters.key} onChange={(e) => setFilters({ ...filters, key: e.target.value })} />
-      <input aria-label="Genre" placeholder="Genre" value={filters.genre} onChange={(e) => setFilters({ ...filters, genre: e.target.value })} />
+      <select aria-label="Genre" value={filters.genre} onChange={(e) => setFilters({ ...filters, genre: e.target.value })}><option value="">Genre</option>{genres.map((g) => <option key={g} value={g}>{g}</option>)}</select>
       <input type="number" min="1" max="10" aria-label="Minimum energy" placeholder="Min energy" value={filters.minEnergy} onChange={(e) => setFilters({ ...filters, minEnergy: e.target.value })} />
       <input type="number" min="1" max="10" aria-label="Maximum energy" placeholder="Max energy" value={filters.maxEnergy} onChange={(e) => setFilters({ ...filters, maxEnergy: e.target.value })} />
       <button onClick={clearFilters}>Clear</button><span className="hint">{visible.length} of {p.refs.length} tracks</span>
