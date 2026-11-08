@@ -279,6 +279,20 @@ describe("transition planning", () => {
     expect(planTransition(a, b, DEFAULT_AUTO_DJ)).toMatchObject({ sync: false, kind: "quick-fade" });
     expect(planTransition(a, b, { ...DEFAULT_AUTO_DJ, style: "beat-mix" }).sync).toBe(false);
   });
+  it("follows the incoming deck's own tempo-range setting rather than a fixed ±10%", async () => {
+    const { engine, library, bus } = await setup();
+    await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);
+    engine.setBeatGrid(0, { bpm: 120, firstBeat: 0, confidence: 3, source: "analysis" });
+    engine.setBeatGrid(1, { bpm: 170, firstBeat: 0, confidence: 3, source: "analysis" }); // ~29% gap: outside every range but Wide
+    const decks = () => engine.getState().decks;
+    expect(planTransition(decks()[0], decks()[1], DEFAULT_AUTO_DJ).sync).toBe(false); // deck 2 still at the default ±10%
+    bus.send("deck2.tempo.range"); // ±10% → ±16%
+    expect(decks()[1].tempoRange).toBe(0.16);
+    expect(planTransition(decks()[0], decks()[1], DEFAULT_AUTO_DJ).sync).toBe(false); // still short of ~29%
+    bus.send("deck2.tempo.range"); // ±16% → Wide
+    expect(decks()[1].tempoRange).toBe(1);
+    expect(planTransition(decks()[0], decks()[1], DEFAULT_AUTO_DJ)).toMatchObject({ sync: true, kind: "beat-mix" });
+  });
   it("beat-matches common 120 to 128 BPM transitions within the normal tempo range", async () => {
     const { engine, library } = await setup();
     await engine.loadTrack(0, library.getByRef("a")!); await engine.loadTrack(1, library.getByRef("b")!);

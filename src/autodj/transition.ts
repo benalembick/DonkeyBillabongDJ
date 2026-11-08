@@ -55,9 +55,10 @@ export function planTransition(out: DeckState, incoming: DeckState, settings: Au
   const ratio = a && b ? a * out.rate / b : 0;
   const grids = !!out.beatGrid && !!incoming.beatGrid && out.beatGrid.confidence >= 1.4 && incoming.beatGrid.confidence >= 1.4;
   const keys = compatibleKeys(out.track?.key, incoming.track?.key);
-  // The decks' normal tempo range is ±10%. Keeping Auto DJ to the same range
-  // covers common 120→128 and 128→120 transitions without extreme warping.
-  const safeTempo = ratio >= 0.9 && ratio <= 1.1;
+  // The incoming deck is the one Sync actually re-paces to match the outgoing tempo, so its
+  // own tempo-range setting (±6/10/16%, or Wide) is the honest limit on how far that's safe —
+  // not a fixed ±10% regardless of what the deck is set to.
+  const safeTempo = ratio >= 1 - incoming.tempoRange && ratio <= 1 + incoming.tempoRange;
   const beatMix = settings.bpmSync && safeTempo && grids && (settings.style === "beat-mix" || (settings.style === "smart" && (!settings.keyAware || keys !== false)));
   const kind = beatMix ? "beat-mix" : settings.style === "quick-fade" || (settings.style === "smart" && a && b && !safeTempo) ? "quick-fade" : "crossfade";
   const [inStart] = bounds(incoming, inAnalysis);
