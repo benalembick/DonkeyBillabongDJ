@@ -208,8 +208,8 @@ function TempoFader({ deck, vertical }: { deck: number; vertical: boolean }) {
         onDoubleClick={() => send(`${p}.tempo.reset`)}
         title="Tempo (scroll for fine steps, Shift+scroll finer; double-click to reset)"
       />
-      <button className="tiny" onClick={() => send(`${p}.tempo.reset`)} title="Reset tempo">
-        0
+      <button className="tiny" onClick={() => send(`${p}.tempo.reset`)} title="Reset tempo to the track's own BPM (0%)">
+        ⟲0%
       </button>
     </div>
   );
