@@ -374,6 +374,17 @@ describe("STEMS", () => {
     expect(audio.stems[0].mix).toEqual({ enabled: true, gains: [1, 1, 1, 1] });
   });
 
+  it("an Auto DJ load turns STEMS back off instead of carrying it over from whatever played here before", async () => {
+    engine.setStemsSupport(true);
+    await loaded();
+    bus.send("deck1.stem.vocals.toggle", 1);
+    expect(engine.getState().decks[0].stems.enabled).toBe(true);
+    await engine.loadTrack(0, track("next"), "auto-dj");
+    const st = engine.getState().decks[0].stems;
+    expect(st.enabled).toBe(false);
+    expect(audio.stems[0].mix?.enabled).toBe(false);
+  });
+
   it("disabling support switches STEMS off", async () => {
     engine.setStemsSupport(true);
     await loaded();

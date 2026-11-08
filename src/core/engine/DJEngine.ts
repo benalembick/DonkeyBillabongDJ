@@ -1103,7 +1103,10 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
         cueDetails: new Array(HOTCUE_COUNT).fill(null),
         savedLoops: [],
         beatGrid: null,
-        stems: { ...this.state.decks[deck].stems, muted: [false, false, false, false], status: this.stemsSupport.ok ? "waiting" : "unavailable", progress: 0, message: undefined },
+        // Auto DJ never asked for a stem mix on this track — carrying over "enabled" from
+        // whatever played here before would both keep eagerly separating every auto-advanced
+        // track for nothing, and silently inherit stale mute/solo choices nobody made for it.
+        stems: { ...this.state.decks[deck].stems, enabled: source === "auto-dj" ? false : this.state.decks[deck].stems.enabled, muted: [false, false, false, false], status: this.stemsSupport.ok ? "waiting" : "unavailable", progress: 0, message: undefined },
         loop: null,
         loopIn: null,
         loopOutAdjust: false,
