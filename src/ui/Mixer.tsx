@@ -1,23 +1,38 @@
 /** Mixer console (between the decks): per-channel TRIM / EQ / FILTER / CUE / fader + meters, master, crossfader. */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { deckLetter } from "../core/actions";
+import { describeEqKnob, describeFaderKnob, describeFilterKnob, describeGainKnob, describeHeadMixKnob } from "../core/engine/mixerMath";
 import { useApp, useEngineState, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
 import { clampRaw, dragDelta, FINE_FACTOR, KEY_STEP, rawToValue, stepValue, valueToRaw, wheelDelta } from "./knobMath";
 
+/** How long the live readout stays up after the last turn (a learning aid, not a permanent display). */
+const READOUT_LINGER_MS = 1200;
+
 /**
  * Rotary knob: drag up/down (or left/right) or scroll the wheel over it; hold Shift for fine
  * control. Bipolar knobs catch at the centre and double-click back to it. Response: knobMath.ts.
+ * `describe`, when given, drives a live floating readout (e.g. "+2.3 dB") while the knob is being
+ * turned — a "what is this actually doing" aid, not a permanent fixture on the dense mixer.
  */
-export function Knob(props: { label: string; value: number; action: string; kill?: boolean; killAction?: string; bipolar?: boolean; size?: number; /** Training: control id for highlighting */ train?: string }) {
+export function Knob(props: { label: string; value: number; action: string; kill?: boolean; killAction?: string; bipolar?: boolean; size?: number; /** Training: control id for highlighting */ train?: string; describe?: (value: number) => string }) {
   const send = useSend();
   const size = props.size ?? 30;
   const bipolar = !!props.bipolar;
   const dial = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: number; x: number; y: number; raw: number } | null>(null);
+  const [showReadout, setShowReadout] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bumpReadout = () => {
+    if (!props.describe) return;
+    setShowReadout(true);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setShowReadout(false), READOUT_LINGER_MS);
+  };
+  useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
   // Latest props for the native wheel listener, which is attached once.
-  const live = useRef({ value: props.value, action: props.action, bipolar, send });
-  live.current = { value: props.value, action: props.action, bipolar, send };
+  const live = useRef({ value: props.value, action: props.action, bipolar, send, bumpReadout });
+  live.current = { value: props.value, action: props.action, bipolar, send, bumpReadout };
   const deg = (props.value - 0.5) * 270;
   const fine = (e: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean }) => e.shiftKey || e.ctrlKey || e.altKey;
 
@@ -30,6 +45,7 @@ export function Knob(props: { label: string; value: number; action: string; kill
       const k = live.current;
       const next = stepValue(k.value, wheelDelta(e, fine(e)), k.bipolar);
       if (next !== k.value) k.send(k.action, next);
+      k.bumpReadout();
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -41,6 +57,7 @@ export function Knob(props: { label: string; value: number; action: string; kill
     e.currentTarget.focus();
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, raw: valueToRaw(props.value, bipolar) };
+    bumpReadout();
   };
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
@@ -51,6 +68,7 @@ export function Knob(props: { label: string; value: number; action: string; kill
     d.y = e.clientY;
     const next = rawToValue(d.raw, bipolar);
     if (next !== props.value) send(props.action, next);
+    bumpReadout();
   };
   const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     if (drag.current?.id === e.pointerId) drag.current = null;
@@ -66,6 +84,7 @@ export function Knob(props: { label: string; value: number; action: string; kill
     if (next === undefined) return;
     e.preventDefault();
     if (next !== props.value) send(props.action, next);
+    bumpReadout();
   };
 
   return (
@@ -85,18 +104,19 @@ export function Knob(props: { label: string; value: number; action: string; kill
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onKeyDown={onKeyDown}
-        onDoubleClick={() => bipolar && send(props.action, 0.5)}
+        onDoubleClick={() => { if (bipolar) send(props.action, 0.5); bumpReadout(); }}
         title={`${props.label} ${Math.round(props.value * 100)}% · drag or scroll · Shift for fine${bipolar ? " · double-click centres" : ""}`}
       >
         <svg viewBox="0 0 40 40">
           <circle cx="20" cy="20" r="17" className="knob-track" />
           <path d={arcPath(bipolar ? 0.5 : 0, props.value)} className="knob-arc" />
         </svg>
+        {props.describe && showReadout && <div className="knob-readout" role="status">{props.describe(props.value)}</div>}
       </div>
       <span className="knob-label">
         {props.label}
         {props.killAction && (
-          <button className={`kill ${props.kill ? "lit" : ""}`} onClick={() => send(props.killAction!)} title="Kill">
+          <button className={`kill ${props.kill ? "lit" : ""}`} onClick={() => { send(props.killAction!); bumpReadout(); }} title="Kill">
             K
           </button>
         )}
@@ -153,11 +173,11 @@ export function Mixer({ dense }: { dense?: boolean }) {
       <div key={i} className={`strip channel-${deckLetter(i).toLowerCase()}`}>
         <div className="strip-name">{deckLetter(i)}{autoEqActive && <span className="auto-eq-badge" title="Auto EQ is temporarily cutting this deck's EQ for the transition — move a knob to take a band back">AUTO EQ</span>}</div>
         <div className="strip-knobs">
-          <Knob size={k} label="TRIM" value={c.gain} action={`${m}.gain`} bipolar />
-          <Knob size={k} label="HI" value={c.eqHigh} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar />
-          <Knob size={k} label="MID" value={c.eqMid} action={`${m}.eq.mid`} train={`eq-mid-${deckLetter(i)}`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar />
-          <Knob size={k} label="LOW" value={c.eqLow} action={`${m}.eq.low`} train={`eq-low-${deckLetter(i)}`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar />
-          <Knob size={k} label="FILTER" value={c.filter} action={`${m}.filter`} train={`filter-${deckLetter(i)}`} bipolar />
+          <Knob size={k} label="TRIM" value={c.gain} action={`${m}.gain`} bipolar describe={describeGainKnob} />
+          <Knob size={k} label="HI" value={c.eqHigh} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar describe={(v) => describeEqKnob(v, c.killHigh)} />
+          <Knob size={k} label="MID" value={c.eqMid} action={`${m}.eq.mid`} train={`eq-mid-${deckLetter(i)}`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar describe={(v) => describeEqKnob(v, c.killMid)} />
+          <Knob size={k} label="LOW" value={c.eqLow} action={`${m}.eq.low`} train={`eq-low-${deckLetter(i)}`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar describe={(v) => describeEqKnob(v, c.killLow)} />
+          <Knob size={k} label="FILTER" value={c.filter} action={`${m}.filter`} train={`filter-${deckLetter(i)}`} bipolar describe={describeFilterKnob} />
         </div>
         <div className="strip-fader">
         <button
@@ -192,9 +212,9 @@ export function Mixer({ dense }: { dense?: boolean }) {
         <div className="strip master">
           <div className="strip-name">MASTER</div>
           <div className="strip-knobs">
-            <Knob size={k} label="LEVEL" value={mx.masterLevel} action="mixer.master.level" bipolar={false} />
-            <Knob size={k} label="HP MIX" value={mx.headMix} action="mixer.headphone.mix" bipolar={false} />
-            <Knob size={k} label="HP LVL" value={mx.headLevel} action="mixer.headphone.level" bipolar={false} />
+            <Knob size={k} label="LEVEL" value={mx.masterLevel} action="mixer.master.level" bipolar={false} describe={describeFaderKnob} />
+            <Knob size={k} label="HP MIX" value={mx.headMix} action="mixer.headphone.mix" bipolar={false} describe={describeHeadMixKnob} />
+            <Knob size={k} label="HP LVL" value={mx.headLevel} action="mixer.headphone.level" bipolar={false} describe={describeFaderKnob} />
           </div>
           <div className="strip-fader">
             <div className="fader-row">

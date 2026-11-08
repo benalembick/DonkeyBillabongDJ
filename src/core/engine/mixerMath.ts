@@ -103,3 +103,44 @@ export function eqVisualGain(knob: number, kill: boolean): number {
   const g = dbToGain(db);
   return g <= 1 ? g : 1 + (Math.min(g, 2) - 1) * 0.5;
 }
+
+// ── Live, human-readable readouts for the mixer's knobs (learning/"what is this doing" display) ──
+
+const fmtDb = (db: number): string => `${db >= 0 ? "+" : "−"}${Math.abs(db).toFixed(1)} dB`;
+const fmtHz = (hz: number): string => (hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 ? 1 : 0)} kHz` : `${Math.round(hz)} Hz`);
+
+/** TRIM knob. */
+export function describeGainKnob(v: number): string {
+  const db = gainKnobToDb(v);
+  return Math.abs(db) < 0.05 ? "0 dB (unity)" : fmtDb(db);
+}
+
+/** HI/MID/LOW EQ knob + its kill switch. */
+export function describeEqKnob(v: number, killed: boolean): string {
+  if (killed) return "KILLED (full cut)";
+  const db = eqKnobToDb(v);
+  if (db <= EQ_KILL_DB) return "Full cut";
+  if (Math.abs(db) < 0.05) return "0 dB (flat)";
+  return fmtDb(db);
+}
+
+/** Colour FILTER knob. */
+export function describeFilterKnob(v: number): string {
+  const { lowpassHz, highpassHz } = filterKnobToParams(v);
+  if (lowpassHz < FILTER_OPEN.lowpassHz) return `Low-pass, cutoff ${fmtHz(lowpassHz)}`;
+  if (highpassHz > FILTER_OPEN.highpassHz) return `High-pass, cutoff ${fmtHz(highpassHz)}`;
+  return "Open (no filter)";
+}
+
+/** A plain 0..1 fader-curve knob (master/headphone level): shows both the position and the resulting gain. */
+export function describeFaderKnob(v: number): string {
+  const db = 20 * Math.log10(Math.max(1e-5, faderToGain(v)));
+  return v < 0.01 ? `${Math.round(v * 100)}% (silent)` : `${Math.round(v * 100)}% (${fmtDb(db)})`;
+}
+
+/** Headphone cue/master mix knob (0 = cue only, 1 = master only). */
+export function describeHeadMixKnob(v: number): string {
+  if (v < 0.01) return "Cue only";
+  if (v > 0.99) return "Master only";
+  return `${Math.round((1 - v) * 100)}% cue / ${Math.round(v * 100)}% master`;
+}

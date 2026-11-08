@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_JOG_SETTINGS, jogIntent } from "../src/core/engine/jog";
-import { crossfaderGains, eqKnobToDb, filterKnobToParams, gainKnobToDb, headMixGains } from "../src/core/engine/mixerMath";
+import { crossfaderGains, describeEqKnob, describeFaderKnob, describeFilterKnob, describeGainKnob, describeHeadMixKnob, eqKnobToDb, filterKnobToParams, gainKnobToDb, headMixGains } from "../src/core/engine/mixerMath";
 
 describe("mixer maths", () => {
   it("EQ centre is flat, extremes are kill / +6 dB, monotonic", () => {
@@ -43,6 +43,39 @@ describe("mixer maths", () => {
     const [c, m] = headMixGains(0.3);
     expect(c * c + m * m).toBeCloseTo(1);
     expect(headMixGains(0)[0]).toBe(1);
+  });
+});
+
+describe("knob readouts (the mixer's live 'what is this doing' labels)", () => {
+  it("TRIM: unity at centre, signed dB either side", () => {
+    expect(describeGainKnob(0.5)).toBe("0 dB (unity)");
+    expect(describeGainKnob(1)).toBe("+12.0 dB");
+    expect(describeGainKnob(0)).toBe("−12.0 dB");
+  });
+
+  it("EQ: flat at centre, signed dB, full cut and kill read distinctly", () => {
+    expect(describeEqKnob(0.5, false)).toBe("0 dB (flat)");
+    expect(describeEqKnob(1, false)).toBe("+6.0 dB");
+    expect(describeEqKnob(0, false)).toBe("Full cut");
+    expect(describeEqKnob(0.8, true)).toBe("KILLED (full cut)"); // the kill switch overrides the knob's own position
+  });
+
+  it("FILTER: open at centre, low-pass left, high-pass right", () => {
+    expect(describeFilterKnob(0.5)).toBe("Open (no filter)");
+    expect(describeFilterKnob(0)).toMatch(/^Low-pass, cutoff/);
+    expect(describeFilterKnob(1)).toMatch(/^High-pass, cutoff/);
+  });
+
+  it("fader knob at full is unity gain, and near zero reads as silent rather than a huge negative dB", () => {
+    expect(describeFaderKnob(1)).toBe("100% (+0.0 dB)");
+    expect(describeFaderKnob(0)).toBe("0% (silent)");
+    expect(describeFaderKnob(0.71)).toMatch(/^71% \(−\d+\.\d dB\)$/);
+  });
+
+  it("headphone mix names the extremes and splits the blend in between", () => {
+    expect(describeHeadMixKnob(0)).toBe("Cue only");
+    expect(describeHeadMixKnob(1)).toBe("Master only");
+    expect(describeHeadMixKnob(0.25)).toBe("75% cue / 25% master");
   });
 });
 
