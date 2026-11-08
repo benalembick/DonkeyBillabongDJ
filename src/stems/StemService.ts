@@ -377,6 +377,16 @@ export class StemService extends Emitter<Events> {
     switch (m.type) {
       case "cache":
         if (m.state === "miss") {
+          // The library badge said this track's STEMS were cached, but the worker just found
+          // nothing on disk (e.g. evicted for cache space) — correct it now rather than leaving
+          // a stale "ready" badge that promises a quick load the next person won't get.
+          if (job.track.ref in this.idx) {
+            const next = { ...this.idx };
+            delete next[job.track.ref];
+            this.idx = next;
+            this.emit("index", this.idx);
+            void this.bridge?.setIndex(job.track.ref, null);
+          }
           if (this.shouldAutoRun(job)) void this.startRun(job);
           else {
             job.awaitingUser = true;

@@ -167,13 +167,19 @@ export class StemCache {
     const all = (await this.list()).sort((a, b) => a.lastUsed - b.lastUsed);
     let total = all.reduce((s, m) => s + m.bytes, 0);
     let freed = 0;
+    const evicted: string[] = [];
     for (const m of all) {
       if (total <= maxBytes) break;
       if (keep.has(m.key)) continue;
       await this.remove(m.key);
       total -= m.bytes;
       freed += m.bytes;
+      evicted.push(m.key);
     }
+    // Without this, a track whose cache got evicted for space keeps showing "STEMS ready" in
+    // the library (index.json still points at it) until it's loaded and found to be a full
+    // cache miss, so it re-analyses from scratch instead of the quick read the badge promised.
+    if (evicted.length) await this.pruneIndex(evicted);
     return freed;
   }
 
@@ -184,6 +190,19 @@ export class StemCache {
     } catch {
       return {};
     }
+  }
+
+  private async pruneIndex(evictedKeys: string[]): Promise<void> {
+    const drop = new Set(evictedKeys);
+    const idx = await this.readIndex();
+    let changed = false;
+    for (const [ref, key] of Object.entries(idx)) {
+      if (drop.has(key)) {
+        delete idx[ref];
+        changed = true;
+      }
+    }
+    if (changed) await fs.writeFile(path.join(this.dir, "index.json"), JSON.stringify(idx));
   }
 
   async setIndex(ref: string, key: string | null): Promise<void> {
