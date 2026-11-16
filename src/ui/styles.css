@@ -159,6 +159,12 @@ select { padding: 2px 4px; }
 .playlist-track-info p { margin: 4px 0; }
 .playlist-track-info .track-format { color: var(--muted); font-size: 11px; }
 .playlist-track-info .track-path { color: var(--muted); font-size: 11px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-info-edit { align-items: flex-start; }
+.track-edit-fields { display: grid; grid-template-columns: repeat(2, minmax(140px, 220px)); gap: 6px 14px; flex: 1; }
+.track-edit-fields label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
+.track-edit-fields input { font-size: 13px; }
+.track-edit-fields .hint, .track-edit-fields .warn { grid-column: 1 / -1; margin: 2px 0 0; }
+.track-edit-actions { display: flex; flex-direction: column; gap: 6px; align-self: center; }
 .playlist-view .table-wrap, .auto-queue .table-wrap { min-height: 100px; }
 .maships-view .table-wrap { min-height: 100px; }
 .practice { padding: 12px; overflow: auto; height: 100%; }

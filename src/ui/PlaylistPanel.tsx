@@ -154,14 +154,61 @@ export function AutoDJControls({ onQueue }: { onQueue?: () => void }) {
   </div>;
 }
 
+type TrackEditForm = { title: string; artist: string; album: string; genre: string; year: string };
+function formFor(track: TrackInfo): TrackEditForm {
+  return { title: track.title, artist: track.artist, album: track.album, genre: track.genre ?? "", year: track.year ? String(track.year) : "" };
+}
+
 export function TrackDetails({ track, onClose }: { track: TrackInfo; onClose: () => void }) {
+  const app = useApp();
   const format = fileExtension(track.ref, track.source);
+  const canEdit = track.source === "local" && app.platform.kind === "desktop";
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<TrackEditForm>(() => formFor(track));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setEditing(false); setError(null); setForm(formFor(track)); }, [track.ref]);
+
+  const save = async () => {
+    const title = form.title.trim();
+    if (!title) { setError("Title can't be empty."); return; }
+    const year = form.year.trim();
+    if (year && !/^\d{3,4}$/.test(year)) { setError("Year must be a 3- or 4-digit number."); return; }
+    setSaving(true);
+    setError(null);
+    const r = await app.updateTrackMetadata(track.ref, { title, artist: form.artist.trim(), album: form.album.trim(), genre: form.genre.trim(), year: year ? Number(year) : null });
+    setSaving(false);
+    if (r.ok) setEditing(false);
+    else setError(r.error ?? "Couldn't save changes.");
+  };
+
+  if (editing) {
+    return <div className="playlist-track-info track-info-edit">
+      <ArtTile track={track} size={64} />
+      <div className="track-edit-fields">
+        <label>Title <input autoFocus value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} /></label>
+        <label>Artist <input value={form.artist} onChange={(e) => setForm((f) => ({ ...f, artist: e.target.value }))} /></label>
+        <label>Album <input value={form.album} onChange={(e) => setForm((f) => ({ ...f, album: e.target.value }))} /></label>
+        <label>Genre <input value={form.genre} onChange={(e) => setForm((f) => ({ ...f, genre: e.target.value }))} /></label>
+        <label>Year <input inputMode="numeric" value={form.year} onChange={(e) => setForm((f) => ({ ...f, year: e.target.value }))} /></label>
+        {error && <p className="warn">{error}</p>}
+        <p className="hint">Saved to the file itself — visible in other players and tag editors too.</p>
+      </div>
+      <div className="track-edit-actions">
+        <button className="primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
+        <button type="button" disabled={saving} onClick={() => { setEditing(false); setError(null); setForm(formFor(track)); }}>Cancel</button>
+      </div>
+    </div>;
+  }
+
   return <div className="playlist-track-info"><ArtTile track={track} size={64} /><div><b>{track.title}</b><p>{track.artist} · {track.album}</p><span>{track.genre} · {track.bpm ?? "?"} BPM · {track.key ?? "Unknown key"} · {duration(track.durationMs)}</span>
     {format && <p className="track-format">
       {format.toUpperCase()} file{EMBEDDED_CUE_FORMATS.has(format) ? " · supports embedded hot cues" : " · embedded hot cues not supported for this format (MP3, WAV only)"}
     </p>}
     {track.source === "local" && <p className="track-path" title={track.ref}>{track.ref}</p>}
-    {track.unavailableReason && <p>{track.unavailableReason}</p>}</div><button onClick={onClose}>Close</button></div>;
+    {track.unavailableReason && <p>{track.unavailableReason}</p>}</div>
+    {canEdit && <button onClick={() => setEditing(true)}>Edit</button>}
+    <button onClick={onClose}>Close</button></div>;
 }
 
 export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: string; onOpen: (id: string) => void; onQueue: () => void; onOpenSpotifyLocal?: (jobId: string) => void }) {

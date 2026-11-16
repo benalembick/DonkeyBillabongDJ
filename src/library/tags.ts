@@ -20,6 +20,18 @@ export interface TagResult {
   lyrics?: string;
 }
 
+/**
+ * Fields to write back into a local audio file's own tags. A field left out
+ * (undefined) is untouched; an empty string / null clears it.
+ */
+export interface TagPatch {
+  title?: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  year?: number | null;
+}
+
 /** Merge tags into a library track. Tags win over filename-derived values when present. */
 export function applyTags(t: TrackInfo, tags: TagResult): TrackInfo {
   if (!tags.ok) return { ...t, tagsRead: true };

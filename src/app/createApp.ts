@@ -20,7 +20,7 @@ import { createPlatform, type AudioFileRef, type Platform } from "../platform";
 import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
 import { StreamingStore } from "../providers/StreamingStore";
 import type { TrackInfo } from "../core/engine/types";
-import { applyTags } from "../library/tags";
+import { applyTags, type TagPatch } from "../library/tags";
 import { MatchingService } from "./matching";
 import { AudiusClient } from "../providers/audius/AudiusClient";
 import { AudiusSource } from "../providers/audius/AudiusSource";
@@ -89,6 +89,8 @@ export interface App {
   teachLoop: TeachLoopService;
   /** Set a local track's star rating (persisted). */
   setRating(ref: string, rating: number): Promise<void>;
+  /** Renames/retags a local track, writing the change into the file itself (desktop only). */
+  updateTrackMetadata(ref: string, patch: TagPatch): Promise<{ ok: boolean; error?: string }>;
   /** Add files to the library and optionally load the first one into a deck. */
   addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number>;
   saveAudioConfig(c: AudioConfig): void;
@@ -428,6 +430,25 @@ export function createApp(): App {
     setRating: async (ref, rating) => {
       const t = library.setRating(ref, rating);
       if (t) await platform.library?.save([t]).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+    },
+    updateTrackMetadata: async (ref, patch) => {
+      if (!platform.writeTags) return { ok: false, error: "Editing tags is only available in the desktop app." };
+      const result = await platform.writeTags(ref, patch);
+      if (!result.ok) return result;
+      const t = library.getByRef(ref);
+      if (t) {
+        const updated: TrackInfo = {
+          ...t,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.artist !== undefined ? { artist: patch.artist } : {}),
+          ...(patch.album !== undefined ? { album: patch.album } : {}),
+          ...(patch.genre !== undefined ? { genre: patch.genre || undefined } : {}),
+          ...(patch.year !== undefined ? { year: patch.year ?? undefined } : {}),
+        };
+        library.patchTracks([updated]);
+        await platform.library?.save([updated]).catch((err) => log.warn("library", `Library database: ${String(err)}`));
+      }
+      return result;
     },
     addFiles,
     saveAudioConfig: (c) => save(AUDIO_KEY, c),

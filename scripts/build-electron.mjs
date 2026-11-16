@@ -8,8 +8,9 @@ const common = {
   format: "cjs",
   sourcemap: true,
   // Loaded from node_modules at runtime: the native addon (unpacked from the asar in packaged
-  // builds) and electron-updater, which lazy-loads its per-platform updaters.
-  external: ["electron", "electron-updater", "onnxruntime-node", "loopback-capture"],
+  // builds), electron-updater (lazy-loads its per-platform updaters), and ffmpeg-static (its
+  // binary path is `__dirname`-relative — bundling it collapses that to dist-electron/).
+  external: ["electron", "electron-updater", "onnxruntime-node", "loopback-capture", "ffmpeg-static"],
   logLevel: "info",
 };
 

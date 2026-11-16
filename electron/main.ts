@@ -23,6 +23,7 @@ registerArtScheme();
 import * as libraryDb from "./library/db";
 import { readTags } from "./library/tags";
 import { readEmbeddedCues, writeEmbeddedCues } from "./library/cueTags";
+import { writeTags } from "./library/tagWrite";
 import { autoDJFixtures, runAutoDJSmoke } from "./autodjSmoke";
 import { runLightingSmoke } from "./lightingSmoke";
 import { runKnobSmoke } from "./knobSmoke";
@@ -174,6 +175,17 @@ function registerIpc(): void {
   ipcMain.handle("dbdj:mappings:put", (_e, row: libraryDb.MappingRow) => libraryDb.putMapping(row));
   ipcMain.handle("dbdj:mappings:remove", (_e, key: string) => libraryDb.removeMapping(String(key)));
   ipcMain.handle("dbdj:tags:read", (_e, paths: string[]) => readTags((Array.isArray(paths) ? paths : []).map(String).filter(isAudioFile)));
+  ipcMain.handle("dbdj:tags:write", (_e, filePath: string, patch: Record<string, unknown>) => {
+    const p = String(filePath);
+    if (!isAudioFile(p)) return { ok: false, error: `Not a supported audio file: ${p}` };
+    const raw = patch && typeof patch === "object" ? patch : {};
+    const clean: { title?: string; artist?: string; album?: string; genre?: string; year?: number | null } = {};
+    for (const key of ["title", "artist", "album", "genre"] as const) {
+      if (typeof raw[key] === "string") clean[key] = raw[key] as string;
+    }
+    if ("year" in raw) clean.year = raw.year === null ? null : Number(raw.year);
+    return writeTags(p, clean);
+  });
   ipcMain.handle("dbdj:cues:read", (_e, filePath: string) => readEmbeddedCues(String(filePath)));
   ipcMain.handle("dbdj:cues:write", (_e, filePath: string, cues: unknown) => writeEmbeddedCues(String(filePath), Array.isArray(cues) ? cues : []));
 
