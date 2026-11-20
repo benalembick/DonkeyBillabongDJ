@@ -62,11 +62,13 @@ export interface DesktopBridge {
   transcodeAudio?(data: ArrayBuffer): Promise<ArrayBuffer | null>;
   saveMashupFile(name: string, data: ArrayBuffer): Promise<AudioFileRef | null>;
   openMappingFile(): Promise<string | null>;
+  /** Image file picker for new track cover art: the file's own path (to embed) plus its bytes (for an immediate preview). */
+  pickArtworkFile(): Promise<{ path: string; data: ArrayBuffer } | null>;
   readTextFile(path: string): Promise<string>;
   openExternal(url: string): Promise<void>;
   readTags(paths: string[]): Promise<TagResult[]>;
-  /** Writes title/artist/album/genre/year back into the file itself. */
-  writeTags(filePath: string, patch: TagPatch): Promise<{ ok: boolean; error?: string }>;
+  /** Writes title/artist/album/genre/year/artwork back into the file itself. */
+  writeTags(filePath: string, patch: TagPatch): Promise<{ ok: boolean; error?: string; artworkUrl?: string | null }>;
   /** A track's own embedded hot cues (ID3v2 TXXX frame; MP3/WAV; desktop only). */
   cues: {
     read(filePath: string): Promise<EmbeddedCueResult>;
@@ -246,8 +248,10 @@ export interface Platform {
   streaming: StreamingBridge | null;
   /** Read embedded tags (ISRC, duration, BPM, key…) for local refs. */
   readTags(refs: string[]): Promise<TagResult[]>;
-  /** Writes title/artist/album/genre/year back into the file itself (desktop only: the browser can't write back to a picked file). */
-  writeTags: ((ref: string, patch: TagPatch) => Promise<{ ok: boolean; error?: string }>) | null;
+  /** Writes title/artist/album/genre/year/artwork back into the file itself (desktop only: the browser can't write back to a picked file). */
+  writeTags: ((ref: string, patch: TagPatch) => Promise<{ ok: boolean; error?: string; artworkUrl?: string | null }>) | null;
+  /** Lets the user pick an image file for new cover art (desktop only); returns its path and bytes. */
+  pickArtworkFile: (() => Promise<{ path: string; data: ArrayBuffer } | null>) | null;
   /** A track's own embedded hot cues (desktop only: the browser can't write back to a picked file). */
   embeddedCues: {
     read(ref: string): Promise<EmbeddedCueResult>;
@@ -411,8 +415,11 @@ class DesktopPlatform implements Platform {
   readTags(refs: string[]): Promise<TagResult[]> {
     return this.bridge.readTags(refs);
   }
-  writeTags(ref: string, patch: TagPatch): Promise<{ ok: boolean; error?: string }> {
+  writeTags(ref: string, patch: TagPatch): Promise<{ ok: boolean; error?: string; artworkUrl?: string | null }> {
     return this.bridge.writeTags(ref, patch);
+  }
+  pickArtworkFile(): Promise<{ path: string; data: ArrayBuffer } | null> {
+    return this.bridge.pickArtworkFile();
   }
   private readonly cueQueue = new CueIoQueue();
   get embeddedCues() {
@@ -492,6 +499,7 @@ class BrowserPlatform implements Platform {
   /** The browser can't write back to a file picked via <input type=file>. */
   readonly embeddedCues = null;
   readonly writeTags = null;
+  readonly pickArtworkFile = null;
 
   async readTags(refs: string[]): Promise<TagResult[]> {
     const { parseBlob, selectCover } = await import("music-metadata");

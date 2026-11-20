@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("dbdjDesktop", {
   requestMicrophone: (): Promise<{ granted: boolean; status: string }> => ipcRenderer.invoke("dbdj:media:microphone"),
   saveMashupFile: (name: string, data: ArrayBuffer): Promise<{ ref: string; name: string } | null> => ipcRenderer.invoke("dbdj:mashup:saveFile", name, data),
   openMappingFile: (): Promise<string | null> => ipcRenderer.invoke("dbdj:openMappingFile"),
+  pickArtworkFile: (): Promise<{ path: string; data: ArrayBuffer } | null> => ipcRenderer.invoke("dbdj:pickArtworkFile"),
   readTextFile: (p: string): Promise<string> => ipcRenderer.invoke("dbdj:readTextFile", p),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("dbdj:openExternal", url),
   readTags: (paths: string[]) => ipcRenderer.invoke("dbdj:tags:read", paths),

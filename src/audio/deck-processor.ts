@@ -50,6 +50,13 @@ const SEEK_FADE_SAMPLES = 96;
 const SCRATCH_LAG_BLOCKS = 2.5; // how quickly the playhead chases the hand
 const SCRATCH_SMOOTH = 0.35;
 const SCRATCH_MAX_VEL = 12;
+// Letting go after a hand-spin (backspin or otherwise) eases the playhead back to normal speed
+// over this fixed duration instead of snapping to it in one ~3 ms block — the same "motor
+// catching back up to speed" a real turntable's brake/start setting gives, and what turns a
+// backspin's reverse rumble into the familiar rising "brrrOWww" on release instead of an
+// abrupt, clicky cut. Fixed (not proportional to how far off-speed the hand left it), matching
+// how a turntable's own start/brake time works.
+const SCRATCH_RELEASE_S = 0.3;
 const REPORT_EVERY_BLOCKS = 3;
 const STEM_GAIN_S = 0.006; // per-stem gain smoothing
 const STEM_BLEND_S = 0.012; // original ⇄ stem-mix crossfade (entering/leaving analysed regions)
@@ -74,6 +81,9 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
   private scratching = false;
   private scratchTarget = 0;
   private scratchVel = 0;
+  private scratchRecovering = false; // easing back to normal speed after a hand-spin release
+  private scratchRecoverFrom = 0; // velocity captured the instant the hand let go
+  private scratchRecoverElapsed = 0; // seconds since release
   private vel = 0; // current velocity, source frames per output frame
   private gain = 0; // play/pause envelope
   private seekFade = 1;
@@ -137,6 +147,7 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
         this.pos = 0;
         this.playing = false;
         this.scratching = false;
+        this.scratchRecovering = false;
         this.vel = 0;
         this.gain = 0;
         this.bend = 0;
@@ -177,6 +188,13 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
         this.bend = Math.max(-BEND_MAX, Math.min(BEND_MAX, this.bend + m.offset));
         break;
       case "scratch":
+        // Releasing the platter while it was spinning the track: ease back to speed over
+        // SCRATCH_RELEASE_S rather than resuming it instantly.
+        if (this.scratching && !m.active) {
+          this.scratchRecovering = true;
+          this.scratchRecoverFrom = this.vel;
+          this.scratchRecoverElapsed = 0;
+        }
         this.scratching = m.active;
         this.scratchTarget = this.pos;
         this.scratchVel = m.active ? 0 : this.vel;
@@ -413,9 +431,11 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
     this.bend *= Math.exp(-N / scope.sampleRate / BEND_TAU_S);
     if (Math.abs(this.bend) < 1e-5) this.bend = 0;
 
+    const v0 = this.vel;
     let target: number;
     let gainTarget: number;
     if (this.scratching) {
+      this.scratchRecovering = false; // hand back on the platter: it owns the velocity again
       const desired = (this.scratchTarget - this.pos) / (N * SCRATCH_LAG_BLOCKS);
       this.scratchVel += (desired - this.scratchVel) * SCRATCH_SMOOTH;
       if (this.scratchVel > SCRATCH_MAX_VEL) this.scratchVel = SCRATCH_MAX_VEL;
@@ -423,15 +443,27 @@ class DeckProcessor extends scope.AudioWorkletProcessor {
       target = this.scratchVel;
       gainTarget = 1;
     } else if (this.playing) {
-      target = (this.rate + this.bend) * this.ratio;
+      const normalTarget = (this.rate + this.bend) * this.ratio;
+      if (this.scratchRecovering) {
+        this.scratchRecoverElapsed += N / scope.sampleRate;
+        const t = this.scratchRecoverElapsed / SCRATCH_RELEASE_S;
+        if (t >= 1) {
+          target = normalTarget;
+          this.scratchRecovering = false;
+        } else {
+          target = this.scratchRecoverFrom + (normalTarget - this.scratchRecoverFrom) * t;
+        }
+      } else {
+        target = normalTarget;
+      }
       gainTarget = 1;
     } else {
+      this.scratchRecovering = false;
       // Keep moving at the last speed while fading out, then stop.
       target = this.gain > 0 ? this.vel : 0;
       gainTarget = 0;
     }
 
-    const v0 = this.vel;
     const dv = (target - v0) / N;
     const gStep = 1 / (FADE_S * scope.sampleRate);
     let pos = this.pos;

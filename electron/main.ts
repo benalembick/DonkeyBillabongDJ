@@ -24,6 +24,7 @@ import * as libraryDb from "./library/db";
 import { readTags } from "./library/tags";
 import { readEmbeddedCues, writeEmbeddedCues } from "./library/cueTags";
 import { writeTags } from "./library/tagWrite";
+import type { TagPatch } from "../src/library/tags";
 import { autoDJFixtures, runAutoDJSmoke } from "./autodjSmoke";
 import { runLightingSmoke } from "./lightingSmoke";
 import { runKnobSmoke } from "./knobSmoke";
@@ -179,12 +180,26 @@ function registerIpc(): void {
     const p = String(filePath);
     if (!isAudioFile(p)) return { ok: false, error: `Not a supported audio file: ${p}` };
     const raw = patch && typeof patch === "object" ? patch : {};
-    const clean: { title?: string; artist?: string; album?: string; genre?: string; year?: number | null } = {};
+    const clean: TagPatch = {};
     for (const key of ["title", "artist", "album", "genre"] as const) {
       if (typeof raw[key] === "string") clean[key] = raw[key] as string;
     }
     if ("year" in raw) clean.year = raw.year === null ? null : Number(raw.year);
+    if ("artwork" in raw) {
+      const art = raw.artwork;
+      clean.artwork = art === null ? null : art && typeof art === "object" && typeof (art as { path?: unknown }).path === "string" ? { path: (art as { path: string }).path } : null;
+    }
     return writeTags(p, clean);
+  });
+  ipcMain.handle("dbdj:pickArtworkFile", async (e) => {
+    const r = await open(e, {
+      properties: ["openFile"],
+      filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "gif", "bmp", "webp"] }],
+    });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const p = r.filePaths[0];
+    const buf = await fs.readFile(p);
+    return { path: p, data: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
   });
   ipcMain.handle("dbdj:cues:read", (_e, filePath: string) => readEmbeddedCues(String(filePath)));
   ipcMain.handle("dbdj:cues:write", (_e, filePath: string, cues: unknown) => writeEmbeddedCues(String(filePath), Array.isArray(cues) ? cues : []));

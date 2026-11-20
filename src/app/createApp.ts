@@ -89,8 +89,8 @@ export interface App {
   teachLoop: TeachLoopService;
   /** Set a local track's star rating (persisted). */
   setRating(ref: string, rating: number): Promise<void>;
-  /** Renames/retags a local track, writing the change into the file itself (desktop only). */
-  updateTrackMetadata(ref: string, patch: TagPatch): Promise<{ ok: boolean; error?: string }>;
+  /** Renames/retags/re-covers a local track, writing the change into the file itself (desktop only). */
+  updateTrackMetadata(ref: string, patch: TagPatch): Promise<{ ok: boolean; error?: string; artworkUrl?: string | null }>;
   /** Add files to the library and optionally load the first one into a deck. */
   addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number>;
   saveAudioConfig(c: AudioConfig): void;
@@ -444,6 +444,7 @@ export function createApp(): App {
           ...(patch.album !== undefined ? { album: patch.album } : {}),
           ...(patch.genre !== undefined ? { genre: patch.genre || undefined } : {}),
           ...(patch.year !== undefined ? { year: patch.year ?? undefined } : {}),
+          ...(result.artworkUrl !== undefined ? { artworkUrl: result.artworkUrl ?? undefined } : {}),
         };
         library.patchTracks([updated]);
         await platform.library?.save([updated]).catch((err) => log.warn("library", `Library database: ${String(err)}`));

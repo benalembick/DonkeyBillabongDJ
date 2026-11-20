@@ -30,6 +30,8 @@ export interface TagPatch {
   album?: string;
   genre?: string;
   year?: number | null;
+  /** New cover art from an image file path (desktop main process reads it), or `null` to remove embedded artwork. Left out: untouched. */
+  artwork?: { path: string } | null;
 }
 
 /** Merge tags into a library track. Tags win over filename-derived values when present. */

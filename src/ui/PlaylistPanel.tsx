@@ -159,15 +159,28 @@ function formFor(track: TrackInfo): TrackEditForm {
   return { title: track.title, artist: track.artist, album: track.album, genre: track.genre ?? "", year: track.year ? String(track.year) : "" };
 }
 
+type ArtworkEdit = { kind: "new"; path: string; previewUrl: string } | { kind: "clear" };
+
 export function TrackDetails({ track, onClose }: { track: TrackInfo; onClose: () => void }) {
   const app = useApp();
   const format = fileExtension(track.ref, track.source);
   const canEdit = track.source === "local" && app.platform.kind === "desktop";
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<TrackEditForm>(() => formFor(track));
+  const [artwork, setArtwork] = useState<ArtworkEdit | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setEditing(false); setError(null); setForm(formFor(track)); }, [track.ref]);
+  const resetArtwork = () => { setArtwork((a) => { if (a?.kind === "new") URL.revokeObjectURL(a.previewUrl); return undefined; }); };
+  useEffect(() => { setEditing(false); setError(null); setForm(formFor(track)); resetArtwork(); }, [track.ref]);
+  useEffect(() => () => resetArtwork(), []);
+
+  const pickArtwork = async () => {
+    if (!app.platform.pickArtworkFile) return;
+    const picked = await app.platform.pickArtworkFile();
+    if (!picked) return;
+    if (artwork?.kind === "new") URL.revokeObjectURL(artwork.previewUrl);
+    setArtwork({ kind: "new", path: picked.path, previewUrl: URL.createObjectURL(new Blob([picked.data])) });
+  };
 
   const save = async () => {
     const title = form.title.trim();
@@ -176,15 +189,25 @@ export function TrackDetails({ track, onClose }: { track: TrackInfo; onClose: ()
     if (year && !/^\d{3,4}$/.test(year)) { setError("Year must be a 3- or 4-digit number."); return; }
     setSaving(true);
     setError(null);
-    const r = await app.updateTrackMetadata(track.ref, { title, artist: form.artist.trim(), album: form.album.trim(), genre: form.genre.trim(), year: year ? Number(year) : null });
+    const r = await app.updateTrackMetadata(track.ref, {
+      title, artist: form.artist.trim(), album: form.album.trim(), genre: form.genre.trim(), year: year ? Number(year) : null,
+      ...(artwork?.kind === "new" ? { artwork: { path: artwork.path } } : artwork?.kind === "clear" ? { artwork: null } : {}),
+    });
     setSaving(false);
-    if (r.ok) setEditing(false);
+    if (r.ok) { resetArtwork(); setEditing(false); }
     else setError(r.error ?? "Couldn't save changes.");
   };
 
   if (editing) {
+    const artTrack = artwork?.kind === "new" ? { ...track, artworkUrl: artwork.previewUrl } : artwork?.kind === "clear" ? { ...track, artworkUrl: undefined } : track;
     return <div className="playlist-track-info track-info-edit">
-      <ArtTile track={track} size={64} />
+      <div className="track-edit-art">
+        <ArtTile track={artTrack} size={64} />
+        <div className="track-edit-art-actions">
+          <button type="button" onClick={() => void pickArtwork()}>Change artwork…</button>
+          {artTrack.artworkUrl && <button type="button" onClick={() => setArtwork({ kind: "clear" })}>Remove</button>}
+        </div>
+      </div>
       <div className="track-edit-fields">
         <label>Title <input autoFocus value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} /></label>
         <label>Artist <input value={form.artist} onChange={(e) => setForm((f) => ({ ...f, artist: e.target.value }))} /></label>
@@ -196,7 +219,7 @@ export function TrackDetails({ track, onClose }: { track: TrackInfo; onClose: ()
       </div>
       <div className="track-edit-actions">
         <button className="primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
-        <button type="button" disabled={saving} onClick={() => { setEditing(false); setError(null); setForm(formFor(track)); }}>Cancel</button>
+        <button type="button" disabled={saving} onClick={() => { setEditing(false); setError(null); setForm(formFor(track)); resetArtwork(); }}>Cancel</button>
       </div>
     </div>;
   }
@@ -320,8 +343,6 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
       <button onClick={clearFilters}>Clear</button><span className="hint">{visible.length} of {p.refs.length} tracks</span>
     </div>
     {onOpenSpotifyLocal && <LinkedPlaylistBanner playlistId={id} onOpen={onOpenSpotifyLocal} />}
-    <AutoSettings />
-    <AutoDJControls onQueue={onQueue} />
     <div className="toolbar"><button onClick={() => setSelected(visible.map((x) => x.ref))}>Select visible</button><span>{selected.length} selected</span><button disabled={!selected.length} onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); }}>Remove from playlist</button><PlaylistActions refs={selected} /></div>
     </div>
     <div className="table-wrap"><table className="tracks"><thead><tr><th /><th>Title</th><th>Artist</th><th>Album</th><th>Genre</th><th className="num">BPM</th><th>Key</th><th>Camelot</th><th className="num">Energy</th><th className="num">Match</th><th className="num">Time</th><th>Rating</th><th>Source</th><th>Stems</th><th>Added</th><th>Load</th></tr></thead><tbody>
