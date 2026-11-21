@@ -18,7 +18,7 @@ export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }:
   /** Extra actions specific to where this menu was opened from (e.g. "Remove from playlist"), appended after the standard ones. */
   extra?: React.ReactNode;
 }) {
-  const { engine, stems, platform, analysis, library } = useApp();
+  const { engine, stems, platform, analysis, library, production, log } = useApp();
   const libraryState = useLibraryState();
   const s = useEngineState();
   const stemStatus = useStemStatus();
@@ -40,6 +40,11 @@ export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }:
     onClose();
   };
   const canAnalyse = stemStatus.modelInstalled && platform.kind === "desktop";
+  const splitBlocked = track.source !== "local" ? "Only local files can be split into stems" : !stemStatus.available ? stemStatus.reason ?? "STEM separation is unavailable" : null;
+  const splitIntoStems = () => {
+    window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: "production" }));
+    void production.addLibraryTrackAsStems(track).catch((err) => log.warn("stems", `Couldn't split ${track.title} into stems: ${err instanceof Error ? err.message : String(err)}`));
+  };
   const { ref: menuRef, style: menuStyle } = useMenuPosition(x, y);
   return (
     <div ref={menuRef} className="ctx-menu" style={menuStyle} onPointerDown={(e) => e.stopPropagation()}>
@@ -60,6 +65,9 @@ export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }:
       </button>
       <button disabled={!cached} onClick={act(() => void stems.removeCache([track.ref]))}>
         Remove STEM Cache
+      </button>
+      <button disabled={!!splitBlocked} title={splitBlocked ?? "4 stems (Vocals, Drums, Bass, Instruments) on synchronized tracks at the Production Studio playhead"} onClick={act(splitIntoStems)}>
+        Split into stems (Production Studio)
       </button>
       {extra && <><hr />{extra}</>}
     </div>

@@ -8,6 +8,7 @@ import { detectRootNote } from "./pitch";
 import { blankProject, defaultPadParams, instrumentTrack, makeId, migrateProject, padLabel, PAD_BANKS, PADS_PER_BANK, sampleToClip, type AudioClip, type InstrumentSettings, type MidiClip, type MidiNote, type PadParams, type SynthSettings, type VocalTake, type LooperSession, blankLooper, type ProductionClip, type QuantizeGrid, type SamplerMode, QUANTIZE_BEATS, type ProductionProject, type ProductionState, type ProductionTrack, type SamplerSample, type SliceState } from "./types";
 import { analyseClean, beatMarkers, detectTransients, equalMarkers, mixToMono, nearestZeroCrossing, sliceRegions, transientMarkers } from "./slicing";
 import { encodeWav } from "./wav";
+import { deinterleaveStem, stemClipPlacement, stemFrames, stemTrackName, STEM_PARTS, type StemPart } from "./stemTracks";
 import { isRecordingRef, loadRecording, saveRecording } from "./recordings";
 
 type Listener = (state: ProductionState) => void;
@@ -210,12 +211,16 @@ export class ProductionStudio {
 
   private async bytes(ref: string): Promise<ArrayBuffer> { const inMemory = this.memoryFiles.get(ref); if (inMemory) return inMemory.slice(0); if (isRecordingRef(ref)) { const saved = await loadRecording(ref).catch(() => null); if (!saved) throw new Error("This microphone recording is no longer available — record it again"); this.memoryFiles.set(ref, saved); return saved.slice(0); } if (ref.startsWith("production-stem://")) { const wav = await this.rebuildStem(ref); this.memoryFiles.set(ref, wav); return wav.slice(0); } return this.platform.readAudio(ref); }
   private async rebuildStem(ref: string): Promise<ArrayBuffer> {
-    const split = ref.lastIndexOf("#"), sourceRef = ref.slice("production-stem://".length, split), part = ref.slice(split + 1) as "vocals" | "drums" | "bass" | "instruments";
-    if (split < 0 || !sourceRef || !["vocals", "drums", "bass", "instruments"].includes(part)) throw new Error("Invalid Production STEM reference");
-    const rendered = await this.stems.renderData(sourceRef); const raw = new Int16Array(rendered.pcm); const frames = Math.min(rendered.total, Math.floor(raw.length / 6)); const left = new Float32Array(frames), right = new Float32Array(frames); const channels = part === "vocals" ? [0, 1] : part === "drums" ? [2, 3] : [4, 5];
-    if (part === "instruments") { const decoded = await this.audio.decode(await this.platform.readAudio(sourceRef)); const offline = new OfflineAudioContext(2, frames, rendered.rate); const node = offline.createBufferSource(); node.buffer = decoded.handle as AudioBuffer; node.connect(offline.destination); node.start(); const original = await offline.startRendering(); const l = original.getChannelData(0), r = original.getChannelData(Math.min(1, original.numberOfChannels - 1)); for (let i = 0; i < frames; i++) { left[i] = l[i] - (raw[i * 6] + raw[i * 6 + 2] + raw[i * 6 + 4]) / 32768; right[i] = r[i] - (raw[i * 6 + 1] + raw[i * 6 + 3] + raw[i * 6 + 5]) / 32768; } }
-    else for (let i = 0; i < frames; i++) { left[i] = raw[i * 6 + channels[0]] / 32768; right[i] = raw[i * 6 + channels[1]] / 32768; }
-    return encodeWav({ sampleRate: rendered.rate, left, right });
+    const split = ref.lastIndexOf("#"), sourceRef = ref.slice("production-stem://".length, split), part = ref.slice(split + 1) as StemPart;
+    if (split < 0 || !sourceRef || !STEM_PARTS.some((p) => p.part === part)) throw new Error("Invalid Production STEM reference");
+    const rendered = await this.stems.renderData(sourceRef); const raw = new Int16Array(rendered.pcm); const frames = stemFrames(raw, rendered.total);
+    const original = part === "instruments" ? await this.atStemRate((await this.audio.decode(await this.platform.readAudio(sourceRef))).handle as AudioBuffer, frames, rendered.rate) : undefined;
+    return encodeWav({ sampleRate: rendered.rate, ...deinterleaveStem(raw, frames, part, original) });
+  }
+  /** The original song resampled to the stem cache's rate and length (for deriving "instruments"). */
+  private async atStemRate(buffer: AudioBuffer, frames: number, rate: number): Promise<{ left: Float32Array; right: Float32Array }> {
+    const offline = new OfflineAudioContext(2, frames, rate); const node = offline.createBufferSource(); node.buffer = buffer; node.connect(offline.destination); node.start();
+    const out = await offline.startRendering(); return { left: out.getChannelData(0), right: out.getChannelData(Math.min(1, out.numberOfChannels - 1)) };
   }
   private providers: { prefix: string; load: (ref: string) => Promise<AudioBuffer> }[] = [];
   /** Computed sources (e.g. tuned vocal renders): the provider owns caching; nothing is decoded or stored here. */
@@ -730,28 +735,42 @@ export class ProductionStudio {
     if (sourceTrack.stem) throw new Error("This clip is already an individual STEM");
     const libraryTrack = this.platform.kind === "desktop" ? ({ ref: sourceClip.ref, title: sourceClip.name, artist: "", album: "", source: "local", bpm: null, key: null } satisfies TrackInfo) : null;
     if (!libraryTrack) throw new Error("Production STEM separation requires the desktop app");
-    this.state = { ...this.state, stemJob: { ref: sourceClip.ref, stage: "separating", message: "Separating vocals, drums, bass and instruments locally…" } }; this.emit("STEM separation started");
+    const songRef = sourceClip.ref; const cached = this.stems.index()[songRef] === "complete";
+    const setJob = (job: NonNullable<ProductionState["stemJob"]>) => { this.state = { ...this.state, stemJob: job }; this.emit(); };
+    /** Live feedback from the stem service's library queue: queued behind another song, then % separated. */
+    let started = false;
+    const onProgress = (all: Record<string, number>) => {
+      if (this.state.stemJob?.ref !== songRef || this.state.stemJob.stage === "importing") return;
+      const p = all[songRef];
+      if (p !== undefined) { started = true; setJob({ ref: songRef, stage: "separating", progress: p, message: "Separating vocals, drums, bass and instruments locally…" }); }
+      else if (!started && Object.keys(all).length) setJob({ ref: songRef, stage: "queued", message: "Waiting for another song's STEM analysis to finish…" });
+    };
+    this.state = { ...this.state, stemJob: { ref: songRef, stage: "separating", message: cached ? "Loading previously separated STEMS from the cache…" : "Preparing audio for separation…" } }; this.emit("STEM separation started");
+    const offProgress = this.stems.on("libraryProgress", onProgress); if (!cached) onProgress(this.stems.libraryProgress());
     try {
-      const rendered = await this.stems.prepareForRender(libraryTrack, (ref) => this.platform.readAudio(ref));
-      this.state = { ...this.state, stemJob: { ref: sourceClip.ref, stage: "importing", message: "Creating four synchronized production tracks…" } }; this.emit();
-      const raw = new Int16Array(rendered.pcm); const frames = Math.min(rendered.total, Math.floor(raw.length / 6));
-      const original = await this.buffer(sourceClip.ref); const offline = new OfflineAudioContext(2, frames, rendered.rate); const node = offline.createBufferSource(); node.buffer = original; node.connect(offline.destination); node.start(); const resampled = await offline.startRendering();
-      const originalL = resampled.getChannelData(0), originalR = resampled.getChannelData(Math.min(1, resampled.numberOfChannels - 1));
-      const parts = [{ part: "vocals" as const, name: "Vocals", channels: [0, 1] }, { part: "drums" as const, name: "Drums", channels: [2, 3] }, { part: "bass" as const, name: "Bass", channels: [4, 5] }, { part: "instruments" as const, name: "Instruments", channels: [-1, -1] }];
+      const rendered = await this.stems.prepareForRender(libraryTrack, (r) => this.platform.readAudio(r)).finally(offProgress);
+      setJob({ ref: songRef, stage: "importing", message: "Creating four synchronized production tracks…" });
+      const raw = new Int16Array(rendered.pcm); const frames = stemFrames(raw, rendered.total);
+      const original = await this.atStemRate(await this.buffer(sourceClip.ref), frames, rendered.rate);
       const created: ProductionTrack[] = [];
-      for (const spec of parts) {
-        const left = new Float32Array(frames), right = new Float32Array(frames);
-        for (let i = 0; i < frames; i++) {
-          if (spec.part === "instruments") { left[i] = originalL[i] - (raw[i * 6] + raw[i * 6 + 2] + raw[i * 6 + 4]) / 32768; right[i] = originalR[i] - (raw[i * 6 + 1] + raw[i * 6 + 3] + raw[i * 6 + 5]) / 32768; }
-          else { left[i] = raw[i * 6 + spec.channels[0]] / 32768; right[i] = raw[i * 6 + spec.channels[1]] / 32768; }
-        }
-        const ref = `production-stem://${sourceClip.ref}#${spec.part}`; const wav = encodeWav({ sampleRate: rendered.rate, left, right }); this.memoryFiles.set(ref, wav); const buffer = await this.buffer(ref);
-        const stemName = `${spec.name} - ${sourceClip.name}`;
-        created.push({ id: makeId("track"), name: stemName, kind: "audio", gain: 1, pan: 0, muted: false, solo: false, armed: false, input: "STEM cache", output: "master", stem: { sourceRef: sourceClip.ref, part: spec.part }, clips: [{ type: "audio", id: makeId("clip"), name: stemName, ref, start: sourceClip.start, offset: sourceClip.offset, duration: Math.min(sourceClip.duration, Math.max(.01, buffer.duration - sourceClip.offset)), sourceDuration: buffer.duration, gain: sourceClip.gain, muted: false, peaks: this.peaks(buffer) }] });
+      for (const { part } of STEM_PARTS) {
+        const ref = `production-stem://${sourceClip.ref}#${part}`; const wav = encodeWav({ sampleRate: rendered.rate, ...deinterleaveStem(raw, frames, part, original) }); this.memoryFiles.set(ref, wav); const buffer = await this.buffer(ref);
+        const stemName = stemTrackName(sourceClip.name, part);
+        created.push({ id: makeId("track"), name: stemName, kind: "audio", gain: 1, pan: 0, muted: false, solo: false, armed: false, input: "STEM cache", output: "master", stem: { sourceRef: sourceClip.ref, part }, clips: [{ type: "audio", id: makeId("clip"), name: stemName, ref, ...stemClipPlacement(sourceClip, buffer.duration), sourceDuration: buffer.duration, muted: false, peaks: this.peaks(buffer) }] });
       }
       const project = clone(this.state.project); const at = project.tracks.findIndex((t) => t.id === sourceTrack!.id); const originalClip = project.tracks[at]?.clips.find((c) => c.id === sourceClip!.id); if (originalClip) originalClip.muted = true; project.tracks.splice(at + 1, 0, ...created); this.commit(project, "Created four synchronized STEM tracks");
       this.state = { ...this.state, stemJob: null }; this.emit("STEMS ready: independent Vocals, Drums, Bass and Instruments tracks created");
     } catch (error) { this.state = { ...this.state, stemJob: null }; this.emit(`STEM separation failed: ${error instanceof Error ? error.message : String(error)}`); throw error; }
+  }
+  /**
+   * Library song → new audio track at the playhead (undo step 1) → four synchronized STEM tracks (undo step 2).
+   * If separation fails the imported track stays; undo removes it.
+   */
+  async addLibraryTrackAsStems(item: Pick<TrackInfo, "ref" | "title">): Promise<void> {
+    if (this.state.stemJob) throw new Error("A STEM separation is already running — wait for it to finish");
+    await this.addAudioAtPlayhead(item, { newTrack: true });
+    const clipId = this.state.selectedClipId; if (!clipId) throw new Error(`Couldn't add ${item.title} to the arrangement`);
+    await this.separateClipToStems(clipId);
   }
   selectClip(id: string | null): void { this.state = { ...this.state, selectedClipId: id }; this.emit(); }
   editClip(id: string, patch: Partial<ProductionClip>, message = "Clip edited"): void {

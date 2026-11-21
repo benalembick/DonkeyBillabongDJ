@@ -15,7 +15,7 @@ import type { App } from "../app/createApp";
 import { useFrameStore } from "./hooks";
 import { useStemIndex, useStemProgress } from "./stemHooks";
 import { StemBadge, stemRank } from "./StemBadge";
-import { ArtTile } from "./ArtTile";
+import { PreviewArtTile } from "./PreviewArt";
 import { AutoDJQueue, LearnNav, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
 import { TrackMenu } from "./TrackMenu";
 import { compatibility } from "../analysis/discovery";
@@ -299,7 +299,7 @@ const TrackRow = memo(function TrackRow({ track: t, selected, matchScore, matchR
       onContextMenu={(e) => handlers.contextMenu(t, e)}
     >
       <td className="col-art">
-        <ArtTile track={t} size={22} />
+        <PreviewArtTile track={t} size={22} />
       </td>
       <td className="title-cell">{t.title}{t.unavailableReason && <span className="warn"> · Reconnect file</span>}</td>
       <td>{t.artist}</td>

@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { WAVEFORM_RATE } from "../production/ProductionStudio";
 import type { ProductionTrack, VocalTake } from "../production/types";
 import { useApp } from "./context";
-import { trackKind } from "./TrackIcons";
+import { trackClass } from "./TrackIcons";
 import { VocalPitchEditor } from "./VocalPitchEditor";
 import { VocalEnhancePanel } from "./VocalEnhancePanel";
 
@@ -111,7 +111,7 @@ export function VocalStudioWorkspace() {
         <div className="vs-lanes" style={{ width: width + 160 }}>
           <div className="vs-ruler" style={{ marginLeft: 160, width }} onClick={(e) => { if (!rec) studio.seek((e.clientX - e.currentTarget.getBoundingClientRect().left) / px); }}>{Array.from({ length: Math.ceil(total / bar) + 1 }, (_, i) => <span key={i} style={{ left: i * bar * px }}>{i + 1}</span>)}</div>
           <div className={`vs-lane vs-backing${backingClips.length ? "" : " off"}`}><div className="vs-lane-head"><b>BACKING</b><small>{backingChoice === "off" ? "Off — only the click plays" : backingChoice === "all" ? `Full arrangement · ${backingIds.size} tracks` : project.tracks.find((t) => t.id === backingChoice)?.name}</small></div><div className="vs-lane-body" style={{ width }}>
-            {backingClips.map(({ clip, track: t }) => <div key={clip.id} className={`vs-backing-clip kind-${trackKind(t)}`} style={{ left: clip.start * px, width: Math.max(2, clip.duration * px) }} title={`${t.name} · ${clip.name}`}><span>{clip.name}</span></div>)}
+            {backingClips.map(({ clip, track: t }) => <div key={clip.id} className={`vs-backing-clip ${trackClass(t)}`} style={{ left: clip.start * px, width: Math.max(2, clip.duration * px) }} title={`${t.name} · ${clip.name}`}><span>{clip.name}</span></div>)}
             {!backingClips.length && <span className="vs-backing-hint">Choose BACKING to sing along to the arrangement or one track</span>}
             <i className="vs-playhead" style={{ left: position * px }}/>
           </div></div>

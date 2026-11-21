@@ -45,6 +45,7 @@ import { VocalStudio } from "../production/vocal/VocalStudio";
 import { VocalPitch } from "../production/vocal/VocalPitch";
 import { LiveLooper } from "../production/looper/LiveLooper";
 import { TeachLoopService } from "../teachloop/TeachLoopService";
+import { HeadphonePreview } from "../audio/HeadphonePreview";
 import { browserSpotifySessionStore, RecordingSourceAdapter, SpotifyPlaybackAdapter, SpotifySessionCoordinator } from "../acquire/SpotifySessionCoordinator";
 
 export interface App {
@@ -87,6 +88,8 @@ export interface App {
   looper: LiveLooper;
   /** Learn → Teach Me: Live Looping — isolated lesson sandbox (its own ProductionStudio + LiveLooper, pad-only). */
   teachLoop: TeachLoopService;
+  /** Library track preview in the headphones only (needs 4-channel routing); never touches the decks or master. */
+  preview: HeadphonePreview;
   /** Set a local track's star rating (persisted). */
   setRating(ref: string, rating: number): Promise<void>;
   /** Renames/retags/re-covers a local track, writing the change into the file itself (desktop only). */
@@ -164,6 +167,7 @@ export function createApp(): App {
   void playlists.load();
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
   const production = new ProductionStudio(audio, platform, stems);
+  const preview = new HeadphonePreview(audio, (ref) => platform.readAudio(ref));
   const vocal = new VocalStudio(audio, production);
   const pitch = new VocalPitch(production);
   vocal.onTakeRecorded = (_track, takeId) => void pitch.analyseTake(takeId);
@@ -427,6 +431,7 @@ export function createApp(): App {
     pitch,
     looper,
     teachLoop,
+    preview,
     setRating: async (ref, rating) => {
       const t = library.setRating(ref, rating);
       if (t) await platform.library?.save([t]).catch((err) => log.warn("library", `Library database: ${String(err)}`));

@@ -9,6 +9,18 @@ export function trackKind(track: ProductionTrack): TrackKind {
   return track.instrument?.type === "drums" ? "drums" : track.instrument?.type === "sampler" ? "sampler" : "synth";
 }
 export const TRACK_KIND_LABEL: Record<TrackKind, string> = { audio: "AUDIO", vocal: "VOCAL", stem: "STEM", drums: "DRUMS", synth: "SYNTH", sampler: "SAMPLER" };
+type StemPart = NonNullable<ProductionTrack["stem"]>["part"];
+export const STEM_PART_LABEL: Record<StemPart, string> = { vocals: "VOCALS", drums: "DRUMS", bass: "BASS", instruments: "INSTRUMENTS" };
+/** Header label: the kind, or for a separated stem which part it holds (e.g. "VOCALS STEM"). */
+export function trackLabel(track: ProductionTrack): string {
+  const kind = trackKind(track);
+  return kind === "stem" && track.stem ? `${STEM_PART_LABEL[track.stem.part]} STEM` : TRACK_KIND_LABEL[kind];
+}
+/** Colour classes: kind-<kind>, plus stem-<part> so each separated part has its own colour. */
+export function trackClass(track: ProductionTrack): string {
+  const kind = trackKind(track);
+  return `kind-${kind}${kind === "stem" && track.stem ? ` stem-${track.stem.part}` : ""}`;
+}
 
 export function TrackIcon({ kind }: { kind: TrackKind }) {
   const common = { width: 14, height: 14, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true, className: "track-icon" };

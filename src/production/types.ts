@@ -217,7 +217,8 @@ export interface ProductionState {
   undoAvailable: boolean;
   redoAvailable: boolean;
   message: string;
-  stemJob: { ref: string; stage: "queued" | "separating" | "importing"; message: string } | null;
+  /** `progress` (0..1) is set while the model is separating; absent while preparing, queued, loading from cache or importing. */
+  stemJob: { ref: string; stage: "queued" | "separating" | "importing"; message: string; progress?: number } | null;
   /** Sampler editor preview (pads play separately, see padsPlaying). */
   samplerPlayback: { sampleId: string; /** Source time where the previewed region starts (a slice or the selection). */ regionStart: number; playing: boolean; paused: boolean; position: number } | null;
   samplerRecording: boolean;

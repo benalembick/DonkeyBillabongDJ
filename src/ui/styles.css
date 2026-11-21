@@ -423,6 +423,17 @@ tbody tr:not(.selected):hover td { background: #ffffff08; }
 .title-cell { font-weight: 600; }
 .col-art { width: 28px; padding-right: 0; }
 .art-tile { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 3px; font-size: 10px; font-weight: 800; color: #fff; }
+/* Headphone preview over track-list artwork: shown on row hover, kept while that track is previewing. */
+.art-preview { position: relative; display: inline-block; vertical-align: middle; }
+.art-preview .art-tile { display: grid; }
+.art-preview-btn { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; margin: 0; border: 0; border-radius: 3px; color: #fff; background: rgb(8 12 18 / .72); cursor: pointer; opacity: 0; transition: opacity .12s; font-size: 9px; }
+tr:hover .art-preview-btn, .art-preview-btn:focus-visible, .art-preview.active .art-preview-btn { opacity: 1; }
+.art-preview-btn:hover { background: rgb(34 150 243 / .85); }
+.art-preview.active .art-preview-btn { color: #04121f; background: #4fc3f7; }
+.art-preview-btn.blocked { color: #8a94a3; cursor: not-allowed; }
+.art-preview-btn.blocked:hover { background: rgb(8 12 18 / .72); }
+.art-preview-spin { width: 9px; height: 9px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: art-preview-spin .7s linear infinite; }
+@keyframes art-preview-spin { to { transform: rotate(360deg); } }
 .stars { display: inline-flex; }
 .stars button { background: none; border: none; padding: 0 1px; color: #3a404c; font-size: 12px; line-height: 1; }
 .stars button.on { color: var(--cue); }
@@ -1347,6 +1358,10 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .ps-stems button { font-weight: 900; }
 .ps-stems-progress { display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 4px 6px; }
 .ps-stems-progress b { color: #7ff0c8; }
+.ps-stems-pct { font-style: normal; color: #fff; }
+.ps-stems-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: #1d3a33; overflow: hidden; }
+.ps-stems-bar i { display: block; height: 100%; background: #7ff0c8; transition: width .3s ease; }
+.ps-browser-item .lib-stem { color: #5ee07a; } .ps-browser-item .lib-stem.partial { color: #ffcc33; }
 .ps-stems-progress span:not(.ps-spinner), .ps-stems-progress small { grid-column: 1 / -1; color: #8393a6; font-size: 9px; }
 
 /* Arrangement: track headers follow the timeline's vertical scroll (one scrollbar) */
@@ -1394,6 +1409,9 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 
 /* Track types: colour per kind on headers, lanes, mixer strips and add buttons */
 .kind-audio { --kind: #ff5bbd; } .kind-stem { --kind: #ff8a5c; } .kind-drums { --kind: #ffc145; } .kind-synth { --kind: #9b8cff; } .kind-sampler { --kind: #36d8bd; }
+/* Separated stems: one colour per part so Vocals / Drums / Bass / Instruments are told apart at a glance. */
+.kind-stem.stem-vocals { --kind: #4fc3f7; } .kind-stem.stem-drums { --kind: #ff8a5c; } .kind-stem.stem-bass { --kind: #c77dff; } .kind-stem.stem-instruments { --kind: #7ee08a; }
+.ps-clip .ps-stem-badge { position: absolute; z-index: 3; left: 4px; bottom: 3px; padding: 1px 5px; border-radius: 3px; background: var(--kind); color: #120c10; font-size: 9px; font-weight: 800; letter-spacing: .06em; pointer-events: none; }
 .ps-track-head[class*="kind-"] { border-left: 4px solid var(--kind); background: linear-gradient(90deg, color-mix(in srgb, var(--kind) 16%, #111721), #111721 70%); }
 .ps-track-head .ps-track-kind { display: flex; align-items: center; gap: 4px; color: var(--kind); font-weight: 800; letter-spacing: .05em; }
 .ps-lane[class*="kind-"] { background-color: color-mix(in srgb, var(--kind) 4%, #0a0e14); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--kind) 55%, transparent); }
