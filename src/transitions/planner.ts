@@ -13,11 +13,12 @@
  */
 import type { AnalysisSection, RecommendedCue } from "../analysis/analyzeTrack";
 import { camelotKey } from "../analysis/discovery";
+import { GRID_CONFIDENT } from "../preparation/beatGrid";
 
 export const BEATS_PER_BAR = 4;
 export const PHRASE_BARS = 8;
 /** Beat-grid confidence below this (and not set by hand) is "uncertain" (same bar as Auto DJ). */
-export const GRID_CONFIDENT = 1.4;
+export { GRID_CONFIDENT };
 
 export interface Grid {
   bpm: number;

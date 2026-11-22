@@ -271,7 +271,7 @@ export function Mixer({ dense }: { dense?: boolean }) {
         {strip(1)}
       </div>
       <div className="crossfader" data-train="crossfader">
-        <span>A</span>
+        <span className="xf-end deck-scope-a">A</span>
         <input
           type="range"
           min={0}
@@ -282,7 +282,7 @@ export function Mixer({ dense }: { dense?: boolean }) {
           onChange={(e) => send("mixer.crossfader", Number(e.target.value))}
           onDoubleClick={() => send("mixer.crossfader", 0.5)}
         />
-        <span>B</span>
+        <span className="xf-end deck-scope-b">B</span>
       </div>
     </section>
   );

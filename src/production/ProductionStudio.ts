@@ -209,6 +209,8 @@ export class ProductionStudio {
   stopPreview(): void { const node = this.previewNode; this.previewNode = null; if (node) try { node.stop(); } catch { /* already stopped */ } if (this.state.previewRef) { this.state = { ...this.state, previewRef: null }; this.emit(); } }
   removeTrack(id: string): void { const p = clone(this.state.project); if (p.tracks.length <= 1) return; p.tracks = p.tracks.filter((t) => t.id !== id); this.commit(p, "Track removed"); }
 
+  /** A source's encoded bytes (library files, microphone recordings, rebuilt stems) — used by the Drum Transcriber. */
+  sourceBytes(ref: string): Promise<ArrayBuffer> { return this.bytes(ref); }
   private async bytes(ref: string): Promise<ArrayBuffer> { const inMemory = this.memoryFiles.get(ref); if (inMemory) return inMemory.slice(0); if (isRecordingRef(ref)) { const saved = await loadRecording(ref).catch(() => null); if (!saved) throw new Error("This microphone recording is no longer available — record it again"); this.memoryFiles.set(ref, saved); return saved.slice(0); } if (ref.startsWith("production-stem://")) { const wav = await this.rebuildStem(ref); this.memoryFiles.set(ref, wav); return wav.slice(0); } return this.platform.readAudio(ref); }
   private async rebuildStem(ref: string): Promise<ArrayBuffer> {
     const split = ref.lastIndexOf("#"), sourceRef = ref.slice("production-stem://".length, split), part = ref.slice(split + 1) as StemPart;
@@ -278,6 +280,14 @@ export class ProductionStudio {
     this.stopSampler(); this.commit(project, `Loaded ${item.title} into Sampler`);
     if (project.sampler.slicing.enabled) await this.refreshSlices();
   }
+  /** Opens an existing pad or saved sample in the Sampler editor (a fresh copy, keeping its trim and edits). */
+  async openSampleInEditor(sample: SamplerSample): Promise<void> {
+    const project = clone(this.state.project); project.sampler.editor = { ...clone(sample), id: makeId("sample") };
+    project.sampler.slicing = { ...project.sampler.slicing, detected: [], markers: [], sourceRef: null }; this.state = { ...this.state, cleanReport: null };
+    this.stopSampler(); this.commit(project, `Opened ${sample.name} in the Sampler`);
+    if (project.sampler.slicing.enabled) await this.refreshSlices();
+  }
+
   async toggleSamplerRecording(): Promise<void> {
     if (this.samplerRecorder) { this.samplerRecorder.stop(); return; }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") throw new Error("Microphone recording is not supported on this device");
@@ -883,6 +893,16 @@ export class ProductionStudio {
   duplicateClip(id: string): void { const p = clone(this.state.project); for (const t of p.tracks) { const c = t.clips.find((x) => x.id === id); if (c) { t.clips.push({ ...c, id: makeId("clip"), start: c.start + c.duration, name: `${c.name} copy` }); this.commit(p, "Clip duplicated"); return; } } }
   splitClip(id: string, at: number): void { const p = clone(this.state.project); for (const t of p.tracks) { const i = t.clips.findIndex((x) => x.id === id); const c = t.clips[i]; if (!c || c.type !== "audio") continue; const local = at - c.start; if (local <= .05 || local >= c.duration - .05) return; t.clips.splice(i, 1, { ...c, duration: local, fadeOut: undefined }, { ...c, id: makeId("clip"), start: at, offset: c.offset + local, duration: c.duration - local, fadeIn: undefined }); this.commit(p, "Clip split"); return; } }
 
+  /**
+   * Adds a ready-made MIDI clip (e.g. a Drum Transcriber transcription) to an instrument track in one undo step.
+   * `notes` are in beats from the clip start at the project tempo. Returns the clip id.
+   */
+  addMidiClip(trackId: string, clip: { name: string; start: number; duration: number; notes: Omit<MidiNote, "id">[] }): string | null {
+    const p = clone(this.state.project); const track = p.tracks.find((t) => t.id === trackId && t.kind === "instrument"); if (!track) return null;
+    const beats = secondsToBeats(Math.max(.01, clip.duration), p.bpm);
+    const midi: MidiClip = { type: "midi", id: makeId("midi"), name: clip.name, start: Math.max(0, clip.start), duration: Math.max(.01, clip.duration), gain: 1, muted: false, notes: clip.notes.map((n) => ({ ...n, id: makeId("note") })), patternBars: Math.max(1, Math.ceil(beats / p.timeSignature[0])), swing: 0 };
+    track.clips.push(midi); this.commit(p, `${clip.name}: ${midi.notes.length} notes added`); this.selectClip(midi.id); return midi.id;
+  }
   createMidiClip(trackId: string, start: number, bars = 1): string | null { const p = clone(this.state.project); const track = p.tracks.find((t) => t.id === trackId && t.kind === "instrument"); if (!track) return null; const clip: MidiClip = { type: "midi", id: makeId("midi"), name: track.instrument?.type === "drums" ? "Drum Pattern" : "MIDI Clip", start: Math.max(0, start), duration: beatsToSeconds(bars * p.timeSignature[0], p.bpm), gain: 1, muted: false, notes: [], patternBars: bars, swing: 0 }; track.clips.push(clip); this.commit(p, "MIDI clip created"); this.selectClip(clip.id); return clip.id; }
   addMidiNote(clipId: string, note: Omit<MidiNote, "id">): void { const p = clone(this.state.project); const clip = this.findMidiClip(p, clipId); if (!clip) return; clip.notes.push({ ...note, id: makeId("note"), pitch: Math.max(0, Math.min(127, note.pitch)), velocity: Math.max(1, Math.min(127, note.velocity)), start: Math.max(0, note.start), duration: Math.max(.03, note.duration) }); this.commit(p, "MIDI note added"); this.refreshArrangement(); }
   editMidiNote(clipId: string, noteId: string, patch: Partial<MidiNote>): void { const p = clone(this.state.project); const clip = this.findMidiClip(p, clipId); const note = clip?.notes.find((n) => n.id === noteId); if (!note) return; Object.assign(note, patch); note.pitch = Math.max(0, Math.min(127, note.pitch)); note.start = Math.max(0, note.start); note.duration = Math.max(.03, note.duration); note.velocity = Math.max(1, Math.min(127, note.velocity)); this.commit(p, "MIDI note edited"); this.refreshArrangement(); }

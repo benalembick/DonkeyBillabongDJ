@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react";
 import type { App as AppServices } from "../app/createApp";
 import type { ControllerInfo } from "../controllers/ControllerManager";
 import type { LogEntry } from "../core/log";
@@ -7,14 +7,13 @@ import { ControllerTest, LiveEvents, MidiMonitor } from "./ControllerPanels";
 import { Deck } from "./Deck";
 import { DownloadDesktopButton } from "./DownloadDesktop";
 import { UpdateBadge } from "./Updates";
-import { NavIcon, SaveMashupIcon } from "./NavIcons";
-import { TrainingWorkspace } from "./TrainingWorkspace";
+import { NavIcon, SaveMashupIcon, ToolsIcon } from "./NavIcons";
 import { useFrameStore, useTick } from "./hooks";
 import { LibraryPanel, type MainBrowserArea } from "./LibraryPanel";
 import { MatchDialogHost } from "./MatchDialog";
 import { Mixer } from "./Mixer";
 import { Diagnostics, Settings } from "./SystemPanels";
-import { FxBar } from "./FxBar";
+import { FxBar, FxSummary } from "./FxBar";
 import { LiveSamplerBar } from "./LiveSamplerBar";
 import { getLayout, setLayout, useLayout, zoom, type LayoutMode } from "./layout";
 import { WaveformStack } from "./Waveforms";
@@ -23,7 +22,7 @@ import { About } from "./About";
 import { WaveStylePicker } from "./WaveStylePicker";
 import { LightingWorkspace } from "./lighting/LightingWorkspace";
 import { ProductionStudioWorkspace } from "./ProductionStudioWorkspace";
-import { TeachLoopWorkspace } from "./TeachLoopWorkspace";
+import { SetStudioWorkspace } from "./setstudio/SetStudioWorkspace";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -109,6 +108,18 @@ function Toasts() {
   );
 }
 
+/** Close a popover on a click outside `ref` or on Escape. */
+function useDismiss(open: boolean, close: () => void, ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) close(); };
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("pointerdown", outside); window.removeEventListener("keydown", escape); };
+  }, [open, close, ref]);
+}
+
 const MODES: { id: LayoutMode; label: string; title: string }[] = [
   { id: "horizontal", label: "HORIZONTAL", title: "Stacked horizontal waveforms, decks and mixer below" },
   { id: "vertical", label: "VERTICAL", title: "Parallel vertical waveforms in the centre, decks either side" },
@@ -132,14 +143,7 @@ function LayoutSwitch() {
     } catch (e) { log.error("mashup", `Could not save Manual Mashup: ${String(e)}`); }
     finally { setSaving(false); }
   };
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: PointerEvent) => { if (!menuRef.current?.contains(e.target as Node)) setOpen(false); };
-    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", escape);
-    return () => { window.removeEventListener("pointerdown", close); window.removeEventListener("keydown", escape); };
-  }, [open]);
+  useDismiss(open, useCallback(() => setOpen(false), []), menuRef);
   return (
     <div className="layout-actions">
       <div className="view-menu-wrap" ref={menuRef}>
@@ -158,6 +162,85 @@ function LayoutSwitch() {
         <SaveMashupIcon />
         <span>{saving ? "SAVING…" : "SAVE MANUAL MASHUP"}</span>
       </button>
+    </div>
+  );
+}
+
+const UTILITIES: { tool: ToolTab; icon: string; label: string; title: string; extra?: string }[] = [
+  { tool: "Controller events", icon: "🎛", label: "Controller", title: "Controller events, test and MIDI monitor", extra: "open-tools" },
+  { tool: "Diagnostics", icon: "◫", label: "Diagnostics", title: "Audio, engine and performance diagnostics" },
+  { tool: "Settings", icon: "⚙", label: "Settings", title: "Audio output, library and app settings" },
+  { tool: "About", icon: "ⓘ", label: "About", title: "Version, updates and features" },
+];
+
+/** Controller / Diagnostics / Settings / About behind one icon at the far right of the top bar. */
+function UtilityMenu({ onOpen }: { onOpen: (t: ToolTab) => void }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState({ top: 48, right: 10 });
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(open, useCallback(() => setOpen(false), []), ref);
+  // Fixed position (the status area clips overflow), anchored under the trigger when it opens.
+  const toggle = (e: MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setAnchor({ top: Math.round(r.bottom + 6), right: Math.max(4, Math.round(window.innerWidth - r.right)) });
+    setOpen((v) => !v);
+  };
+  return (
+    <div className="utility-menu-wrap" ref={ref}>
+      <button className={`utility-menu-trigger${open ? " active" : ""}`} aria-haspopup="menu" aria-expanded={open} aria-label="Tools: Controller, Diagnostics, Settings, About" title="Controller · Diagnostics · Settings · About" onClick={toggle}>
+        <ToolsIcon />
+      </button>
+      {/* Always mounted (just hidden) so smoke tests can still click .open-tools / the last utility-button directly. */}
+      <div className="utility-menu" role="menu" hidden={!open} style={anchor}>
+        {UTILITIES.map((u) => (
+          <button key={u.tool} role="menuitem" className={`utility-button${u.extra ? ` ${u.extra}` : ""}`} title={u.title} onClick={() => { setOpen(false); onOpen(u.tool); }}>
+            <span aria-hidden="true">{u.icon}</span> {u.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const FX_OPEN_KEY = "dbdj.ui.fxOpen";
+const readFxOpen = (): boolean => { try { return localStorage.getItem(FX_OPEN_KEY) === "1"; } catch { return false; } };
+
+/** True while a training step is outlining FX1/FX2, so the full controls show even if the strip is collapsed. */
+function useTrainingWantsFx(): boolean {
+  const [wants, setWants] = useState(false);
+  useEffect(() => {
+    const root = document.documentElement;
+    const read = () => setWants(/(^|\s)fx-\d/.test(root.getAttribute("data-train-hl") ?? ""));
+    read();
+    const watch = new MutationObserver(read);
+    watch.observe(root, { attributes: true, attributeFilter: ["data-train-hl"] });
+    return () => watch.disconnect();
+  }, []);
+  return wants;
+}
+
+/**
+ * FX1/FX2 + Sampler. Collapsed (the default) it's one slim row: an FX toggle with a status chip per unit
+ * (lit effects only; it stays visible when expanded too), then the sampler head. Expanded, the full FX units open beneath
+ * that row, so the FX toggle stays where it was clicked.
+ */
+function TopTools() {
+  const [fxOpen, setFxOpen] = useState(readFxOpen);
+  const training = useTrainingWantsFx();
+  const showFx = fxOpen || training;
+  const toggleFx = (to = !fxOpen) => { setFxOpen(to); try { localStorage.setItem(FX_OPEN_KEY, to ? "1" : "0"); } catch { /* storage unavailable */ } };
+  const fxLeading = (
+    <>
+      <button className="fx-strip-toggle" aria-expanded={showFx} aria-controls="fx-bar" disabled={training && !fxOpen} onClick={() => toggleFx()} title={showFx ? "Hide the FX controls" : "Show the FX controls"}>
+        <span aria-hidden>{showFx ? "▾" : "▸"}</span> FX
+      </button>
+      <FxSummary expanded={showFx} onToggle={() => { if (!(training && !fxOpen)) toggleFx(); }} />
+      <span className="top-tools-divider" aria-hidden />
+    </>
+  );
+  return (
+    <div className={`top-tools${showFx ? " fx-open" : ""}`}>
+      <Boundary name="Sampler"><LiveSamplerBar leading={fxLeading} afterHead={showFx && <div id="fx-bar" className="fx-bar-slot"><Boundary name="FX"><FxBar /></Boundary></div>} /></Boundary>
     </div>
   );
 }
@@ -214,7 +297,14 @@ function Splitter({ mode, maximized, onToggleMaximize }: { mode: LayoutMode; max
       }}
       onPointerUp={() => (start.current = null)}
       onDoubleClick={(e) => { if (e.target === e.currentTarget) onToggleMaximize(); }}
-    ><button className="panel-maximize" aria-label={maximized ? "Show decks" : "Expand library"} aria-pressed={maximized} title={maximized ? "Show decks (Esc)" : "Expand library"} onPointerDown={(e)=>e.stopPropagation()} onClick={onToggleMaximize}><span aria-hidden>{maximized ? "▣" : "□"}</span>{maximized ? " Show decks" : " Expand library"}</button></div>
+    >
+      {/* A slim pill centred on the line (the row stays 6 px): the obvious way to give the track list the screen. */}
+      <button className="panel-maximize" aria-label={maximized ? "Show the decks" : "Expand the track list"} aria-pressed={maximized} title={maximized ? "Show the decks again (Esc, or double-click the bar)" : "Give the track list the full screen (or double-click the bar)"} onPointerDown={(e) => e.stopPropagation()} onClick={onToggleMaximize}>
+        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{maximized ? <path d="m4 4 4 4 4-4M4 9l4 4 4-4" /> : <path d="m4 12 4-4 4 4M4 7l4-4 4 4" />}</svg>
+        <span>{maximized ? "SHOW DECKS" : "EXPAND"}</span>
+      </button>
+      <span className="splitter-hint" aria-hidden="true">{maximized ? "Esc or double-click to show the decks" : "Drag to resize · double-click to expand"}</span>
+    </div>
   );
 }
 
@@ -250,22 +340,35 @@ function Shell() {
   // Other parts of the UI (About page, Practice home) can open an area: dispatch "dbdj:navigate".
   useEffect(() => {
     const go = (e: Event) => {
-      const area = (e as CustomEvent<string>).detail as typeof navigation.area;
+      const detail = (e as CustomEvent<string>).detail;
       setTool(null);
-      setNavigation((n) => ({ area, id: n.id + 1 }));
+      // "learn:practice" / "learn:history" (Learn sub-menu) open those views of the library's Practice page.
+      if (detail === "learn:practice" || detail === "learn:history") { setNavigation((n) => ({ area: "practice", id: n.id + 1, open: detail === "learn:practice" ? "learn-practice" : "learn-history" })); return; }
+      setNavigation((n) => ({ area: detail as typeof navigation.area, id: n.id + 1 }));
     };
     window.addEventListener("dbdj:navigate", go);
     return () => window.removeEventListener("dbdj:navigate", go);
   }, []);
-  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting" | "transitions" | "training" | "production" | "teachloop"; id: number }>({ area: "collections", id: 0 });
-  const libraryNavigation = useRef<{ area: MainBrowserArea; id: number }>({ area: "collections", id: 0 });
-  if (navigation.area !== "lighting" && navigation.area !== "training" && navigation.area !== "production" && navigation.area !== "teachloop") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number };
+  // "Fix grid…" anywhere brings the decks into view (expanded pane, AI Set Studio, Lighting, Production Studio).
+  useEffect(() => {
+    const show = () => { setTool(null); setLowerMaximized(false); setNavigation((n) => (n.area === "production" ? { area: "collections", id: n.id + 1 } : n)); };
+    window.addEventListener("dbdj:show-decks", show);
+    return () => window.removeEventListener("dbdj:show-decks", show);
+  }, []);
+  // `open: "all-tracks"` (DJ Deck) skips the Collections home and opens All Tracks directly.
+  const [navigation, setNavigation] = useState<{ area: MainBrowserArea | "lighting" | "transitions" | "training" | "production" | "teachloop" | "setstudio"; id: number; open?: "all-tracks" | "learn-practice" | "learn-history" }>({ area: "collections", id: 0 });
+  const libraryNavigation = useRef<{ area: MainBrowserArea; id: number; open?: "all-tracks" | "learn-practice" | "learn-history" }>({ area: "collections", id: 0 });
+  if (navigation.area !== "lighting" && navigation.area !== "production" && navigation.area !== "setstudio") libraryNavigation.current = navigation as { area: MainBrowserArea; id: number; open?: "all-tracks" | "learn-practice" | "learn-history" };
+  /** DJ Deck: both decks on screen (leaves any expanded library / workspace) and All Tracks in the lower pane. */
+  const openDjDeck = () => { setTool(null); setLowerMaximized(false); setNavigation((n) => ({ area: "collections", id: n.id + 1, open: "all-tracks" })); };
   const app = useApp();
   const { platform } = app;
   const layout = useLayout();
   useEffect(() => {
     document.title = "Donkey Billabong DJ";
   }, []);
+  // AI Set Studio needs the room: entering it expands the lower pane ("Show decks" restores them).
+  useEffect(() => { if (navigation.area === "setstudio") setLowerMaximized(true); }, [navigation.area, navigation.id]);
   useEffect(() => {
     if (!lowerMaximized) return;
     const restore = (e: KeyboardEvent) => { if (e.key === "Escape") setLowerMaximized(false); };
@@ -302,33 +405,27 @@ function Shell() {
           <img className="brand-logo" src={brandLogo} alt="Donkey Billabong DJ" width={800} height={267} draggable={false} />
         </div>
         <nav className="main-navigation" aria-label="Main browser areas">
-          {([["collections","Collections"],["playlists","Playlists"],["mashups","Mashup Projects"],["production","Production Studio"],["practice","Learn"],["streaming","Audio Sources"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area||(area==="practice"&&(navigation.area==="transitions"||navigation.area==="training"))?"active":""}`} onClick={()=>setNavigation(n=>({area,id:n.id+1}))}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
+          <button title="DJ Deck" className={`nav-decks ${navigation.area === "collections" || navigation.area === "playlists" ? "active" : ""}`} onClick={openDjDeck}><NavIcon area="decks"/><span className="nav-label">DJ Deck</span></button>
+          {([["mashups","Mashup Projects"],["setstudio","AI Set Studio"],["production","Production Studio"],["practice","Learn"],["streaming","Audio Sources"],["lighting","Lighting"]] as const).map(([area,label])=><button key={area} title={label} className={`nav-${area} ${navigation.area===area||(area==="practice"&&(navigation.area==="transitions"||navigation.area==="training"||navigation.area==="teachloop"))?"active":""}`} onClick={()=>{ if(area==="practice"||area==="lighting") setLowerMaximized(true); /* Learn and Lighting open with the lower pane expanded ("Show decks" restores) */ setNavigation(n=>({area,id:n.id+1})); }}><NavIcon area={area}/><span className="nav-label">{label}</span></button>)}
         </nav>
         <LayoutSwitch />
         <div className="statuses">
           <div className="system-status-stack"><AudioStatusBadge /><ControllerStatus /></div>
           {platform.kind === "desktop" ? <UpdateBadge onOpen={() => setTool("About")} /> : <DownloadDesktopButton />}
-          <button className="status open-tools utility-button" onClick={() => setTool("Controller events")} title="Controller events, test and MIDI monitor"><span aria-hidden="true">🎛</span> Controller</button>
-          <button className="status utility-button" onClick={() => setTool("Diagnostics")}><span aria-hidden="true">◫</span> Diagnostics</button>
-          <button className="status utility-button" onClick={() => setTool("Settings")}><span aria-hidden="true">⚙</span> Settings</button>
-          <button className="status utility-button" onClick={() => setTool("About")}><span aria-hidden="true">ⓘ</span> About</button>
+          <UtilityMenu onOpen={setTool} />
         </div>
       </header>
       {navigation.area === "production" ? <Boundary name="Production Studio"><ProductionStudioWorkspace /></Boundary> : <>
-      <div className="top-tools">
-        <Boundary name="FX"><FxBar /></Boundary>
-        <Boundary name="Sampler"><LiveSamplerBar /></Boundary>
-      </div>
+      <TopTools />
       <Stage mode={layout.mode} />
       <Splitter mode={layout.mode} maximized={lowerMaximized} onToggleMaximize={() => setLowerMaximized((v) => !v)} />
       <section className="lower">
         {/* The library stays mounted (hidden) while Lighting is open, so it comes back exactly as it was. */}
-        <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "training" || navigation.area === "teachloop"}>
+        <div className="lower-pane" hidden={navigation.area === "lighting" || navigation.area === "setstudio"}>
           <Boundary name="Library"><LibraryPanel navigation={libraryNavigation.current} onNavigateArea={(area) => setNavigation((n) => ({ area, id: n.id + 1 }))} expanded={lowerMaximized} onToggleExpanded={() => setLowerMaximized((v) => !v)} /></Boundary>
         </div>
         {navigation.area === "lighting" && <Boundary name="Lighting"><LightingWorkspace /></Boundary>}
-        {navigation.area === "training" && <Boundary name="Training"><TrainingWorkspace /></Boundary>}
-        {navigation.area === "teachloop" && <Boundary name="Teach Me: Live Looping"><TeachLoopWorkspace /></Boundary>}
+        {navigation.area === "setstudio" && <Boundary name="AI Set Studio"><SetStudioWorkspace /></Boundary>}
       </section>
       </>}
       {tool && <ToolsOverlay tab={tool} setTab={setTool} onClose={() => setTool(null)} />}

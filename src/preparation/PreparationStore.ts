@@ -7,6 +7,11 @@ import { camelotKey } from "../analysis/discovery";
 
 export interface PreparationStatus { revision: number; pending: number; error: string | null }
 
+/** The energy shown everywhere: the user's override, else the multi-feature set energy, else the legacy estimate. */
+export function effectiveEnergy(r: Pick<TrackPreparation, "energy" | "intel" | "setOverrides">): number | null {
+  return r.setOverrides?.energy ?? r.intel?.energy ?? r.energy;
+}
+
 /** One content-addressed record per file, shared by both decks, imports and background analysis. */
 export class PreparationStore extends Emitter<{ change: PreparationStatus; record: TrackPreparation }> implements PreparationPort {
   readonly ready: Promise<void>;
@@ -89,7 +94,7 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
     const r = this.forRef(track.ref);
     const confidences = r ? [r.beatGrid ? Math.min(1, r.beatGrid.confidence / 2) : null, r.key ? r.keyConfidence : null, r.energy !== null ? r.energyConfidence : null].filter((x): x is number => x !== null) : [];
     return r ? { ...track, trackId: r.trackId, bpm: r.beatGrid?.bpm ?? r.bpm ?? track.bpm, key: r.key ?? track.key,
-      camelot: camelotKey(r.key ?? track.key), energy: r.energy, analysisConfidence: confidences.length ? confidences.reduce((a, b) => a + b, 0) / confidences.length : 0,
+      camelot: camelotKey(r.key ?? track.key), energy: effectiveEnergy(r), analysisConfidence: confidences.length ? confidences.reduce((a, b) => a + b, 0) / confidences.length : 0,
       hotCueCount: r.cues.filter((c) => c.type === "hotcue").length, savedLoopCount: r.savedLoops.length,
       prepared: r.analysisVersion !== null, durationMs: r.duration ? r.duration * 1000 : track.durationMs } : track;
   }
@@ -140,13 +145,49 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
     }
     if (changed) this.commit(update);
   }
+  /**
+   * AI Set Studio: store derived intelligence and/or user overrides on a record. Never touches cues,
+   * grids or analysis. No-op when nothing changed (callers react to `record` events, so this must be idempotent).
+   */
+  updateSetData(id: string, patch: { intel?: TrackPreparation["intel"]; setOverrides?: TrackPreparation["setOverrides"] | null; autoCues?: TrackPreparation["autoCues"] | null }): TrackPreparation | null {
+    const r = this.get(id);
+    if (!r) return null;
+    const next: TrackPreparation = { ...r };
+    if (patch.intel !== undefined) next.intel = patch.intel;
+    if (patch.setOverrides === null) delete next.setOverrides;
+    else if (patch.setOverrides !== undefined) next.setOverrides = patch.setOverrides;
+    if (patch.autoCues === null) delete next.autoCues;
+    else if (patch.autoCues !== undefined) next.autoCues = patch.autoCues;
+    if (JSON.stringify(next.intel) === JSON.stringify(r.intel) && JSON.stringify(next.setOverrides) === JSON.stringify(r.setOverrides) && JSON.stringify(next.autoCues) === JSON.stringify(r.autoCues)) return r;
+    return this.commit(next);
+  }
+  /**
+   * AI Set Studio Auto Cue: put one hot cue into a slot of this app's cue database (the "Suggested" cue
+   * source), or clear it. Callers decide (with the user's confirmation) whether replacing is allowed;
+   * this never touches other slots, memory cues, loops or the grid.
+   */
+  setHotcue(id: string, slot: number, cue: Omit<PreparedCue, "slot" | "type"> | null): TrackPreparation | null {
+    const r = this.get(id);
+    if (!r || slot < 0 || slot >= 8) return null;
+    const others = r.cues.filter((c) => c.type !== "hotcue" || c.slot !== slot);
+    return this.commit({ ...r, cues: cue ? [...others, { ...cue, slot, type: "hotcue" }] : others });
+  }
   /** Correct a track's beat grid by hand (saved as manually adjusted; analysis won't overwrite it). */
   editGrid(id: string, bpm: number, firstBeat: number): TrackPreparation | null {
     const r = this.get(id);
-    if (!r || !(bpm >= 20 && bpm <= 400) || !Number.isFinite(firstBeat)) return null;
-    const base = r.beatGrid ?? { bpm, firstBeat, confidence: 1, source: "metadata" as const };
-    const grid = makeGrid({ ...base, bpm, firstBeat: Math.max(0, firstBeat) }, r.duration, true, (r.beatGrid?.offset ?? 0) + firstBeat - base.firstBeat);
-    return this.commit({ ...r, beatGrid: grid, bpm });
+    return r ? this.setGrid(id, { bpm, firstBeat, confidence: r.beatGrid?.confidence ?? 1, source: r.beatGrid?.source ?? "metadata", phraseAnchor: r.beatGrid?.phraseAnchor ?? null }, true) : null;
+  }
+  /**
+   * Replace a track's beat grid (BeatGridService makes every user edit through here). `manual` = set by
+   * hand: re-analysis keeps a hand-set grid. Nothing else about the record changes.
+   */
+  setGrid(id: string, g: { bpm: number; firstBeat: number; confidence: number; source: "analysis" | "metadata" | "none"; phraseAnchor?: number | null }, manual: boolean): TrackPreparation | null {
+    const r = this.get(id);
+    if (!r || !(g.bpm >= 20 && g.bpm <= 400) || !Number.isFinite(g.firstBeat)) return null;
+    const firstBeat = Math.max(0, g.firstBeat), before = r.beatGrid;
+    const { phraseAnchor, ...rest } = g;
+    const grid = makeGrid({ ...rest, firstBeat, ...(phraseAnchor !== null && phraseAnchor !== undefined ? { phraseAnchor } : {}) }, r.duration, manual, (before?.offset ?? 0) + firstBeat - (before?.firstBeat ?? firstBeat));
+    return this.commit({ ...r, beatGrid: grid, bpm: g.bpm });
   }
 
   async waveform(id: string): Promise<TrackAnalysis | null> {
@@ -185,8 +226,31 @@ export class PreparationStore extends Emitter<{ change: PreparationStatus; recor
       duration, bpm: grid?.bpm ?? a.bpm, key: track.key ?? a.key ?? r.key, keyConfidence: track.key ? 0.4 : a.keyConfidence,
       energy: a.energy, energyConfidence: a.energyConfidence, sections: a.sections, recommendedCues: a.recommendedCues,
       gain: a.gainDb === null ? r.gain : { gainDb: a.gainDb, peak: a.peak, method: "rms-v1" },
-      cues, beatGrid: grid, analysisVersion: ANALYSIS_VERSION, analysedAt: cache.analysedAt });
+      cues, beatGrid: grid, analysisVersion: ANALYSIS_VERSION, analysedAt: cache.analysedAt, gridFitVersion: a.gridFitVersion ?? 0 });
     await this.flush();
+  }
+  /** Analysed tracks whose grid predates the current whole-track grid fit (see AnalysisService.refitLibrary). */
+  needingGridFit(version: number): string[] {
+    return [...this.records.values()].filter((r) => r.analysisVersion !== null && (r.gridFitVersion ?? 0) < version).map((r) => r.trackId);
+  }
+  /**
+   * Store a re-fitted grid for an already analysed track (bpm, first beat, confidence and source only — the
+   * waveform, cues, key and everything else stay as they are, as does the analysis date). A grid set by hand
+   * is kept; only the cached analysis and the version change for it. Returns the updated record.
+   */
+  async saveGridFit(id: string, a: Pick<TrackAnalysis, "bpm" | "firstBeat" | "confidence" | "bpmSource" | "gridFitVersion">): Promise<TrackPreparation | null> {
+    const cached = this.waveformMemory.get(id) ?? await this.persistence.loadWaveform(id);
+    if (cached) {
+      const next: WaveformRecord = { ...cached, bpm: a.bpm, firstBeat: a.firstBeat, confidence: a.confidence, bpmSource: a.bpmSource, gridFitVersion: a.gridFitVersion ?? 0 };
+      await this.persistence.saveWaveform(next); this.cache(next);
+    }
+    const r = this.get(id);
+    if (!r) return null;
+    const manual = !!r.beatGrid?.manuallyAdjusted;
+    const grid = manual ? r.beatGrid : a.bpm && a.firstBeat !== null ? makeGrid({ bpm: a.bpm, firstBeat: a.firstBeat, confidence: a.confidence, source: a.bpmSource }, r.duration) : r.beatGrid;
+    const next = this.commit({ ...r, beatGrid: grid, bpm: grid?.bpm ?? r.bpm, gridFitVersion: a.gridFitVersion ?? 0 });
+    await this.flush();
+    return next;
   }
   /** Portable, schema-versioned structure for a future backup/import UI. */
   async exportData(includeWaveforms = false) {

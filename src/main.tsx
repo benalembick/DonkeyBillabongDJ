@@ -2,7 +2,11 @@ import { createRoot } from "react-dom/client";
 import { createApp } from "./app/createApp";
 import { handleOAuthPopup } from "./providers/browser/browserStreaming";
 import { AppRoot } from "./ui/App";
+import { installDeckThemeCss } from "./ui/deckTheme";
 import "./ui/styles.css";
+
+// Deck colour identity (blue A / amber B) as CSS variables, from the same definitions the waveform renderer uses.
+installDeckThemeCss(document.documentElement);
 
 // A streaming sign-in popup returning to this page only hands back its result.
 if (!handleOAuthPopup()) {

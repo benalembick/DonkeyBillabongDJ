@@ -29,12 +29,12 @@ export async function runBigLibrarySmoke(win: BrowserWindow, count: number): Pro
       return { fps: Math.round(frames / ((performance.now() - t0) / 1000)), worstFrameMs: Math.round(worst) };
     };
     // Start somewhere else so opening All Tracks is a real navigation.
-    document.querySelector('.main-navigation button[title="Playlists"]')?.click();
+    document.querySelector('.main-navigation button[title="Mashup Projects"]')?.click();
     await sleep(300);
     a.library.hydrate(tracks);
     await sleep(300);
     const out = { tracks: ${count} };
-    document.querySelector('.main-navigation button[title="Collections"]')?.click();
+    document.querySelector('.main-navigation button[title="DJ Deck"]')?.click();
     await sleep(200);
     const t0 = performance.now();
     const all = document.querySelector('[data-source="local-all"]') || [...document.querySelectorAll("button, .tile")].find((b) => /all tracks/i.test(b.textContent || ""));

@@ -2,7 +2,7 @@
  * Live sampler: the 16 Production Studio Sampler pads on the DJ screen, layered over the mix.
  * Pads dispatch the same `samplerN.play` actions a MIDI controller can be mapped to (Controller → MIDI learn).
  */
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { midiName } from "../production/midi";
 import { PAD_BANKS, PADS_PER_BANK, padLabel } from "../production/types";
 import { useApp, useSend } from "./context";
@@ -10,7 +10,11 @@ import { useApp, useSend } from "./context";
 const OPEN_KEY = "dbdj.ui.liveSamplerOpen";
 const readOpen = (): boolean => { try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; } };
 
-export function LiveSamplerBar() {
+/**
+ * `leading` sits at the start of the head row (the DJ screen puts the FX toggle + chips there, sharing one row);
+ * `afterHead` opens directly beneath that row (the expanded FX units), so the toggles never move.
+ */
+export function LiveSamplerBar({ leading, afterHead }: { leading?: ReactNode; afterHead?: ReactNode } = {}) {
   const { production } = useApp();
   const send = useSend();
   const state = useSyncExternalStore(production.subscribe, production.getState, production.getState);
@@ -25,6 +29,7 @@ export function LiveSamplerBar() {
   return (
     <div className={`live-sampler${open ? " open" : ""}`}>
       <div className="live-sampler-head">
+        {leading}
         <button className="live-sampler-toggle" aria-expanded={open} onClick={toggle} title={open ? "Hide sampler pads" : "Show sampler pads"}>
           <span aria-hidden>{open ? "▾" : "▸"}</span> SAMPLER
         </button>
@@ -41,8 +46,9 @@ export function LiveSamplerBar() {
           </label>
           <button disabled={!state.padsPlaying.length} onClick={() => send("sampler.stopall")}>■ STOP ALL</button>
         </>}
-        <button className="live-sampler-edit" onClick={openStudio} title="Load, trim and assign samples in Production Studio → Sampler">EDIT PADS</button>
+        {open && <button className="live-sampler-edit" onClick={openStudio} title="Load, trim and assign samples in Production Studio → Sampler">EDIT PADS</button>}
       </div>
+      {afterHead}
       {open && (
         <div className="live-sampler-pads" role="group" aria-label="Sampler pads">
           {pads.map((pad) => {

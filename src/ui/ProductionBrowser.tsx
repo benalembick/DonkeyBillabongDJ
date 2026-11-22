@@ -3,9 +3,13 @@
  * MASHUPS, DJ LIBRARY) each show one searchable list; with no category selected the Sampler samples and the
  * DJ library share the panel with a draggable divider. Audio items drag onto the timeline, ＋ adds them at the
  * playhead and ▶ previews them.
+ *
+ * `mode="sampler"` (Sampler tab): same browser, but ＋ / clicking an item loads it into the Sampler editor, the
+ * add-track buttons give way to BROWSE AUDIO FILE + a drop area, and arrangement-only entries are hidden.
  */
 import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { TrackInfo } from "../core/engine/types";
+import type { AudioFileRef } from "../platform";
 import { SYNTH_PRESETS } from "../production/presets";
 import { isRecordingRef } from "../production/recordings";
 import { padLabel, type ProductionProject, type SamplerSample } from "../production/types";
@@ -47,13 +51,22 @@ function projectSources(project: ProductionProject): Map<string, string> {
   return out;
 }
 
-export function ProductionBrowser({ onError, onOpenSampler }: { onError(message: string): void; onOpenSampler(): void }) {
+export function ProductionBrowser({ onError, onOpenSampler, mode = "arrangement" }: { onError(message: string): void; onOpenSampler(): void; mode?: "arrangement" | "sampler" }) {
   const app = useApp(); const studio = app.production; const state = useSyncExternalStore(studio.subscribe, studio.getState, studio.getState); const libraryState = useLibraryState();
-  const [category, setCategory] = useState<Category>(() => (CATEGORIES.some(([c]) => c === read(STORE.category)) ? read(STORE.category) as Category : "all"));
+  const forSampler = mode === "sampler";
+  // Instruments and synth presets aren't audio, so the Sampler doesn't list them (the remembered choice falls back to the overview).
+  const categories = forSampler ? CATEGORIES.filter(([c]) => c !== "instruments" && c !== "presets") : CATEGORIES;
+  const [chosen, setCategory] = useState<Category>(() => (CATEGORIES.some(([c]) => c === read(STORE.category)) ? read(STORE.category) as Category : "all"));
+  const category: Category = categories.some(([c]) => c === chosen) ? chosen : "all";
   const [query, setQuery] = useState(""); const [split, setSplit] = useState(() => Number(read(STORE.split)) || 200); const bodyRef = useRef<HTMLDivElement>(null);
   const q = query.trim().toLowerCase(); const matches = (...text: (string | null | undefined)[]) => !q || text.join(" ").toLowerCase().includes(q);
   const choose = (next: Category) => { const value = next === category ? "all" : next; setCategory(value); write(STORE.category, value); };
   const fail = (x: unknown) => onError(x instanceof Error ? x.message : String(x)); const run = (work: () => unknown) => { try { const r = work(); if (r instanceof Promise) r.catch(fail); } catch (x) { fail(x); } };
+  // Sampler mode: load a source into the Sampler editor (a file from disk is added to the DJ library first).
+  const loadSource = (item: { ref: string; title: string }) => run(() => studio.loadSamplerSource(item));
+  const loadRefs = async (refs: AudioFileRef[]) => { const [ref] = refs; if (!ref) return; await app.addFiles([ref]); await studio.loadSamplerSource({ ref: ref.ref, title: ref.name.replace(/\.[^.]+$/, "") }); };
+  /** Sampler mode: clicking a row (not one of its buttons) loads it. */
+  const rowClick = (load: () => void) => forSampler ? (e: React.MouseEvent) => { if (!(e.target as HTMLElement).closest("button")) load(); } : undefined;
 
   const library = useMemo(() => libraryState.tracks.filter((t) => t.source === "local"), [libraryState.tracks]);
   const project = state.project; const sampler = project.sampler;
@@ -81,12 +94,12 @@ export function ProductionBrowser({ onError, onOpenSampler }: { onError(message:
 
   const audioRow = (item: AudioItem) => { if (!matches(item.title, item.subtitle, item.meta)) return false;
     const stem = item.library ? stemIdx[item.ref] : undefined, progress = item.library ? stemProgress[item.ref] : undefined, hasStem = !!stem || progress !== undefined;
-    return <div key={item.ref} className={`ps-browser-item${state.previewRef === item.ref ? " previewing" : ""}`} draggable title="Drag onto an audio track · ＋ adds at the playhead · ▶ previews" onDragStart={(e) => e.dataTransfer.setData(TRACK_MIME, JSON.stringify({ ref: item.ref, title: item.title }))}>
+    return <div key={item.ref} className={`ps-browser-item${forSampler ? " clickable" : ""}${state.previewRef === item.ref ? " previewing" : ""}`} draggable={!forSampler} title={forSampler ? "Click or ＋ to load into the Sampler editor · ▶ previews" : "Drag onto an audio track · ＋ adds at the playhead · ▶ previews"} onDragStart={forSampler ? undefined : (e) => e.dataTransfer.setData(TRACK_MIME, JSON.stringify({ ref: item.ref, title: item.title }))} onClick={rowClick(() => loadSource(item))}>
     <b>{item.title}</b><span>{item.subtitle}</span>{(item.meta || hasStem) && <small>{item.meta}{item.meta && hasStem ? " · " : ""}<StemBadge stem={stem} stemProgress={progress} /></small>}
-    <div className="ps-item-actions"><button aria-label={`${state.previewRef === item.ref ? "Stop preview of" : "Preview"} ${item.title}`} onClick={() => run(() => studio.previewSource(item.ref))}>{state.previewRef === item.ref ? "■" : "▶"}</button><button aria-label={`Add ${item.title} at the playhead`} onClick={() => run(() => studio.addAudioAtPlayhead(item))}>＋</button>{item.library && <button className="ps-split-stems" aria-label={`Split ${item.title} into stems`} disabled={!!splitBlocked} title={splitBlocked ?? `Split into 4 stems (Vocals, Drums, Bass, Instruments) on synchronized tracks at the playhead${stem === "complete" ? " — already separated, loads from the cache in seconds" : " — not separated yet, takes a few minutes"}`} onClick={() => run(() => studio.addLibraryTrackAsStems(item))}>✦</button>}</div>
+    <div className="ps-item-actions"><button aria-label={`${state.previewRef === item.ref ? "Stop preview of" : "Preview"} ${item.title}`} onClick={() => run(() => studio.previewSource(item.ref))}>{state.previewRef === item.ref ? "■" : "▶"}</button>{forSampler ? <button aria-label={`Load ${item.title} into the Sampler`} title="Load into the Sampler editor" onClick={() => loadSource(item)}>＋</button> : <button aria-label={`Add ${item.title} at the playhead`} onClick={() => run(() => studio.addAudioAtPlayhead(item))}>＋</button>}{item.library && !forSampler && <button className="ps-split-stems" aria-label={`Split ${item.title} into stems`} disabled={!!splitBlocked} title={splitBlocked ?? `Split into 4 stems (Vocals, Drums, Bass, Instruments) on synchronized tracks at the playhead${stem === "complete" ? " — already separated, loads from the cache in seconds" : " — not separated yet, takes a few minutes"}`} onClick={() => run(() => studio.addLibraryTrackAsStems(item))}>✦</button>}</div>
   </div>; };
-  const patternRow = () => sampler.pattern && matches("pattern", sampler.pattern.mode) && <div className="ps-browser-item ps-sample-item ps-pattern-item" draggable title="Drag onto the timeline, or press ＋ to add it at the playhead on a Sampler track" onDragStart={(e) => e.dataTransfer.setData(PATTERN_MIME, "pattern")}><b>{sampler.pattern.mode === "chromatic" ? "Chromatic Pattern" : "Sampler Pattern"}</b><span>{sampler.pattern.notes.length} notes · {sampler.pattern.bars} bar{sampler.pattern.bars === 1 ? "" : "s"} · {sampler.quantize.grid === "off" ? "unquantized" : `Q ${sampler.quantize.grid}`}</span><div className="ps-item-actions"><button aria-label="Add the pattern at the playhead" onClick={() => run(() => studio.patternToArrangement())}>＋</button></div></div>;
-  const sampleRows = () => samples.filter(({ sample, label }) => matches(sample.name, label)).map(({ key, label, sample }) => <div key={key} className="ps-browser-item ps-sample-item" draggable title="Drag onto an audio track, or press ＋ to drop it at the playhead" onDragStart={(e) => e.dataTransfer.setData(SAMPLE_MIME, JSON.stringify(sample))}><b>{sample.name}</b><span>{label} · {(sample.end - sample.start).toFixed(2)}s{sample.edits.reverse ? " · REV" : ""}</span><div className="ps-item-actions"><button aria-label={`Add ${sample.name} at the playhead`} onClick={() => run(() => studio.addSampleToArrangement(sample))}>＋</button></div></div>);
+  const patternRow = () => !forSampler && sampler.pattern && matches("pattern", sampler.pattern.mode) && <div className="ps-browser-item ps-sample-item ps-pattern-item" draggable title="Drag onto the timeline, or press ＋ to add it at the playhead on a Sampler track" onDragStart={(e) => e.dataTransfer.setData(PATTERN_MIME, "pattern")}><b>{sampler.pattern.mode === "chromatic" ? "Chromatic Pattern" : "Sampler Pattern"}</b><span>{sampler.pattern.notes.length} notes · {sampler.pattern.bars} bar{sampler.pattern.bars === 1 ? "" : "s"} · {sampler.quantize.grid === "off" ? "unquantized" : `Q ${sampler.quantize.grid}`}</span><div className="ps-item-actions"><button aria-label="Add the pattern at the playhead" onClick={() => run(() => studio.patternToArrangement())}>＋</button></div></div>;
+  const sampleRows = () => samples.filter(({ sample, label }) => matches(sample.name, label)).map(({ key, label, sample }) => <div key={key} className={`ps-browser-item ps-sample-item${forSampler ? " clickable" : ""}`} draggable={!forSampler} title={forSampler ? "Click or ＋ to open in the Sampler editor (keeps its trim and edits)" : "Drag onto an audio track, or press ＋ to drop it at the playhead"} onDragStart={forSampler ? undefined : (e) => e.dataTransfer.setData(SAMPLE_MIME, JSON.stringify(sample))} onClick={rowClick(() => run(() => studio.openSampleInEditor(sample)))}><b>{sample.name}</b><span>{label} · {(sample.end - sample.start).toFixed(2)}s{sample.edits.reverse ? " · REV" : ""}</span><div className="ps-item-actions">{forSampler ? <button aria-label={`Open ${sample.name} in the Sampler editor`} title="Open in the Sampler editor" onClick={() => run(() => studio.openSampleInEditor(sample))}>＋</button> : <button aria-label={`Add ${sample.name} at the playhead`} onClick={() => run(() => studio.addSampleToArrangement(sample))}>＋</button>}</div></div>);
   const list = (items: ReactNode[], empty: ReactNode) => { const shown = items.filter(Boolean); return shown.length ? shown : <p className="ps-browser-empty">{q ? `Nothing matches “${query}”.` : empty}</p>; };
 
   const content = (): ReactNode => {
@@ -94,7 +107,7 @@ export function ProductionBrowser({ onError, onOpenSampler }: { onError(message:
       case "project": return list(lists.project.map(audioRow), "Audio you add to the arrangement or the Sampler shows here.");
       case "samples": return <>{patternRow()}{list(sampleRows(), <>Assign or save samples in the <a onClick={onOpenSampler}>Sampler</a>, or right-click a clip → Save as sample.</>)}</>;
       case "loops": return list(lists.loops.map(audioRow), "No loops found. Files with “loop” in the name, or short (up to 32 s) files with a detected BPM, from your DJ library show here.");
-      case "drums": return <>{matches("drum kit built-in") && <div className="ps-browser-item ps-instrument-item"><b>Built-in Drum Kit</b><span>Six voices · 16-step sequencer</span><div className="ps-item-actions"><button aria-label="Add a drum kit track" onClick={() => run(() => studio.addInstrumentTrack("drums"))}>＋</button></div></div>}{list(lists.drums.map(audioRow), "No drum files found. Files named kick, snare, hat, clap, perc, 808… in your DJ library show here.")}</>;
+      case "drums": return <>{!forSampler && matches("drum kit built-in") && <div className="ps-browser-item ps-instrument-item"><b>Built-in Drum Kit</b><span>Six voices · 16-step sequencer</span><div className="ps-item-actions"><button aria-label="Add a drum kit track" onClick={() => run(() => studio.addInstrumentTrack("drums"))}>＋</button></div></div>}{list(lists.drums.map(audioRow), "No drum files found. Files named kick, snare, hat, clap, perc, 808… in your DJ library show here.")}</>;
       case "instruments": return list([
         ["Drum Kit", "Six-voice kit with a 16-step sequencer", () => studio.addInstrumentTrack("drums")],
         ["Synth", "Subtractive synth with piano roll", () => studio.addInstrumentTrack("synth")],
@@ -104,7 +117,7 @@ export function ProductionBrowser({ onError, onOpenSampler }: { onError(message:
       case "presets": return <><p className="ps-browser-note">{synthTarget ? <>Click a preset to apply it to <b>{synthTarget.name}</b>, or ＋ to start a new synth track.</> : "Select a clip on a synth track to apply presets to it; ＋ starts a new synth track with the preset."}</p>{list(SYNTH_PRESETS.filter((p) => matches(p.name, p.description)).map((preset) => <div key={preset.name} className={`ps-browser-item ps-instrument-item${synthTarget ? " clickable" : ""}`} onClick={() => synthTarget && run(() => studio.applySynthPreset(synthTarget.id, preset.synth, preset.name))}><b>{preset.name}</b><span>{preset.description} · {preset.synth.oscillator}</span><div className="ps-item-actions"><button aria-label={`New synth track with ${preset.name}`} onClick={(e) => { e.stopPropagation(); run(() => studio.addInstrumentTrack("synth", { synth: preset.synth, name: preset.name })); }}>＋</button></div></div>), "")}</>;
       case "recordings": return list(lists.recordings.map(audioRow), "Record with ● AUDIO (arm an audio track) or ● RECORD MIC in the Sampler.");
       case "stems": return list(lists.stems.map(audioRow), "Press ✦ on a DJ LIBRARY song, or select an audio clip and use STEMS → Separate into tracks (CLIP panel or right-click).");
-      case "mashups": return <>{list(lists.mashups.map(audioRow), "Rendered mashups (Mashup Projects → Render) show here.")}{recipes.length > 0 && <h4>MASHUP RECIPES</h4>}{recipes.filter((r) => matches(r.name)).map((recipe) => { const a = app.library.getByRef(recipe.aRef), b = app.library.getByRef(recipe.bRef); return <div key={recipe.id} className="ps-browser-item ps-instrument-item"><b>{recipe.name}</b><span>{a?.title ?? fileName(recipe.aRef)} × {b?.title ?? fileName(recipe.bRef)}</span><div className="ps-item-actions"><button title="Add both source tracks at the playhead on two new tracks" aria-label={`Add the sources of ${recipe.name}`} onClick={() => run(async () => { await studio.addAudioAtPlayhead({ ref: recipe.aRef, title: a?.title ?? fileName(recipe.aRef) }, { newTrack: true }); await studio.addAudioAtPlayhead({ ref: recipe.bRef, title: b?.title ?? fileName(recipe.bRef) }, { newTrack: true }); })}>＋</button></div></div>; })}</>;
+      case "mashups": return <>{list(lists.mashups.map(audioRow), "Rendered mashups (Mashup Projects → Render) show here.")}{!forSampler && recipes.length > 0 && <h4>MASHUP RECIPES</h4>}{(forSampler ? [] : recipes).filter((r) => matches(r.name)).map((recipe) => { const a = app.library.getByRef(recipe.aRef), b = app.library.getByRef(recipe.bRef); return <div key={recipe.id} className="ps-browser-item ps-instrument-item"><b>{recipe.name}</b><span>{a?.title ?? fileName(recipe.aRef)} × {b?.title ?? fileName(recipe.bRef)}</span><div className="ps-item-actions"><button title="Add both source tracks at the playhead on two new tracks" aria-label={`Add the sources of ${recipe.name}`} onClick={() => run(async () => { await studio.addAudioAtPlayhead({ ref: recipe.aRef, title: a?.title ?? fileName(recipe.aRef) }, { newTrack: true }); await studio.addAudioAtPlayhead({ ref: recipe.bRef, title: b?.title ?? fileName(recipe.bRef) }, { newTrack: true }); })}>＋</button></div></div>; })}</>;
       case "library": return list(lists.library.map(audioRow), "Add music to the DJ library to use it here.");
       case "all": return null;
     }
@@ -119,11 +132,14 @@ export function ProductionBrowser({ onError, onOpenSampler }: { onError(message:
   };
   const active = CATEGORIES.find(([c]) => c === category);
 
-  return <aside className="ps-browser">
-    <h3>PRODUCTION BROWSER</h3>
-    <AddTrackButtons className="ps-create" onError={onError}/>
+  return <aside className={`ps-browser${forSampler ? " ps-browser-sampler" : ""}`}>
+    <h3>{forSampler ? "SAMPLER SOURCES" : "PRODUCTION BROWSER"}</h3>
+    {forSampler ? <>
+      <button className="primary ps-browse-file" onClick={() => run(async () => loadRefs(await app.platform.pickAudioFiles()))}>＋ BROWSE AUDIO FILE</button>
+      <div className="ps-browser-drop" onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.stopPropagation(); } }} onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); e.stopPropagation(); const files = [...e.dataTransfer.files]; run(async () => loadRefs(await app.platform.refsFromDrop(files))); }}><b>DROP AUDIO HERE</b><span>MP3, WAV, AIFF, FLAC and supported audio</span></div>
+    </> : <AddTrackButtons className="ps-create" onError={onError}/>}
     <input placeholder={active ? `Search ${active[1].toLowerCase()}…` : "Search samples and library…"} value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search the browser" />
-    <nav aria-label="Browser categories">{CATEGORIES.map(([id, label, hint]) => <button key={id} className={category === id ? "active" : ""} aria-pressed={category === id} title={`${hint}${category === id ? " · click again for the overview" : ""}`} onClick={() => choose(id)}>{label}</button>)}</nav>
+    <nav aria-label="Browser categories">{categories.map(([id, label, hint]) => <button key={id} className={category === id ? "active" : ""} aria-pressed={category === id} title={`${hint}${category === id ? " · click again for the overview" : ""}`} onClick={() => choose(id)}>{label}</button>)}</nav>
     <div className="ps-browser-body" ref={bodyRef}>
       {category === "all" ? <>
         <div className="ps-browser-section" style={{ height: split }}>

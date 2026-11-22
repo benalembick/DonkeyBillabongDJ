@@ -2,7 +2,9 @@ import { Emitter } from "../core/events";
 import { cueSourceFor, type DJEngine } from "../core/engine/DJEngine";
 import type { AudioEngine, TrackInfo } from "../core/engine/types";
 import type { TrackAnalysis } from "./analyzeTrack";
+import { GRID_FIT_VERSION } from "./gridFit";
 import type { PreparationStore } from "../preparation/PreparationStore";
+import { GRID_CONFIDENT } from "../preparation/beatGrid";
 
 export type Overview = TrackAnalysis;
 export interface AnalysisProgress { busy: boolean; done: number; total: number; current: string; errors: string[]; skipped: string[]; cacheHits: number; runs: number }
@@ -30,13 +32,17 @@ const SKIP_KEY = "dbdj.analysis.skip";
 class SkipTrack extends Error {}
 
 const minutes = (s: number) => `${Math.round(s / 60)} min`;
+/** A cached analysis made before the current whole-track grid fit (re-fitted from the cache, no decoding). */
+const gridFitOutdated = (a: Overview) => (a.gridFitVersion ?? 0) < GRID_FIT_VERSION;
 
 /** Shared worker and persistent cache for deck loads and sequential off-deck library preparation. */
 export class AnalysisService extends Emitter<{ overview: { deck: number; overview: Overview | null }; change: AnalysisProgress }> {
   private worker: Worker | null = null;
   private overviews: (Overview | null)[] = [];
   private generations: number[] = [];
-  private pending = new Map<number, { resolve: (a: Overview) => void; reject: (e: unknown) => void }>();
+  private pending = new Map<number, { resolve: (a: never) => void; reject: (e: unknown) => void }>();
+  private refitting = new Map<string, Promise<Overview>>();
+  private refittingLibrary = false;
   private inflight = new Map<string, Promise<Overview>>();
   private nextId = 1;
   private cancelled = false;
@@ -87,9 +93,11 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
   private async analyseBuffer(track: TrackInfo, buffer: AudioBuffer, force = false, transfer = false, resuggest = false): Promise<Overview> {
     const trackId = track.trackId;
     if (!force && trackId && this.options) {
-      const cached = await this.options.preparation.waveform(trackId);
+      let cached = await this.options.preparation.waveform(trackId);
       if (cached) {
         this.set({ cacheHits: this.state.cacheHits + 1 });
+        // Re-fit first, so a display upgrade (which re-saves the cache) carries the fitted grid.
+        if (gridFitOutdated(cached)) cached = await this.refitCached(trackId, cached, false);
         if (!cached.bands) this.upgradeDisplay(track, trackId, buffer, cached);
         return cached;
       }
@@ -147,6 +155,58 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
       .finally(() => this.upgrading.delete(trackId));
   }
 
+  /**
+   * Bring a cached analysis's beat grid up to the current whole-track grid fit (gridFit.ts) in the worker,
+   * from the cached bands — no decoding. Saves it (a hand-set grid is kept) and, with `applyToDecks`, pushes
+   * it to any deck that has the track. On failure the cached analysis is returned unchanged.
+   */
+  private refitCached(trackId: string, cached: Overview, applyToDecks: boolean): Promise<Overview> {
+    const running = this.refitting.get(trackId);
+    if (running) return running;
+    const work = (async () => {
+      if (!this.options) return cached;
+      const id = this.nextId++;
+      const grid = await new Promise<Pick<Overview, "bpm" | "firstBeat" | "confidence" | "bpmSource" | "gridFitVersion">>((resolve, reject) => {
+        this.pending.set(id, { resolve, reject });
+        const { bpm, firstBeat, confidence, bpmSource, fps } = cached;
+        this.getWorker().postMessage({ id, refit: { low: cached.low.slice(), mid: cached.mid.slice(), fps, bpm, firstBeat, confidence, bpmSource } });
+      });
+      const upgraded: Overview = { ...cached, ...grid };
+      await this.options.preparation.saveGridFit(trackId, upgraded);
+      if (applyToDecks) this.engine.getState().decks.forEach((d, deck) => { if (d.status === "ready" && d.track?.trackId === trackId) this.apply(deck, upgraded); });
+      return upgraded;
+    })()
+      .catch((err) => { this.options?.onInfo?.(`Couldn't re-fit the beat grid of ${trackId}: ${String(err)}`); return cached; })
+      .finally(() => this.refitting.delete(trackId));
+    this.refitting.set(trackId, work);
+    return work;
+  }
+
+  /**
+   * One pass over the library: re-fit every analysed track whose grid predates the current grid fit, from
+   * its cached analysis. Runs in the background (yielding to library analysis); reports once when done.
+   */
+  async refitLibrary(): Promise<{ refitted: number; trusted: number }> {
+    const result = { refitted: 0, trusted: 0 };
+    if (!this.options || this.refittingLibrary) return result;
+    this.refittingLibrary = true;
+    try {
+      await this.options.preparation.ready;
+      for (const id of this.options.preparation.needingGridFit(GRID_FIT_VERSION)) {
+        while (this.state.busy) await new Promise((r) => setTimeout(r, 2000));
+        const cached = await this.options.preparation.waveform(id);
+        if (!cached || !gridFitOutdated(cached)) continue;
+        const a = await this.refitCached(id, cached, true);
+        if (a.gridFitVersion === GRID_FIT_VERSION) result.refitted++;
+        const g = this.options.preparation.get(id)?.beatGrid;
+        if (g && (g.manuallyAdjusted || g.confidence >= GRID_CONFIDENT)) result.trusted++;
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      if (result.refitted) this.options.onInfo?.(`Beat grids re-fitted across the whole track for ${result.refitted} analysed track(s); ${result.trusted} of them can be used for Beat Mix.`);
+    } finally { this.refittingLibrary = false; }
+    return result;
+  }
+
   cancelBatch(): void { this.cancelled = true; }
 
   /**
@@ -160,7 +220,11 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     onStage("reading");
     const bytes = await this.options.readAudio(track.ref);
     const prep = await this.options.preparation.identify(track, bytes);
-    if (!force && (await this.options.preparation.waveform(prep.trackId)) && prep.analysisVersion !== null) return onStage("done");
+    const cached = !force && prep.analysisVersion !== null ? await this.options.preparation.waveform(prep.trackId) : null;
+    if (cached) {
+      if (gridFitOutdated(cached)) await this.refitCached(prep.trackId, cached, true);
+      return onStage("done");
+    }
     onStage("decoding");
     const decoded = await this.options.audio.decode(bytes);
     const buffer = decoded.handle as AudioBuffer;
@@ -205,8 +269,10 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
           if (!force && bytes.byteLength > MAX_BATCH_BYTES) throw new SkipTrack(`file too large for background analysis (${Math.round(bytes.byteLength / 1048576)} MB)`);
           const prep = await this.options.preparation.identify(track, bytes);
           const cached = !force && await this.options.preparation.waveform(prep.trackId);
-          if (cached) this.set({ cacheHits: this.state.cacheHits + 1 });
-          else {
+          if (cached) {
+            this.set({ cacheHits: this.state.cacheHits + 1 });
+            if (gridFitOutdated(cached)) await this.refitCached(prep.trackId, cached, true);
+          } else {
             this.guard(track.ref);
             const decoded = await this.options.audio.decode(bytes), buffer = decoded.handle as AudioBuffer;
             if (!buffer || typeof buffer.getChannelData !== "function") throw new Error("Audio decoder did not provide analysis samples");
@@ -269,12 +335,13 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
   private getWorker(): Worker {
     if (!this.worker) {
       this.worker = new Worker(new URL("./overview.worker.ts", import.meta.url), { type: "module" });
-      this.worker.onmessage = (e: MessageEvent<Overview & { id: number; error?: string }>) => {
+      this.worker.onmessage = (e: MessageEvent<Overview & { id: number; error?: string; grid?: unknown }>) => {
         const job = this.pending.get(e.data.id); this.pending.delete(e.data.id);
         if (!job) return;
         if (e.data.error) { job.reject(new Error(e.data.error)); return; }
+        if (e.data.grid) { job.resolve(e.data.grid as never); return; } // a refit answer
         const { id: _id, error: _error, ...overview } = e.data;
-        job.resolve(overview);
+        job.resolve(overview as never);
       };
       this.worker.onerror = (e) => {
         for (const p of this.pending.values()) p.reject(new Error(e.message));

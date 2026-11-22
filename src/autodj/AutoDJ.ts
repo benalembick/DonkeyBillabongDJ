@@ -7,6 +7,9 @@ import { moveItem, type PlaylistStore } from "../library/PlaylistStore";
 import type { AnalysisService } from "../analysis/AnalysisService";
 import { compatibleKeys, DEFAULT_AUTO_DJ, planTransition, tempoGapOnly, tempoLeadInTarget, type AutoDJSettings, type TransitionPlan } from "./transition";
 import { autoEqCurve, bassSwapOffset } from "./autoEq";
+import { checkPlayable, frameAt, ratesFor, type PreparedTransition } from "../setstudio/transitionModel";
+import { EchoFx } from "../setstudio/echoFx";
+import { gridReliable } from "../preparation/beatGrid";
 
 /** ≈1%/sec at the engine's ~40ms tick rate — a 16% nudge takes about 16s, imperceptibly gradual. */
 const TEMPO_LEADIN_STEP = 0.0004;
@@ -21,6 +24,8 @@ export interface AutoDJState {
   preparing: boolean;
   queueLocked: boolean;
   plan: TransitionPlan | null;
+  /** The AI Set Studio prepared transition being used for the next/current change, if any. */
+  prepared: { id: string; name: string } | null;
   nextSeconds: number | null;
   message: string;
   settings: AutoDJSettings;
@@ -31,7 +36,7 @@ export interface RememberedAutoDJQueue {
   upcoming: string[];
   played: string[];
 }
-interface Options { engine: DJEngine; bus: CommandBus; audio: AudioEngine; library: LibraryStore; playlists: PlaylistStore; analysis: Pick<AnalysisService, "get">; stemAvailable?: (ref: string) => boolean; settings?: Partial<AutoDJSettings>; saveSettings?: (s: AutoDJSettings) => void; rememberedQueue?: Partial<RememberedAutoDJQueue>; saveQueue?: (q: RememberedAutoDJQueue) => void }
+interface Options { engine: DJEngine; bus: CommandBus; audio: AudioEngine; library: LibraryStore; playlists: PlaylistStore; analysis: Pick<AnalysisService, "get">; stemAvailable?: (ref: string) => boolean; /** AI Set Studio prepared transitions (outgoing ref, incoming ref, playlist being played). */ preparedTransitions?: { find(outRef: string, inRef: string, playlistId: string | null): PreparedTransition | null }; settings?: Partial<AutoDJSettings>; saveSettings?: (s: AutoDJSettings) => void; rememberedQueue?: Partial<RememberedAutoDJQueue>; saveQueue?: (q: RememberedAutoDJQueue) => void }
 
 /** Only references and transient playback state; the library owns all track metadata. */
 export class AutoDJ extends Emitter<{ change: AutoDJState }> {
@@ -39,15 +44,17 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   private generation = 0;
   private loadingDeck: number | null = null;
   private prepared: string | null = null;
-  private fade: { from: number; elapsed: number; duration: number; incoming: string; lastPosition: number; mashup: boolean; eqSwapAt: number } | null = null;
+  private fade: { from: number; elapsed: number; duration: number; incoming: string; lastPosition: number; mashup: boolean; eqSwapAt: number; prepared: PreparedTransition | null } | null = null;
+  private echo: EchoFx;
   private unsub: (() => void)[];
   constructor(private o: Options) {
     super();
     const remembered = o.rememberedQueue;
     const refs = (value: unknown) => Array.isArray(value) ? value.filter((ref): ref is string => typeof ref === "string") : [];
-    this.state = { status: "OFF", playlistId: typeof remembered?.playlistId === "string" ? remembered.playlistId : null, current: typeof remembered?.current === "string" ? remembered.current : null, deck: 0, upcoming: refs(remembered?.upcoming), played: refs(remembered?.played), preparing: false, queueLocked: false, plan: null, nextSeconds: null, message: remembered?.current || refs(remembered?.upcoming).length ? "Last Auto DJ queue restored" : "", settings: { ...DEFAULT_AUTO_DJ, ...o.settings } };
+    this.state = { status: "OFF", playlistId: typeof remembered?.playlistId === "string" ? remembered.playlistId : null, current: typeof remembered?.current === "string" ? remembered.current : null, deck: 0, upcoming: refs(remembered?.upcoming), played: refs(remembered?.played), preparing: false, queueLocked: false, plan: null, prepared: null, nextSeconds: null, message: remembered?.current || refs(remembered?.upcoming).length ? "Last Auto DJ queue restored" : "", settings: { ...DEFAULT_AUTO_DJ, ...o.settings } };
     // Manual deck/mixer actions intentionally leave automation active. Once
     // started, Auto DJ owns the transition schedule until STOP AUTO DJ is used.
+    this.echo = new EchoFx(o.engine);
     this.unsub = [o.audio.on((e) => { if (e.type === "error") this.pause(`Audio error: ${e.message}`); })];
   }
   getState(): AutoDJState { return this.state; }
@@ -76,6 +83,7 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   pause(message = "Automatic transitions paused; decks remain under your control") {
     if (this.state.status === "OFF") return;
     this.cancelLoad();
+    this.echo.restore();
     this.set({ status: "PAUSED", preparing: false, message });
   }
   stop() {
@@ -83,8 +91,9 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     // Stop (unlike Pause) never resumes this transition, so let any live automation ramp back
     // to neutral — from wherever it currently is — instead of leaving a stale cut in place.
     if (this.fade) { this.releaseAutoEqIfEngaged(this.state.deck); this.releaseAutoEqIfEngaged(1 - this.state.deck); }
+    this.echo.restore();
     this.fade = null; this.prepared = null;
-    this.set({ status: "OFF", preparing: false, queueLocked: false, plan: null, nextSeconds: null, message: "Auto DJ stopped; decks remain under manual control" });
+    this.set({ status: "OFF", preparing: false, queueLocked: false, plan: null, prepared: null, nextSeconds: null, message: "Auto DJ stopped; decks remain under manual control" });
   }
   /** Restart the preserved session after STOP without rebuilding or losing queue edits. */
   async restart(): Promise<void> {
@@ -216,6 +225,13 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   remove(index: number) { this.editUpcoming(this.state.upcoming.filter((_, i) => i !== index)); }
   move(from: number, to: number) { this.editUpcoming(moveItem(this.state.upcoming, from, to)); }
   playNext(index: number) { this.move(index, 0); }
+  /** Remove several queue positions at once (indices, not refs — a ref can be queued twice). */
+  removeAt(indices: number[]) { const drop = new Set(indices); if (drop.size) this.editUpcoming(this.state.upcoming.filter((_, i) => !drop.has(i))); }
+  /** Move several queue positions to the front, keeping their queue order. */
+  playNextAt(indices: number[]) {
+    const pick = new Set(indices), u = this.state.upcoming;
+    if (pick.size) this.editUpcoming([...u.filter((_, i) => pick.has(i)), ...u.filter((_, i) => !pick.has(i))]);
+  }
   saveToPlaylist() {
     if (this.state.playlistId) this.o.playlists.replaceTracks(this.state.playlistId, [...this.state.played, ...(this.state.current ? [this.state.current] : []), ...this.state.upcoming]);
     this.set({ message: "Queue saved back to playlist" });
@@ -229,15 +245,21 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     const out = this.state.deck, incoming = 1 - out;
     const decks = engine.getState().decks;
     if (!this.prepared || decks[incoming].track?.ref !== this.prepared || decks[incoming].status !== "ready") return;
-    let plan = planTransition(decks[out], decks[incoming], this.state.settings, this.o.analysis.get(out), this.o.analysis.get(incoming));
+    const prep = quick ? null : this.preparedPlan(out, incoming);
+    let plan = prep?.plan ?? planTransition(decks[out], decks[incoming], this.state.settings, this.o.analysis.get(out), this.o.analysis.get(incoming));
     const lateness = Math.max(0, (this.o.audio.getPosition(out) - plan.mixOut) / decks[out].rate);
     // A delayed preload or a stalled renderer may miss the chosen phrase. Never force a late beat mix.
-    if (plan.sync && lateness > 0.25) plan = planTransition(decks[out], decks[incoming], { ...this.state.settings, style: "crossfade" }, this.o.analysis.get(out), this.o.analysis.get(incoming));
+    if (!prep && plan.sync && lateness > 0.25) plan = planTransition(decks[out], decks[incoming], { ...this.state.settings, style: "crossfade" }, this.o.analysis.get(out), this.o.analysis.get(incoming));
     if (quick) { plan.seconds = Math.min(2, plan.seconds); plan.sync = false; plan.kind = "quick-fade"; }
     if (plan.sync) {
       engine.setMaster(out);
     }
     const outBpm = engine.baseBpm(out), inBpm = engine.baseBpm(incoming);
+    // Prepared transition: key lock as saved; a manual target tempo applies to the incoming deck only (the playing track is never jolted).
+    if (prep) {
+      if (engine.getState().decks[incoming].keylock !== prep.t.keyLock) engine.setKeylock(incoming, prep.t.keyLock);
+      if (!plan.sync && prep.t.syncMode === "manual" && prep.inRate !== 1) engine.setRateDirect(incoming, prep.inRate);
+    }
     const matchedIncomingRate = plan.sync && outBpm && inBpm ? outBpm * engine.getState().decks[out].rate / inBpm : engine.getState().decks[incoming].rate;
     const phaseOffset = plan.sync ? lateness * matchedIncomingRate : 0;
     engine.seekTo(incoming, plan.mixIn + phaseOffset);
@@ -247,15 +269,34 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     // the crossfade becomes audible; tick() keeps the phases locked afterwards.
     if (plan.sync && !engine.getState().decks[incoming].sync) this.send(`deck${incoming + 1}.sync`);
     const currentRef = decks[out].track?.ref;
-    const mashup = !!(plan.sync && this.state.settings.intelligentMashups && currentRef && this.o.stemAvailable?.(currentRef) && this.o.stemAvailable?.(this.prepared));
+    const mashup = !prep && !!(plan.sync && this.state.settings.intelligentMashups && currentRef && this.o.stemAvailable?.(currentRef) && this.o.stemAvailable?.(this.prepared));
     if (mashup) {
       engine.setStemMix(out, [true, true, true, true], [.72, .82, .82, .72]);
       engine.setStemMix(incoming, [true, false, false, false], [.78, 0, 0, 0]);
       this.send("mixer.crossfader", .5);
     }
     const eqSwapAt = bassSwapOffset(plan, decks[out], this.state.settings.autoEq);
-    this.fade = { from: engine.getState().mixer.crossfader, elapsed: 0, duration: plan.seconds, incoming: this.prepared, lastPosition: this.o.audio.getPosition(incoming), mashup, eqSwapAt };
-    this.set({ status: "TRANSITIONING", queueLocked: true, plan, nextSeconds: 0, message: mashup ? "Intelligent Mashup: vocal overlay, then instrumental handover" : plan.reason });
+    this.fade = { from: engine.getState().mixer.crossfader, elapsed: 0, duration: plan.seconds, incoming: this.prepared, lastPosition: this.o.audio.getPosition(incoming), mashup, eqSwapAt, prepared: prep?.t ?? null };
+    this.set({ status: "TRANSITIONING", queueLocked: true, plan, prepared: prep ? { id: prep.t.id, name: prep.t.name } : null, nextSeconds: 0, message: mashup ? "Intelligent Mashup: vocal overlay, then instrumental handover" : plan.reason });
+  }
+  /**
+   * A saved AI Set Studio transition for the loaded pair, validated against what is actually loaded.
+   * Anything that can't be honoured (sync beyond the deck's tempo range, missing grids) is dropped and
+   * said so; an unusable transition returns null and the standard Auto DJ transition is used instead.
+   */
+  private preparedPlan(out: number, incoming: number): { plan: TransitionPlan; t: PreparedTransition; inRate: number } | null {
+    if (!this.o.preparedTransitions || this.state.settings.preparedTransitions === false) return null;
+    const decks = this.o.engine.getState().decks, a = decks[out], b = decks[incoming];
+    if (!a?.track || !b?.track || a.status !== "ready" || b.status !== "ready") return null;
+    const t = this.o.preparedTransitions.find(a.track.ref, b.track.ref, this.state.playlistId);
+    if (!t) return null;
+    const facts = (d: typeof a, i: number) => ({ trackId: d.track?.trackId ?? null, duration: d.duration, bpm: this.o.engine.baseBpm(i), gridReliable: gridReliable(d.beatGrid), tempoRange: d.tempoRange });
+    const fa = facts(a, out), fb = facts(b, incoming);
+    const check = checkPlayable(t, fa, fb, { echo: EchoFx.available(this.o.engine) });
+    if (!check.ok) return null;
+    const r = ratesFor(t, { bpm: fa.bpm, firstBeat: 0, gridReliable: fa.gridReliable, duration: fa.duration }, { bpm: fb.bpm, firstBeat: 0, gridReliable: fb.gridReliable, duration: fb.duration });
+    const reason = [`Prepared transition: ${t.name}`, ...check.notes].join(" · ");
+    return { t, inRate: r.inRate, plan: { kind: check.sync ? "beat-mix" : "crossfade", mixOut: t.mixOut, mixIn: t.mixIn, seconds: t.seconds, sync: check.sync, reason } };
   }
   tick() {
     if (this.state.status === "OFF" || this.state.status === "PAUSED" || this.o.audio.getStatus().state !== "running") return;
@@ -267,11 +308,21 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
       this.fade.elapsed += Math.max(0, position - this.fade.lastPosition) / decks[incoming].rate;
       this.fade.lastPosition = position;
       const progress = Math.min(1, this.fade.elapsed / this.fade.duration);
-      if (this.fade.mashup) {
+      if (this.fade.prepared) {
+        // Saved Transition Lab instructions: the same frame the Lab preview plays.
+        const f = frameAt(this.fade.prepared, progress);
+        this.send("mixer.crossfader", this.fade.from + (incoming - this.fade.from) * f.crossfader);
+        if (this.fade.prepared.eqMode !== "off") {
+          this.o.engine.setAutoEq(deck, f.out);
+          this.o.engine.setAutoEq(incoming, f.in);
+        }
+        this.echo.set(deck, f.echo);
+      } else if (this.fade.mashup) {
         this.o.engine.setStemMix(deck, [true, true, true, true], [.72 * (1 - progress), .82 * (1 - progress), .82 * (1 - progress), .72 * (1 - progress)]);
         this.o.engine.setStemMix(incoming, [true, true, true, true], [.78, .82 * progress, .82 * progress, .72 * progress]);
       } else this.send("mixer.crossfader", this.fade.from + (incoming - this.fade.from) * progress);
-      if (this.state.settings.autoEq.enabled) {
+      if (this.fade.prepared) { /* EQ is driven by the prepared frame above */ }
+      else if (this.state.settings.autoEq.enabled) {
         const outCurve = autoEqCurve("out", this.fade.elapsed, this.fade.duration, this.fade.eqSwapAt, this.state.settings.autoEq);
         const inCurve = autoEqCurve("in", this.fade.elapsed, this.fade.duration, this.fade.eqSwapAt, this.state.settings.autoEq);
         this.o.engine.setAutoEq(deck, { low: outCurve.lowDb, mid: outCurve.midDb, high: outCurve.highDb });
@@ -290,8 +341,9 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
         this.o.engine.setMaster(incoming);
         this.o.engine.resetAutoEq(deck);
         this.o.engine.resetAutoEq(incoming);
+        this.echo.restore();
         this.fade = null; this.prepared = null;
-        this.set({ status: "ACTIVE", queueLocked: false, deck: incoming, played: [...this.state.played, this.state.current!], current: this.state.upcoming[0], upcoming: this.state.upcoming.slice(1), plan: null, message: "Transition complete" });
+        this.set({ status: "ACTIVE", queueLocked: false, prepared: null, deck: incoming, played: [...this.state.played, this.state.current!], current: this.state.upcoming[0], upcoming: this.state.upcoming.slice(1), plan: null, message: "Transition complete" });
         void this.prepare();
       }
       return;
@@ -310,7 +362,10 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
         this.o.engine.stepTempoLeadIn(incoming, target.inRate, TEMPO_LEADIN_STEP);
       }
     }
-    const plan = planTransition(decks[deck], decks[incoming], this.state.settings, this.o.analysis.get(deck), this.o.analysis.get(incoming));
+    const prep = this.preparedPlan(deck, incoming);
+    const plan = prep?.plan ?? planTransition(decks[deck], decks[incoming], this.state.settings, this.o.analysis.get(deck), this.o.analysis.get(incoming));
+    const preparedInfo = prep ? { id: prep.t.id, name: prep.t.name } : null;
+    if (preparedInfo?.id !== this.state.prepared?.id) this.set({ prepared: preparedInfo });
     const position = this.o.audio.getPosition(deck);
     if (!decks[deck].playing) {
       if (this.state.nextSeconds !== null || this.state.message !== "Deck paused; Auto DJ remains armed") this.set({ nextSeconds: null, message: "Deck paused; Auto DJ remains armed" });

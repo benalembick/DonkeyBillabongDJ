@@ -6,6 +6,8 @@ import { useStemStatus } from "./stemHooks";
 import { TrackDiscoveryActions } from "./TrackDiscoveryActions";
 import { PlaylistActions } from "./PlaylistPanel";
 import { useMenuPosition } from "./useMenuPosition";
+import { openStudio } from "./setstudio/nav";
+import { fixGridFor } from "./gridEditorStore";
 
 export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }: {
   x: number;
@@ -18,7 +20,7 @@ export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }:
   /** Extra actions specific to where this menu was opened from (e.g. "Remove from playlist"), appended after the standard ones. */
   extra?: React.ReactNode;
 }) {
-  const { engine, stems, platform, analysis, library, production, log } = useApp();
+  const app = useApp(), { engine, stems, platform, analysis, library, production, log } = app;
   const libraryState = useLibraryState();
   const s = useEngineState();
   const stemStatus = useStemStatus();
@@ -58,6 +60,11 @@ export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }:
       <TrackDiscoveryActions compact track={track} tracks={libraryState.tracks} />
       <hr />
       <button onClick={act(onInfo)}>Track information</button>
+      {track.source === "local" && <button onClick={act(() => void fixGridFor(app, track.ref))} title="Check and correct the beat grid on a deck: BPM, tap tempo, downbeat, phrase start">Edit beat grid…</button>}
+      {track.source === "local" && <>
+        <button onClick={act(() => openStudio({ tab: "autocue", ref: track.ref }))}>Auto Cue (suggest hot cues)…</button>
+        <button onClick={act(() => { const next = refs.length > 1 && refs[1] !== track.ref ? refs[1] : null; openStudio(next ? { tab: "lab", outRef: track.ref, inRef: next } : { tab: "lab", outRef: track.ref }); })}>Transition Lab from this track…</button>
+      </>}
       <button onClick={act(() => void analysis.analyseTracks(refs.map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t)))}>Analyse selected</button>
       <button onClick={act(() => void analysis.analyseTracks(refs.map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t), true))}>Reanalyse selected</button>
       <button disabled={!canAnalyse} title={canAnalyse ? "" : stemStatus.reason} onClick={act(() => stems.analyse([track], (r) => platform.readAudio(r)))}>

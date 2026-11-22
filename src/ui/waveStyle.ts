@@ -7,6 +7,9 @@
  *  - rgb:      one waveform whose colour mixes low (R), mid (G) and high (B) energy
  *  - rgbLR:    RGB colouring with the left channel above and the right below the centre
  *  - hsv:      hue follows the spectral balance; highs desaturate, strong lows darken
+ *  - tonal:    Dual-Deck Tonal — a three-band monochromatic ramp in the deck's own colours
+ *              (deck A blue, deck B amber; see deckTheme.ts): low-band energy is the deep
+ *              core, mids the main body, highs the bright outer transient detail
  *
  * Data comes from the track analysis (per-channel display bands at ~250 Hz /
  * 4 kHz). Tracks analysed before these styles fall back to the mono bands
@@ -15,10 +18,16 @@
 import type { TrackAnalysis } from "../analysis/analyzeTrack";
 import type { EngineState } from "../core/engine/DJEngine";
 import { eqVisualGain } from "../core/engine/mixerMath";
+import { deckWavePalette, type WavePalette } from "./deckTheme";
 
-export type WaveStyle = "simple" | "filtered" | "rgb" | "rgbLR" | "hsv";
+export type WaveStyle = "tonal" | "simple" | "filtered" | "rgb" | "rgbLR" | "hsv";
 
 export const WAVE_STYLES: { id: WaveStyle; label: string; title: string }[] = [
+  {
+    id: "tonal",
+    label: "Dual-Deck Tonal",
+    title: "Dual-Deck Tonal — Blue / Amber: each deck in its own colour ramp. Deep = lows (kick, bass) at the core, main colour = mids (vocals, synths), pale = highs (hats, cymbals) at the edges",
+  },
   { id: "simple", label: "Simple", title: "Overall amplitude in one colour (stereo: left above, right below)" },
   { id: "filtered", label: "Filtered", title: "Red = lows (kick, bass) · Green = mids (vocals, synths) · Blue = highs (hats, cymbals)" },
   { id: "rgb", label: "RGB", title: "Low/mid/high energy blended into one colour: red kicks, green vocals, blue hats, mixes in between" },
@@ -26,7 +35,7 @@ export const WAVE_STYLES: { id: WaveStyle; label: string; title: string }[] = [
   { id: "hsv", label: "HSV", title: "Hue = spectral balance, less saturated for highs, darker for strong lows" },
 ];
 
-export const DEFAULT_WAVE_STYLE: WaveStyle = "rgb";
+export const DEFAULT_WAVE_STYLE: WaveStyle = "tonal";
 
 const SIMPLE = 0x4fa3ff;
 const F_LOW = 0xff3b30;
@@ -44,6 +53,8 @@ export interface WaveData {
   /** 99.5th-percentile full-band peak and band peak (robust normalisation). */
   normAll: number;
   normBand: number;
+  /** 99.5th-percentile peak of each band [low, mid, high] (tonal style's per-band balance). */
+  bandNorm: [number, number, number];
 }
 
 const cache = new WeakMap<TrackAnalysis, WaveData>();
@@ -68,7 +79,16 @@ export function waveData(ov: TrackAnalysis): WaveData {
     L = R = { all, low: ov.low, mid: ov.mid, high: ov.high };
   }
   const n = L.all.length;
-  d = { fps: ov.fps, n, L, R, stereo, normAll: percentile(n, (i) => Math.max(L.all[i], R.all[i])), normBand: percentile(n, (i) => Math.max(L.low[i], L.mid[i], L.high[i], R.low[i], R.mid[i], R.high[i])) };
+  d = {
+    fps: ov.fps,
+    n,
+    L,
+    R,
+    stereo,
+    normAll: percentile(n, (i) => Math.max(L.all[i], R.all[i])),
+    normBand: percentile(n, (i) => Math.max(L.low[i], L.mid[i], L.high[i], R.low[i], R.mid[i], R.high[i])),
+    bandNorm: [percentile(n, (i) => Math.max(L.low[i], R.low[i])), percentile(n, (i) => Math.max(L.mid[i], R.mid[i])), percentile(n, (i) => Math.max(L.high[i], R.high[i]))],
+  };
   cache.set(ov, d);
   return d;
 }
@@ -141,6 +161,75 @@ export function hsvPacked(lo: number, md: number, hi: number): number {
   return pack((r + m) * 255, (g + m) * 255, (b + m) * 255);
 }
 export const hsvColor = (lo: number, md: number, hi: number) => css(hsvPacked(lo, md, hi));
+
+// ── Dual-Deck Tonal ──
+
+/**
+ * A band's normaliser never drops below this fraction of the loudest band's. Per-band
+ * normalisation stops bass-heavy tracks drowning the mids and highs, but a track with
+ * almost no high end is boosted at most ~3x — it is never painted with highs it lacks.
+ */
+const TONAL_NORM_FLOOR = 0.3;
+/** Quiet passages are drawn dimmer: brightness runs from this floor (silence) to 1 (loud). */
+const TONAL_MIN_BRIGHTNESS = 0.5;
+/** How much of the bar's half-height the highs may take at the tips (x high share). */
+const TONAL_EDGE = 0.85;
+/** Low-band core size relative to the body (x low share, capped at the whole body). */
+const TONAL_CORE = 1.5;
+
+/**
+ * Relative contribution [low, mid, high] (sums to 1) of each band in a column, after
+ * per-band normalisation. `out` is all zeros when the column carries no band energy.
+ */
+export function tonalShares(lo: number, md: number, hi: number, bandNorm: readonly [number, number, number] | undefined, out: number[] = [0, 0, 0]): number[] {
+  let nl = 1;
+  let nm = 1;
+  let nh = 1;
+  if (bandNorm) {
+    const floor = Math.max(bandNorm[0], bandNorm[1], bandNorm[2], 1e-9) * TONAL_NORM_FLOOR;
+    nl = Math.max(bandNorm[0], floor);
+    nm = Math.max(bandNorm[1], floor);
+    nh = Math.max(bandNorm[2], floor);
+  }
+  const l = Math.max(0, lo) / nl;
+  const m = Math.max(0, md) / nm;
+  const h = Math.max(0, hi) / nh;
+  const t = l + m + h;
+  if (t <= 1e-12) {
+    out[0] = out[1] = out[2] = 0;
+    return out;
+  }
+  out[0] = l / t;
+  out[1] = m / t;
+  out[2] = h / t;
+  return out;
+}
+
+/** Weighted composite of the palette's three colours by band share. */
+function blendPacked(sl: number, sm: number, sh: number, p: WavePalette): number {
+  const ch = (shift: number) => sl * ((p.low >> shift) & 255) + sm * ((p.mid >> shift) & 255) + sh * ((p.high >> shift) & 255);
+  return pack(ch(16), ch(8), ch(0));
+}
+
+/** Scales a packed colour's brightness (0..1). */
+function shade(c: number, v: number): number {
+  if (v >= 1) return c;
+  return pack(((c >> 16) & 255) * v, ((c >> 8) & 255) * v, (c & 255) * v);
+}
+
+const tonalScratch = [0, 0, 0];
+
+/**
+ * Dual-Deck Tonal colour for low/mid/high energy, packed: the palette colours blended by
+ * each band's share (pure lows = the deck's low colour, pure mids = its mid colour, ...).
+ * `bandNorm` = the track's per-band peaks (omit for raw values).
+ */
+export function tonalPacked(lo: number, md: number, hi: number, palette: WavePalette, bandNorm?: readonly [number, number, number]): number {
+  const s = tonalShares(lo, md, hi, bandNorm, tonalScratch);
+  if (s[0] + s[1] + s[2] <= 0) return DIM;
+  return blendPacked(s[0], s[1], s[2], palette);
+}
+export const tonalColor = (lo: number, md: number, hi: number, palette: WavePalette, bandNorm?: readonly [number, number, number]) => css(tonalPacked(lo, md, hi, palette, bandNorm));
 
 /** Filtered-style stacked band heights (low outermost, highs innermost). */
 function bandHeights(lo: number, md: number, hi: number, scale: number, half: number): [number, number, number] {
@@ -247,8 +336,20 @@ export class PixelSink implements BarSink {
  * Draw one 1-px column at `pos` along the time axis. `center` is the centre line and
  * `half` the available half-height (both in px on the amplitude axis). `eq` = the deck's
  * current EQ as display gains: the analysed data is never changed, only what is drawn.
+ * `palette` = the deck's tonal ramp (only the "tonal" style uses it; defaults to deck A).
  */
-export function drawColumn(sink: BarSink, style: WaveStyle, col: Column, d: WaveData, pos: number, center: number, half: number, vertical: boolean, eq: EqGains = NEUTRAL_EQ): void {
+export function drawColumn(
+  sink: BarSink,
+  style: WaveStyle,
+  col: Column,
+  d: WaveData,
+  pos: number,
+  center: number,
+  half: number,
+  vertical: boolean,
+  eq: EqGains = NEUTRAL_EQ,
+  palette: WavePalette = deckWavePalette(0),
+): void {
   const bar = (from: number, len: number, rgb: number) => sink.bar(pos, from, len, rgb, vertical);
   // What the deck's EQ lets through: bands scaled by their EQ gain, overall peak by the change in band energy.
   const fL = applyEq(col.L, eq, eqL);
@@ -290,6 +391,31 @@ export function drawColumn(sink: BarSink, style: WaveStyle, col: Column, d: Wave
       const dn = Math.min(half, R[0] * allScale);
       bar(center - up, up, rgbPacked(L[1], L[2], L[3]));
       bar(center, dn, rgbPacked(R[1], R[2], R[3]));
+      return;
+    }
+    case "tonal": {
+      // Accurate amplitude (full-band peak), stratified by band share: the low band is the
+      // deep core, mids the body, highs the bright tips. Segments never overlap, so the
+      // pixel cost per column is the same as one bar.
+      const amp = Math.max(L[0], R[0]);
+      const h = Math.min(half, amp * allScale);
+      if (h <= 0) return;
+      const s = tonalShares(Math.max(L[1], R[1]), Math.max(L[2], R[2]), Math.max(L[3], R[3]), d.bandNorm, tonalScratch);
+      const v = TONAL_MIN_BRIGHTNESS + (1 - TONAL_MIN_BRIGHTNESS) * Math.sqrt(Math.min(1, amp / (d.normAll || 1)));
+      if (s[0] + s[1] + s[2] <= 0) {
+        bar(center - h, h * 2, shade(palette.mid, v));
+        return;
+      }
+      const body = h * (1 - TONAL_EDGE * s[2]);
+      const core = body * Math.min(1, TONAL_CORE * s[0]);
+      const edgeC = shade(palette.high, v);
+      const bodyC = shade(blendPacked(s[0], s[1], s[2], palette), v);
+      const coreC = shade(palette.low, v);
+      bar(center - h, h - body, edgeC);
+      bar(center - body, body - core, bodyC);
+      bar(center - core, core * 2, coreC);
+      bar(center + core, body - core, bodyC);
+      bar(center + body, h - body, edgeC);
       return;
     }
     case "rgb":

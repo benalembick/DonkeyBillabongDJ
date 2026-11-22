@@ -7,7 +7,7 @@ The aim is to prove **DDJ-SB → application → audio engine** is reliable, wit
 1. Close Serato, rekordbox, Mixxx and any other MIDI software.
 2. Connect the DDJ-SB by USB directly, not through a hub, for the first run.
 3. Run `npm run dev` (or `npm start` after `npm run build`).
-4. **Expected:** the top bar shows `● Pioneer DDJ-SB — Connected`. If it shows `○ No DJ Controller Detected`, open Diagnostics and note the MIDI port names listed. Report them, since the port-name pattern may need adjusting.
+4. **Expected:** the top bar shows `● Pioneer DDJ-SB — Connected`. If it shows `○ No DJ Controller Detected`, open Diagnostics (sliders icon, top right of the top bar) and note the MIDI port names listed. Report them, since the port-name pattern may need adjusting.
 5. Library tab → **Add folder** → pick a folder containing MP3 or WAV files.
 
 ## A. Controller → events (no audio needed)

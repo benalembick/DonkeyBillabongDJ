@@ -2,6 +2,7 @@ import { deckLetter } from "../core/actions";
 import type { DeckState } from "../core/engine/DJEngine";
 import type { TrackAnalysis } from "../analysis/analyzeTrack";
 import { DEFAULT_AUTO_EQ, type AutoEqSettings } from "./autoEq";
+import { gridReliable } from "../preparation/beatGrid";
 
 export interface AutoDJSettings {
   style: "smart" | "beat-mix" | "crossfade" | "quick-fade";
@@ -21,8 +22,10 @@ export interface AutoDJSettings {
    * Mix — see tempoGapOnly/tempoLeadInTarget below. Off by default.
    */
   tempoLeadIn: boolean;
+  /** Use AI Set Studio prepared transitions (Transition Lab) when the playing pair has one. On by default; sets can opt out. */
+  preparedTransitions: boolean;
 }
-export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false, intelligentMashups: false, autoEq: DEFAULT_AUTO_EQ, tempoLeadIn: false };
+export const DEFAULT_AUTO_DJ: AutoDJSettings = { style: "smart", bars: "auto", transitionSeconds: "auto", shuffle: false, repeat: false, bpmSync: true, keyAware: false, intelligentMashups: false, autoEq: DEFAULT_AUTO_EQ, tempoLeadIn: false, preparedTransitions: true };
 export interface TransitionPlan { kind: "beat-mix" | "crossfade" | "quick-fade"; mixOut: number; mixIn: number; seconds: number; sync: boolean; reason: string }
 export interface TransitionRegion { role: "out" | "in"; label: "MIX OUT" | "MIX IN"; start: number; end: number }
 
@@ -59,8 +62,6 @@ function bounds(d: DeckState, a?: TrackAnalysis | null): [number, number] {
   return [first / a.rms.length * d.duration, (last + 1) / a.rms.length * d.duration];
 }
 
-const MIN_GRID_CONFIDENCE = 1.4;
-
 /**
  * Explains, specifically, why Beat Mix didn't happen — the badge alone ("Beat Mix unavailable")
  * doesn't say which of several possible reasons applies, or what to change about it. Checked in
@@ -72,8 +73,8 @@ function fallbackReason(out: DeckState, incoming: DeckState, settings: AutoDJSet
   if (noBpm.length) return `Clean fade; BPM unknown for Deck ${noBpm.join(" and Deck ")}`;
   if (!grids) {
     const unreliable = [
-      !out.beatGrid || out.beatGrid.confidence < MIN_GRID_CONFIDENCE ? deckLetter(out.index) : null,
-      !incoming.beatGrid || incoming.beatGrid.confidence < MIN_GRID_CONFIDENCE ? deckLetter(incoming.index) : null,
+      !gridReliable(out.beatGrid) ? deckLetter(out.index) : null,
+      !gridReliable(incoming.beatGrid) ? deckLetter(incoming.index) : null,
     ].filter((x): x is string => x !== null);
     return `Clean fade; beat grid isn't reliable enough for Deck ${unreliable.join(" and Deck ")}`;
   }
@@ -93,7 +94,7 @@ export function tempoGapOnly(out: DeckState, incoming: DeckState, settings: Auto
   const a = out.beatGrid?.bpm ?? out.track?.bpm;
   const b = incoming.beatGrid?.bpm ?? incoming.track?.bpm;
   if (!a || !b) return false;
-  const grids = !!out.beatGrid && !!incoming.beatGrid && out.beatGrid.confidence >= MIN_GRID_CONFIDENCE && incoming.beatGrid.confidence >= MIN_GRID_CONFIDENCE;
+  const grids = gridReliable(out.beatGrid) && gridReliable(incoming.beatGrid);
   if (!grids) return false;
   const ratio = (a * out.rate) / b;
   return ratio < 1 - incoming.tempoRange || ratio > 1 + incoming.tempoRange;
@@ -120,7 +121,7 @@ export function planTransition(out: DeckState, incoming: DeckState, settings: Au
   const a = out.beatGrid?.bpm ?? out.track?.bpm;
   const b = incoming.beatGrid?.bpm ?? incoming.track?.bpm;
   const ratio = a && b ? a * out.rate / b : 0;
-  const grids = !!out.beatGrid && !!incoming.beatGrid && out.beatGrid.confidence >= 1.4 && incoming.beatGrid.confidence >= 1.4;
+  const grids = gridReliable(out.beatGrid) && gridReliable(incoming.beatGrid);
   const keys = compatibleKeys(out.track?.key, incoming.track?.key);
   // The incoming deck is the one Sync actually re-paces to match the outgoing tempo, so its
   // own tempo-range setting (±6/10/16%, or Wide) is the honest limit on how far that's safe —

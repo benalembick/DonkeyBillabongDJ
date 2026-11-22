@@ -48,10 +48,11 @@ Choose a layout in the top bar. Your choice, the library height and the waveform
 | **VERTICAL** | Parallel vertical waveforms in the centre above the mixer, with the decks on either side |
 | **CLASSIC** | Slim stacked waveforms, compact decks and a bigger library |
 
+- **Beat grid editor:** click a deck's BPM to check and correct its grid — typed BPM, ×2/÷2, tap tempo, set downbeat (snaps to the kick), auto-align, nudges, waveform dragging, phrase start, Grid looks right ✓, undo and reset. Hand-set grids are saved and survive re-analysis; every "grid unreliable" warning links here. See [docs/BEAT-GRID-EDITOR.md](docs/BEAT-GRID-EDITOR.md).
 - **Waveforms:** 3-band colour (blue low, orange mid, white high) with an estimated beat grid (bar lines every 4 beats), cue and hot-cue markers, and a bar counter. Scroll to zoom; drag to move a paused track. They are drawn from cached tiles, so every layout holds 60 fps at 1080p.
 - **Decks:** artwork, title and artist, source badges, BPM, key, remaining and elapsed time, overview waveform, 8 colour-coded hot cues, CUE and PLAY, VINYL, KEY LOCK, a jog wheel you can drag round or scroll over (nudge while playing, fine positioning while paused), and the tempo fader with range (scroll over it for fine steps, Shift+scroll finer). Loops and SYNC are shown but marked *soon*.
 - **Mixer:** TRIM, HI, MID and LOW with kills, FILTER, headphone CUE, channel faders with meters, master and headphone section, crossfader.
-- **FX bar:** two units with Echo, Delay, Reverb, Flanger and Filter. Each has a beat-synced time, LEVEL, parameter, deck assignment and ON. The DDJ-SB FX buttons and knob drive the same controls.
+- **FX bar:** two units with Echo, Delay, Reverb, Flanger and Filter. Each has a beat-synced time, LEVEL, parameter, deck assignment and ON. The DDJ-SB FX buttons and knob drive the same controls. The FX bar starts collapsed into one slim row (shared with the Sampler) that shows a badge for each lit effect; click **FX** or a unit chip to expand it. The open/closed choice is remembered.
 - **Library:** Collection (All Tracks, Recently Added, Top Rated) and Streaming (Spotify, Apple Music, Audius). Columns sort, search filters, and star ratings are saved. The DDJ-SB browse knob follows the on-screen order.
 - **Tools** (🎛 Controller, Diagnostics, ⚙ Settings) open in an overlay above the performance area.
 
@@ -79,6 +80,7 @@ Choose a layout in the top bar. Your choice, the library height and the waveform
 - [Streaming providers](docs/STREAMING-PROVIDERS.md): which service does what (metadata vs playable audio)
 - [Smart Metadata Matching](docs/SMART-METADATA-MATCHING.md): Spotify/Apple Music playlists resolved to your own files (ISRC + metadata scoring)
 - [Spotify → Local](docs/SPOTIFY-LOCAL.md): Spotify playlists prepared as local playlists (library reuse, watched download folder, authorised providers, Auto DJ)
+- [Drum Transcriber](docs/DRUM-TRANSCRIBER.md): Production Studio audio → editable MIDI drums (pipeline, classifier, accuracy, limitations, roadmap)
 - [STEMS](docs/STEMS.md): stem separation architecture, model, acceleration, measured speed, cache, controls
 - [Development](docs/DEVELOPMENT.md): running, building macOS / Windows, layout, conventions
 - [Hardware test plan](docs/HARDWARE-TEST-PLAN.md) and the generated [DDJ-SB test matrix](docs/DDJ-SB-TEST-MATRIX.md)

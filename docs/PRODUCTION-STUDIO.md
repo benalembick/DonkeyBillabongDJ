@@ -64,3 +64,7 @@ Workflow: **Slice → Pads → Perform → MIDI Pattern → Piano Roll → Arran
 - **Playback and export.** `scheduleSamplerTracks` turns Sampler-track notes into sample voices, both live and in WAV export. One-shot pads play out; gate, toggle and loop pads and chromatic notes hold for the note length, then release. A pad cuts its own previous hit and its choke group, as when played live. MIDI, pad and chromatic edits re-schedule a playing arrangement (debounced 150 ms).
 
 Limitations: root detection returns nothing for chords and unpitched sounds; set ROOT by hand for those. Chromatic transposition changes speed as well as pitch (no time-stretch). Pattern recording runs on its own clock and is not synchronised to arrangement playback.
+
+## Drum Transcriber
+
+The fifth workspace tab turns drum audio (a loop, a break, a Drums stem or an Arrangement clip) into editable MIDI drum lanes and a standard MIDI file. The `DrumTranscriber` service owns its own transcription documents, edit history and A/B preview. It reuses `ProductionStudio.sourceBytes()` for sources, the Production output for playback, library beat grids, `quantizeToGrid` and the shared `DocStore`. While the tab is open, the arrangement's keyboard shortcuts stand down. Architecture, accuracy, limitations and roadmap: [DRUM-TRANSCRIBER.md](DRUM-TRANSCRIBER.md).

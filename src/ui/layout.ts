@@ -15,8 +15,12 @@ export interface LayoutPrefs {
   zoomSeconds: number;
   /** Scrolling waveform colouring: frequency bands or separated STEMS lanes. */
   waveMode: "standard" | "stems";
-  /** Waveform colouring (Mixxx-style): simple / filtered / rgb / rgbLR / hsv. */
+  /** Waveform colouring: tonal (Dual-Deck Tonal, default) / simple / filtered / rgb / rgbLR / hsv. */
   waveStyle: WaveStyle;
+  /** Waveforms follow each deck's EQ (a cut band fades from the picture). Display only. */
+  waveEqReactive: boolean;
+  /** Which one-off default changes have been applied to saved prefs (see load()). */
+  defaultsVersion: number;
 }
 
 const KEY = "dbdj.ui.layout.v1";
@@ -28,17 +32,35 @@ const DEFAULTS: LayoutPrefs = {
   zoomSeconds: 10,
   waveMode: "standard",
   waveStyle: DEFAULT_WAVE_STYLE,
+  waveEqReactive: true,
+  defaultsVersion: 1,
 };
 export const ZOOM_STEPS = [2, 4, 6, 8, 10, 14, 20, 30];
 
 function load(): LayoutPrefs {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<LayoutPrefs>;
-    const waveStyle = WAVE_STYLES.some((s) => s.id === raw.waveStyle) ? raw.waveStyle! : DEFAULTS.waveStyle;
-    return { ...DEFAULTS, ...raw, waveStyle, libraryHeight: { ...DEFAULTS.libraryHeight, ...raw.libraryHeight } };
+    return migratePrefs(JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<LayoutPrefs>);
   } catch {
     return DEFAULTS;
   }
+}
+
+/**
+ * Saved prefs → current prefs. Version 1: Dual-Deck Tonal became the default waveform style,
+ * so prefs saved with the previous default ("rgb") switch to it once; any other saved choice
+ * is kept, and picking RGB again afterwards sticks.
+ */
+export function migratePrefs(raw: Partial<LayoutPrefs>): LayoutPrefs {
+  let waveStyle = WAVE_STYLES.some((s) => s.id === raw.waveStyle) ? raw.waveStyle! : DEFAULTS.waveStyle;
+  if ((raw.defaultsVersion ?? 0) < 1 && waveStyle === "rgb") waveStyle = DEFAULT_WAVE_STYLE;
+  return {
+    ...DEFAULTS,
+    ...raw,
+    waveStyle,
+    waveEqReactive: raw.waveEqReactive !== false,
+    defaultsVersion: DEFAULTS.defaultsVersion,
+    libraryHeight: { ...DEFAULTS.libraryHeight, ...raw.libraryHeight },
+  };
 }
 
 let prefs = load();
@@ -74,8 +96,8 @@ export function useLayout(): LayoutPrefs {
   );
 }
 
-/** Hot cue colours (also used on the pads). */
+/** Hot cue colours (also used on the pads). Functional per-cue identity: never recoloured by deck. */
 export const HOTCUE_COLORS = ["#ff3b6b", "#ff9f1c", "#ffd60a", "#2ee59d", "#00c2ff", "#4f7dff", "#b36bff", "#ff6bd6"];
 
-/** STEM colours (deck strip, waveform lanes). */
+/** STEM colours (deck strip, waveform lanes). Stem identity, separate from the waveform's frequency-band colours. */
 export const STEM_COLORS: Record<string, string> = { vocals: "#ff4fa3", drums: "#ffcc33", bass: "#3fa9ff", instruments: "#5ee07a" };

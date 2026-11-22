@@ -6,6 +6,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { useApp } from "./context";
 import { TrackPicker } from "./TransitionWorkspace";
+import { fixGridFor } from "./gridEditorStore";
 import { ASSIST_LABELS, lesson as lessonOf, LESSONS, LEVELS, type AssistId, type Lesson, type LessonId } from "../training/curriculum";
 import { PASS_MARK, type TrainingService, type TrainingState } from "../training/TrainingService";
 
@@ -109,7 +110,7 @@ function AssistTable({ l }: { l: Lesson }) {
 }
 
 function Setup({ s, svc, l }: { s: TrainingState; svc: TrainingService; l: Lesson }) {
-  const { engine, library } = useApp();
+  const app = useApp(), { engine, library } = app;
   const decks = engine.getState().decks;
   const problem = svc.setupProblem();
   const deckTracks = decks.filter((d) => d.status === "ready" && d.track?.source === "local").map((d) => ({ deck: d.index, track: d.track! }));
@@ -128,6 +129,7 @@ function Setup({ s, svc, l }: { s: TrainingState; svc: TrainingService; l: Lesso
             <li key={r.text} className={r.level}>
               {r.level === "ok" ? "✓" : r.level === "warn" ? "⚠" : "✕"} {r.text}
               {r.text === "Not analysed yet" && !job && <button className="tiny primary" onClick={() => void svc.analyse(k)}>Analyse now</button>}
+              {r.text.startsWith("Beat grid uncertain") && ref && <button className="tiny" onClick={() => fixGridFor(app, ref)} title="Open the Beat grid editor on a deck">Fix grid…</button>}
             </li>
           ))}
         </ul>

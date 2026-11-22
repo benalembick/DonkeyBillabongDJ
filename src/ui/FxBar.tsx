@@ -38,6 +38,31 @@ const TIMED = new Set<FxType>(["echo", "delay", "gate", "roll"]);
 const SEND_TYPES = new Set<FxType>(["echo", "delay", "reverb"]);
 const beatLabel = (b: number) => (b === 0.125 ? "1/8" : b === 0.25 ? "1/4" : b === 0.5 ? "1/2" : b === 0.75 ? "3/4" : String(b));
 
+/**
+ * FX status: one chip per unit showing only what's live (lit effects + the decks they hit), shown whether
+ * the FX controls are open or not; clicking a chip toggles them. While collapsed the chips carry the units'
+ * data-train ids so training highlights still land on something (expanded, the full units have them).
+ */
+export function FxSummary({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  const s = useEngineState();
+  return (
+    <div className="fx-summary" role="group" aria-label="Active effects">
+      {s.fx.map((f, u) => {
+        const lit = f.slots.filter((x) => x.on);
+        const decks = f.decks.map((on, d) => (on ? deckLetter(d) : null)).filter(Boolean);
+        const desc = lit.length ? `${lit.map((x) => FX_NAMES[x.type]).join(", ")}${decks.length ? ` on deck ${decks.join("+")}` : " (no deck assigned)"}` : "no effects on";
+        return (
+          <button key={u} className={`fx-chip deck-scope-${deckLetter(u).toLowerCase()}${lit.length ? " on" : ""}`} data-train={expanded ? undefined : `fx-${u + 1}`} aria-expanded={expanded} onClick={onToggle} title={`FX${u + 1}: ${desc} — click to ${expanded ? "hide" : "show"} the FX controls`} aria-label={`FX${u + 1}: ${desc}. ${expanded ? "Hide" : "Show"} FX controls`}>
+            <span className="fx-chip-name">FX{u + 1}</span>
+            {lit.length ? lit.map((x, k) => <b key={k} className="fx-badge">{FX_NAMES[x.type]}</b>) : <span className="fx-chip-off">off</span>}
+            {lit.length > 0 && decks.length > 0 && <span className="fx-chip-decks">→{decks.join("")}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function FxBar() {
   const s = useEngineState();
   const { engine } = useApp();
@@ -50,7 +75,8 @@ export function FxBar() {
         const timed = f.slots.some((x) => TIMED.has(x.type));
         const stemCapable = f.slots.some((x) => SEND_TYPES.has(x.type));
         return (
-          <div key={u} className={`fx-unit ${anyOn ? "on" : ""}`} data-train={`fx-${u + 1}`}>
+          // FX1 sits on deck A's side, FX2 on deck B's (as on the DDJ-SB): each unit wears its side's deck colour.
+          <div key={u} className={`fx-unit deck-scope-${deckLetter(u).toLowerCase()} ${anyOn ? "on" : ""}`} data-train={`fx-${u + 1}`}>
             <span className="fx-name" title={`FX unit ${u + 1} — DDJ-SB: FX buttons 1–3 switch the slots, SHIFT+button changes the effect, knob = level`}>
               FX{u + 1}
             </span>
@@ -84,7 +110,7 @@ export function FxBar() {
             <Knob size={24} label="LEVEL" value={f.mix} action={`${a}.mix`} bipolar={false} />
             <div className="fx-assign">
               {f.decks.map((on, d) => (
-                <button key={d} className={`tiny ${on ? "lit" : ""}`} onClick={() => send(`${a}.assign.deck${d + 1}`)} title={`Apply FX${u + 1} to deck ${deckLetter(d)}`}>
+                <button key={d} className={`tiny fx-assign-${deckLetter(d).toLowerCase()} ${on ? "lit" : ""}`} aria-pressed={on} onClick={() => send(`${a}.assign.deck${d + 1}`)} title={`Apply FX${u + 1} to deck ${deckLetter(d)}`}>
                   {deckLetter(d)}
                 </button>
               ))}

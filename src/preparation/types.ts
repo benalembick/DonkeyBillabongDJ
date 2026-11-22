@@ -1,4 +1,6 @@
 import type { BeatGrid } from "../core/engine/DJEngine";
+import type { SetIntel, TrackOverrides } from "../setstudio/types";
+import type { CueSuggestionSet } from "../setstudio/autocue";
 import { DISPLAY_HIGH_HZ, DISPLAY_KEYS, DISPLAY_LOW_HZ, type DisplayBands, type TrackAnalysis } from "../analysis/analyzeTrack";
 
 export const ANALYSIS_VERSION = 1;
@@ -34,12 +36,20 @@ export interface TrackPreparation {
   gain: GainAnalysis | null;
   analysisVersion: number | null;
   analysedAt: number | null;
+  /** Whole-track grid fit version the analysed grid has had (absent: none — re-fitted from the cache in the background). */
+  gridFitVersion?: number;
   updatedAt: number;
   beatGrid: PreparedGrid | null;
   cuePoint: number;
   cues: PreparedCue[];
   savedLoops: SavedLoop[];
   lastLoop: { start: number; end: number; beats: number | null } | null;
+  /** AI Set Studio: features derived from the cached analysis (absent until derived). */
+  intel?: SetIntel;
+  /** AI Set Studio: user-entered energy/mood/genre values; analysis never overwrites them. */
+  setOverrides?: TrackOverrides;
+  /** AI Set Studio Phase 2: generated hot cue suggestions (staging — separate from `cues`) and mix regions. */
+  autoCues?: CueSuggestionSet;
 }
 export interface WaveformRecord {
   schemaVersion: number;
@@ -50,6 +60,8 @@ export interface WaveformRecord {
   firstBeat: number | null;
   confidence: number;
   bpmSource: TrackAnalysis["bpmSource"];
+  /** Whole-track grid fit version applied to bpm / firstBeat / confidence (absent: none yet). */
+  gridFitVersion?: number;
   key: string | null;
   keyConfidence: number;
   energy: number | null;
@@ -133,13 +145,14 @@ function decode(text: string): Float32Array {
 }
 export function packWaveform(trackId: string, a: TrackAnalysis, analysedAt = Date.now()): WaveformRecord {
   return { schemaVersion: PREPARATION_SCHEMA, trackId, analysisVersion: ANALYSIS_VERSION, analysedAt, bpm: a.bpm, firstBeat: a.firstBeat, confidence: a.confidence, bpmSource: a.bpmSource,
+    ...(a.gridFitVersion ? { gridFitVersion: a.gridFitVersion } : {}),
     key: a.key, keyConfidence: a.keyConfidence, energy: a.energy, energyConfidence: a.energyConfidence, gainDb: a.gainDb, peak: a.peak, sections: a.sections, recommendedCues: a.recommendedCues, fps: a.fps,
     arrays: { peaks: encode(a.peaks), rms: encode(a.rms), low: encode(a.low), mid: encode(a.mid), high: encode(a.high) },
     ...(a.bands ? { bands: packBands(a.bands) } : {}) };
 }
 export function unpackWaveform(r: WaveformRecord): TrackAnalysis {
   if (r.schemaVersion !== PREPARATION_SCHEMA) throw new Error("Unsupported waveform schema");
-  return { bpm: r.bpm, firstBeat: r.firstBeat, confidence: r.confidence, bpmSource: r.bpmSource,
+  return { bpm: r.bpm, firstBeat: r.firstBeat, confidence: r.confidence, bpmSource: r.bpmSource, gridFitVersion: r.gridFitVersion ?? 0,
     key: r.key ?? null, keyConfidence: r.keyConfidence ?? 0, energy: r.energy ?? null, energyConfidence: r.energyConfidence ?? 0,
     gainDb: r.gainDb ?? null, peak: r.peak ?? 0, sections: r.sections ?? [], recommendedCues: r.recommendedCues ?? [],
     // Not cached: it's only consulted once, right when a track is freshly analysed (see PreparationStore.saveAnalysis).

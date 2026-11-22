@@ -83,44 +83,34 @@ The DJ engine, mappings and UI stay unchanged. That independence is the reason t
 `src/analysis/analyzeTrack.ts` runs in a Web Worker. It produces:
 
 - a 3-band waveform: one-pole crossovers at 200 Hz and 2.5 kHz, with peaks stored 150 times per second;
-- a tempo estimate: onset-strength envelope, then autocorrelation to find the tempo family, then a fine comb search (±2 %) for exact BPM and phase.
+- a tempo estimate: onset-strength envelope, then autocorrelation to find the tempo family, then a fine comb search (±2 %) for exact BPM and phase;
+- a whole-track grid fit (`src/analysis/gridFit.ts`) that corrects that estimate and decides whether Beat Mix can trust it. See [Beat grid editor → Automatic grid fitting](BEAT-GRID-EDITOR.md#automatic-grid-fitting).
 
-A tag or service BPM is used as a hint and is octave-aware. The result is an **estimated** beat grid: BPM, first beat, and downbeats assumed every 4 beats. Unit tests confirm 96, 128 and 174 BPM are detected within ±0.3 BPM and 30 ms of phase on synthetic tracks. Manual grid editing, key detection and sync are Phase 2.
-
-## Waveform styles
-
-Settings → Waveform (also in the VIEW menu) offers five Mixxx-style renderings. The choice applies immediately to both decks, the overview and the scrolling waveform in every layout, and is remembered:
-
-| Style | Rendering |
-|---|---|
-| Simple | Full-band peak in one colour; stereo tracks show left above and right below the centre |
-| Filtered | Red lows, green mids, blue highs as stacked bands |
-| RGB (default) | One waveform whose colour mixes low (R), mid (G) and high (B) energy; overlaps give orange, yellow, purple |
-| RGB L/R | RGB colouring per channel: left above, right below |
-| HSV | Hue follows the spectral balance, highs desaturate, strong lows darken |
-
-The data comes from the same analysis pass. It adds per-channel display bands: 2-pole splits at the channel EQ's own corners (220 Hz low shelf, 3.5 kHz high shelf; constants shared with the audio EQ in `mixerMath.ts`), plus a full-band peak, stored 150 times per second. The mono 200 Hz / 2.5 kHz bands that drive beat, energy and cue detection are unchanged. Display bands are cached with the waveform as 8-bit square-root-companded data. Tracks cached before this feature display at once from the mono bands, and gain the stereo data in the background the next time they are loaded; their cached grid, cues and sections are kept as they were. All styles share one renderer (), so every view of a track matches.
+A tag or service BPM is used as a hint and is octave-aware. The result is a beat grid: BPM, first beat, and downbeats assumed every 4 beats. Unit tests confirm 96, 128 and 174 BPM are detected within ±0.3 BPM and 30 ms of phase on synthetic tracks.
 
 ## Waveform styles
 
-Settings → Waveform (also in the VIEW menu) offers five Mixxx-style renderings. The choice applies immediately to both decks, the overview and the scrolling waveform in every layout, and is remembered:
+Settings → Waveform (also in the VIEW menu) offers six renderings. The choice applies immediately to both decks, the overview and the scrolling waveform in every layout, and is remembered:
 
 | Style | Rendering |
 |---|---|
+| Dual-Deck Tonal (default) | Each deck in its own three-band ramp: deck A deep royal blue lows, electric blue mids, ice cyan highs; deck B burnt amber lows, warm gold mids, pale cream highs. See [DECK-COLOUR-IDENTITY.md](DECK-COLOUR-IDENTITY.md) |
 | Simple | Full-band peak in one colour; stereo tracks show left above and right below the centre |
 | Filtered | Red lows, green mids, blue highs as stacked bands |
-| RGB (default) | One waveform whose colour mixes low (R), mid (G) and high (B) energy; overlaps give orange, yellow, purple |
+| RGB | One waveform whose colour mixes low (R), mid (G) and high (B) energy; overlaps give orange, yellow, purple |
 | RGB L/R | RGB colouring per channel: left above, right below |
 | HSV | Hue follows the spectral balance, highs desaturate, strong lows darken |
 
-The data comes from the same analysis pass. It adds per-channel display bands: 2-pole splits at ~250 Hz and ~4 kHz, plus a full-band peak, stored 150 times per second. The mono 200 Hz / 2.5 kHz bands that drive beat, energy and cue detection are unchanged. Display bands are cached with the waveform as 8-bit square-root-companded data. Tracks cached before this feature display at once from the mono bands, and gain the stereo data in the background the next time they are loaded; their cached grid, cues and sections are kept as they were. All styles share one renderer (`src/ui/waveStyle.ts`), so every view of a track matches.
+Saved preferences that still had the previous default (RGB) switch to Dual-Deck Tonal once; any other saved choice is kept, and choosing RGB again afterwards sticks.
+
+The data comes from the same analysis pass. It adds per-channel display bands: 2-pole splits at the channel EQ's own corners (220 Hz low shelf, 3.5 kHz high shelf; constants shared with the audio EQ in `mixerMath.ts`), plus a full-band peak, stored 150 times per second. The mono 200 Hz / 2.5 kHz bands that drive beat, energy and cue detection are unchanged. Display bands are cached with the waveform as 8-bit square-root-companded data. Tracks cached before this feature display at once from the mono bands, and gain the stereo data in the background the next time they are loaded; their cached grid, cues and sections are kept as they were. All styles share one renderer (`src/ui/waveStyle.ts`), so every view of a track matches.
 
 ### EQ-reactive waveforms
 
-The waveforms show what each deck's EQ lets through. When they are drawn, the cached band data is multiplied by the deck's current EQ gains; the analysis is never changed or rerun. Red is LOW, green is MID and blue is HIGH:
+The waveforms show what each deck's EQ lets through. When they are drawn, the cached band data is multiplied by the deck's current EQ gains; the analysis is never changed or rerun. In the RGB styles red is LOW, green is MID and blue is HIGH; in Dual-Deck Tonal they are the deck's deep, main and pale colours. Settings → Waveform → "Waveforms follow the deck EQ" switches this off (the waveforms then always show the analysed balance):
 
 - **Gains follow the audio.** Each knob uses the same knob → dB curve as the audio EQ (`eqVisualGain`), so 50 % on the knob dims its colour as much as it cuts the sound. Kill, or turning a knob fully down, removes that colour. Boosts are compressed (+6 dB → 1.5×) so colours don't clip.
-- **Styles.** RGB, RGB L/R and HSV recolour from the post-EQ bands. Filtered layers shrink and disappear. The overall height follows the change in band energy, so a killed band also makes the waveform smaller; Simple mode shows only this height change.
+- **Styles.** Dual-Deck Tonal shrinks the cut band's layer (LOW → the deep core, MID → the body, HIGH → the pale edges) and re-blends the body colour. RGB, RGB L/R and HSV recolour from the post-EQ bands. Filtered layers shrink and disappear. The overall height follows the change in band energy, so a killed band also makes the waveform smaller; Simple mode shows only this height change.
 - **Every input.** The gains come from the engine's mixer state, which the on-screen knobs, keyboard, MIDI mappings and the DDJ-SB hardware knobs all write to. Each deck uses only its own EQ.
 - **Smoothing.** Changes are smoothed over ~35 ms and quantised to ~3 % steps. Cached tiles are redrawn in place, into their existing pixel buffers, only when the picture changes. Drawing goes straight into `ImageData`, with no per-column `fillStyle`/`fillRect`, and never touches the audio thread.
 - **Measured.** In a 600-message DDJ-SB EQ sweep over 2.5 s, waveform drawing took ~0.8 ms per frame, and the UI held 41–44 fps against 49 fps for the same activity on a control that doesn't change the waveform. Playback speed was unaffected.

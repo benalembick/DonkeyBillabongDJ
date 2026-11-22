@@ -1,9 +1,19 @@
 /** Icons for the main navigation (top bar): drawn in the button's colour, 24 px. */
 import type { ReactNode } from "react";
 
-export type NavArea = "collections" | "playlists" | "mashups" | "transitions" | "practice" | "streaming" | "lighting" | "production";
+export type NavArea = "decks" | "collections" | "playlists" | "mashups" | "transitions" | "practice" | "streaming" | "lighting" | "production" | "setstudio";
 
 const PATHS: Record<NavArea, ReactNode> = {
+  // Two platters: the DJ Deck view.
+  decks: (
+    <>
+      <circle cx="7" cy="12" r="4.5" />
+      <circle cx="7" cy="12" r="1" fill="currentColor" />
+      <circle cx="17" cy="12" r="4.5" />
+      <circle cx="17" cy="12" r="1" fill="currentColor" />
+      <path d="M2 4h20M2 20h20" />
+    </>
+  ),
   // Music library: a note.
   collections: (
     <>
@@ -22,6 +32,8 @@ const PATHS: Record<NavArea, ReactNode> = {
   ),
   // Lightning: mashups.
   mashups: <path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z" />,
+  // An energy arc with a spark: AI Set Studio.
+  setstudio: <><path d="M2 19c3 0 4-6 7-6s3 3 5 3 3-9 8-11" /><path d="M18 3v3M16.5 4.5h3" /><circle cx="9" cy="13" r="1.2" fill="currentColor" /><path d="M2 22h20" /></>,
   production: <><path d="M3 5v14M7 8v8M11 3v18M15 7v10M19 5v14M22 9v6" /><path d="M1 12h22" /></>,
   // Two tracks crossing: transitions.
   transitions: (
@@ -54,6 +66,29 @@ export function NavIcon({ area }: { area: NavArea }) {
   return (
     <svg className="nav-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {PATHS[area]}
+    </svg>
+  );
+}
+
+/** Mixer sliders: the top bar's tools menu (Controller, Diagnostics, Settings, About). */
+export function ToolsIcon() {
+  return (
+    <svg className="tools-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
+      <circle cx="15" cy="6" r="2" />
+      <circle cx="9" cy="12" r="2" />
+      <circle cx="17" cy="18" r="2" />
+    </svg>
+  );
+}
+
+/** A document or folder with a plus: the Collection's Add files… / Add folder… buttons. */
+export function AddToLibraryIcon({ kind }: { kind: "files" | "folder" }) {
+  return (
+    <svg className="add-source-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {kind === "files"
+        ? <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M12 11v6M9 14h6" /></>
+        : <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M12 10.5v6M9 13.5h6" /></>}
     </svg>
   );
 }

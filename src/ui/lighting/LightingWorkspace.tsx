@@ -3,7 +3,7 @@
  * Presentation only — all state lives in the LightingService / DmxEngine, so the
  * lights keep running (and the DDJ-SB can control them later) whichever page is open.
  */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useApp } from "../context";
 import { useAnimationFrame } from "../hooks";
 import type { LightingConfig, LightingService, QlcImportReport, VcWidget } from "../../lighting/LightingService";
@@ -21,6 +21,13 @@ const TABS: [Tab, string][] = [
   ["fixtures", "Fixtures"],
   ["io", "Inputs / Outputs"],
 ];
+/** Sub-menu icons (in the label colour; each tab's own colour is its bottom bar, see .lx-tab-* in styles.css). */
+const TAB_ICONS: Record<Tab, ReactNode> = {
+  console: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9.5" r="2" /><circle cx="16" cy="9.5" r="2" /><path d="M7 16h3M14 16h3" /></>,
+  desk: <><path d="M6 3v18M12 3v18M18 3v18" /><rect x="4" y="13" width="4" height="3" rx="1" /><rect x="10" y="7" width="4" height="3" rx="1" /><rect x="16" y="15" width="4" height="3" rx="1" /></>,
+  fixtures: <><path d="M8 3h8l-1.5 7h-5z" /><path d="M9.5 10 6 20M14.5 10 18 20M12 10v11" /></>,
+  io: <><path d="M3 8h10m0 0-3-3m3 3-3 3" /><path d="M21 16H11m0 0 3-3m-3 3 3 3" /><path d="M17 4v8M7 12v8" /></>,
+};
 
 function useLightingConfig(l: LightingService): LightingConfig {
   return useSyncExternalStore(
@@ -75,12 +82,14 @@ export function LightingWorkspace() {
     <div className="lx">
       <nav className="lx-tabs" aria-label="Lighting">
         <span className="lx-title">LIGHTING</span>
-        {TABS.map(([id, label]) => (
-          <button key={id} className={tab === id ? "active" : ""} onClick={() => choose(id)}>
-            {label}
-          </button>
-        ))}
-        <span className="lx-spacer" />
+        <div className="lx-tab-tiles">
+          {TABS.map(([id, label]) => (
+            <button key={id} className={`lx-tab lx-tab-${id}${tab === id ? " active" : ""}`} aria-current={tab === id ? "page" : undefined} title={label} onClick={() => choose(id)}>
+              <svg className="lx-tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TAB_ICONS[id]}</svg>
+              <span className="lx-tab-label">{label}</span>
+            </button>
+          ))}
+        </div>
         <MasterStrip l={lighting} compact />
       </nav>
       <div className="lx-body">

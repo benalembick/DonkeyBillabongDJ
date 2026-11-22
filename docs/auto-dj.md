@@ -39,3 +39,7 @@ Artwork uses the existing metadata reader for supported MP3, M4A/AAC, FLAC and t
 ## Validation
 
 `npm test`, `npm run typecheck`, and `npm run build` cover the unit suite and builds. The optional `DBDJ_SMOKE_AUTODJ=1` flag with `npm run smoke` generates disposable tagged WAV fixtures and verifies real deck playback/crossfade, manual MIDI takeover, embedded artwork under the production CSP, and playlist persistence. Add `DBDJ_SMOKE_BROWSER=1` to test browser storage and file reselection. Smoke tests use a disposable profile and mute the generated test audio.
+
+## Prepared transitions (AI Set Studio Phase 2)
+
+When the playing pair has a transition saved in AI Set Studio's Transition Lab, Auto DJ uses it: its mix-out and mix-in points, length, key lock and (for a manual target tempo) the incoming deck's rate, with the crossfader, low/mid/high EQ cuts and echo-out driven every tick by `frameAt` (`src/setstudio/transitionModel.ts`), the same function the Lab preview plays. The set's own transition is used when Auto DJ is playing a playlist created from that set; otherwise only a set-independent one. `checkPlayable` validates it against the loaded tracks first (sync is dropped when the incoming deck's tempo range can't cover it); anything that doesn't fit falls back to the normal plan. Manual EQ moves still take a band back. Switch off globally with the Auto DJ setting **Prepared transitions** or per set in the set builder. See docs/architecture/AI_SET_STUDIO.md §5.4.

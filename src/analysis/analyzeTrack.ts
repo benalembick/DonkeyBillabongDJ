@@ -9,6 +9,7 @@
  */
 
 import { EQ_HIGH_HZ, EQ_LOW_HZ } from "../core/engine/mixerMath";
+import { fitGrid, gridEnvelope, GRID_FIT_VERSION } from "./gridFit";
 
 export const WAVE_FPS = 150;
 /** Display crossovers for the waveform styles = the channel EQ's low-shelf / high-shelf corners. */
@@ -44,9 +45,14 @@ export interface TrackAnalysis {
   bpm: number | null;
   /** Time (s) of the first beat of the grid (≥ 0). */
   firstBeat: number | null;
-  /** Beat detection confidence (comb peak / mean, ~1 = none, > 2 = good). */
+  /**
+   * Beat grid confidence; 1.4 or more is trusted. From the whole-track grid fit when there's enough beat to
+   * judge (see gridFit.ts), otherwise the first pass's comb score (peak / mean, ~1 = none, > 2 = good).
+   */
   confidence: number;
   bpmSource: "analysis" | "metadata" | "none";
+  /** Version of the whole-track grid fit applied (absent/0: analysed before it existed; re-fitted from the cache). */
+  gridFitVersion?: number;
   /** Perceptual estimates. Unknown values stay null rather than being guessed. */
   key: string | null;
   keyConfidence: number;
@@ -166,7 +172,7 @@ export function analyzeTrack(channels: Float32Array[], sampleRate: number, bucke
   }
 
   const duration = Math.max(0.001, n / sampleRate);
-  const beat = detectBeats(onsetEnv, WAVE_FPS, metaBpm);
+  const beat = refineBeats(detectBeats(onsetEnv, WAVE_FPS, metaBpm), low, mid, WAVE_FPS);
   const musicalKey = detectKey(channels, sampleRate);
   const structure = analyseStructure(rms, duration);
   const hotCueSuggestions = suggestHotCues(low, onsetEnv, WAVE_FPS, duration, beat.bpm);
@@ -415,6 +421,21 @@ function comb(flux: Float32Array, start: number, end: number, P: number): [numbe
     }
   }
   return [(best / (total / BINS)) / 2, ((bestBin + 0.5) / BINS) * P];
+}
+
+type BeatFields = Pick<TrackAnalysis, "bpm" | "firstBeat" | "confidence" | "bpmSource" | "gridFitVersion">;
+
+/**
+ * Second pass: fit the first-pass grid to the whole track (see gridFit.ts) using the analysis bands, which
+ * are also cached, so an old cached analysis can be upgraded the same way without decoding the audio.
+ * A tag BPM the fit had to move away from is no longer the source.
+ */
+export function refineBeats(beat: BeatFields, low: ArrayLike<number>, mid: ArrayLike<number>, fps: number): BeatFields {
+  if (!beat.bpm || beat.firstBeat === null) return { ...beat, gridFitVersion: GRID_FIT_VERSION };
+  const fit = fitGrid(gridEnvelope(low, mid), fps, beat.bpm, beat.firstBeat);
+  if (!fit) return { ...beat, gridFitVersion: GRID_FIT_VERSION };
+  const moved = Math.abs(fit.bpm - beat.bpm) / beat.bpm > 0.0005;
+  return { bpm: fit.bpm, firstBeat: fit.firstBeat, confidence: fit.confidence, bpmSource: moved && beat.bpmSource === "metadata" ? "analysis" : beat.bpmSource, gridFitVersion: GRID_FIT_VERSION };
 }
 
 export function detectBeats(env: Float32Array, fps: number, metaBpm: number | null): Pick<TrackAnalysis, "bpm" | "firstBeat" | "confidence" | "bpmSource"> {

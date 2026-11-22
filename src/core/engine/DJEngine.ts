@@ -35,6 +35,8 @@ export interface BeatGrid {
   offset?: number;
   manuallyAdjusted?: boolean;
   beatPositions?: number[];
+  /** Hand-marked start of an 8-bar phrase (s); phrases repeat every 8 bars from it. */
+  phraseAnchor?: number | null;
   bpm: number;
   firstBeat: number;
   confidence: number;
@@ -342,13 +344,6 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     try {
       this.patchDeck(deck, { cuePoint: clamp(seconds, 0, d.duration) });
     } finally { this.restoringPreparation = false; }
-  }
-
-  editBeatGrid(deck: number, bpm: number, firstBeat: number): void {
-    const d = this.state.decks[deck];
-    if (d.status !== "ready" || !Number.isFinite(bpm) || bpm < 20 || bpm > 400 || !Number.isFinite(firstBeat) || firstBeat < 0 || firstBeat >= d.duration) return;
-    this.setBeatGrid(deck, { bpm, firstBeat, confidence: d.beatGrid?.confidence ?? 1, source: d.beatGrid?.source ?? "metadata",
-      manuallyAdjusted: true, offset: (d.beatGrid?.offset ?? 0) + firstBeat - (d.beatGrid?.firstBeat ?? firstBeat) });
   }
 
   editHotcue(deck: number, slot: number, patch: Partial<Pick<PreparedCue, "timestamp" | "name" | "colour">>): void {
@@ -1647,6 +1642,12 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.patchSlot(u, k, { type });
     const fxAssign = this.state.fx.map((unit) => unit.slots.map((s) => s.type));
     this.settings = { ...this.settings, fxAssign };
+  }
+
+  /** Set a whole FX unit's state at once (AI Set Studio Echo Out: configure, then restore exactly what was there). */
+  setFxUnit(u: number, patch: Partial<FxUnitState>): void {
+    if (!this.state.fx[u]) return;
+    this.patchFx(u, patch);
   }
 
   private patchFx(u: number, patch: Partial<FxUnitState>): void {

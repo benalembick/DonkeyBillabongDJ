@@ -22,6 +22,9 @@ import { BrowserLibrary, browserFileRef, coverDataUrl } from "../library/Browser
 import { BrowserPreparation } from "../preparation/BrowserPreparation";
 import type { PreparationPersistence, TrackPreparation, WaveformRecord } from "../preparation/types";
 import type { MashupPersistence, MashupRecipe } from "../mashup/types";
+import type { DJSet, SetPersistence } from "../setstudio/types";
+import { LocalStorageSets } from "../setstudio/SetStore";
+import { LocalStorageDocs, type DocPersistence } from "../setstudio/DocStore";
 
 /**
  * Platform abstraction: desktop (Electron, full filesystem access) vs browser
@@ -66,6 +69,8 @@ export interface DesktopBridge {
   pickArtworkFile(): Promise<{ path: string; data: ArrayBuffer } | null>;
   readTextFile(path: string): Promise<string>;
   openExternal(url: string): Promise<void>;
+  /** Save dialog + UTF-8 text write; resolves false when cancelled. */
+  saveTextFile?(name: string, text: string, ext: string): Promise<boolean>;
   readTags(paths: string[]): Promise<TagResult[]>;
   /** Writes title/artist/album/genre/year/artwork back into the file itself. */
   writeTags(filePath: string, patch: TagPatch): Promise<{ ok: boolean; error?: string; artworkUrl?: string | null }>;
@@ -82,6 +87,14 @@ export interface DesktopBridge {
     loadMashupRecipes(): Promise<MashupRecipe[]>;
     saveMashupRecipe(record: MashupRecipe): Promise<void>;
     removeMashupRecipe(id: string): Promise<void>;
+    /** AI Set Studio sets (absent in preloads older than the module). */
+    loadDjSets?(): Promise<unknown[]>;
+    saveDjSet?(set: DJSet): Promise<void>;
+    removeDjSet?(id: string): Promise<void>;
+    /** AI Set Studio Phase 2 documents. */
+    loadDocs?(kind: string): Promise<unknown[]>;
+    saveDoc?(kind: string, doc: unknown): Promise<void>;
+    removeDoc?(kind: string, id: string): Promise<void>;
     loadTracks(): Promise<TrackRow[]>;
     upsertTracks(rows: TrackRow[]): Promise<void>;
     removeTracks(refs: string[]): Promise<void>;
@@ -263,6 +276,20 @@ export interface Platform {
   mappingStorage: MappingStorage;
   /** Spotify → Local jobs: SQLite on desktop, localStorage in the browser. */
   importJobs: ImportJobPersistence;
+  /** AI Set Studio sets: SQLite on desktop, localStorage in the browser. */
+  djSets: SetPersistence;
+  /** AI Set Studio Phase 2 documents (prepared transitions, presets, blend groups). */
+  setStudioDocs: DocPersistence;
+  /** Save a text file (save dialog on desktop, a download in the browser). Resolves false when cancelled. */
+  saveTextFile(name: string, text: string, ext: string): Promise<boolean>;
+}
+
+/** Browser download of a text file (also the desktop fallback for older preloads). */
+function downloadText(name: string, text: string): boolean {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
 }
 
 export interface ImportJobPersistence {
@@ -449,6 +476,19 @@ class DesktopPlatform implements Platform {
     const db = this.bridge.db, fallback = new LocalStorageMashups();
     return { list: () => typeof db.loadMashupRecipes === "function" ? db.loadMashupRecipes() : fallback.list(), save: (r) => typeof db.saveMashupRecipe === "function" ? db.saveMashupRecipe(r) : fallback.save(r), remove: (id) => typeof db.removeMashupRecipe === "function" ? db.removeMashupRecipe(id) : fallback.remove(id) };
   }
+  get djSets(): SetPersistence {
+    const db = this.bridge.db;
+    if (typeof db.loadDjSets !== "function" || typeof db.saveDjSet !== "function" || typeof db.removeDjSet !== "function") return new LocalStorageSets();
+    return { list: () => db.loadDjSets!(), save: (s) => db.saveDjSet!(s), remove: (id) => db.removeDjSet!(id) };
+  }
+  get setStudioDocs(): DocPersistence {
+    const db = this.bridge.db;
+    if (typeof db.loadDocs !== "function" || typeof db.saveDoc !== "function" || typeof db.removeDoc !== "function") return new LocalStorageDocs();
+    return { list: (k) => db.loadDocs!(k), save: (k, d) => db.saveDoc!(k, d), remove: (k, id) => db.removeDoc!(k, id) };
+  }
+  async saveTextFile(name: string, text: string, ext: string): Promise<boolean> {
+    return typeof this.bridge.saveTextFile === "function" ? this.bridge.saveTextFile(name, text, ext) : downloadText(name, text);
+  }
   get importJobs(): ImportJobPersistence {
     const a = this.bridge.acquire;
     if (!a) return new LocalStorageImportJobs();
@@ -496,6 +536,9 @@ class BrowserPlatform implements Platform {
   readonly mappingStorage: MappingStorage = new LocalStorageMappings();
   readonly playlists: PlaylistPersistence = new LocalStoragePlaylists();
   readonly importJobs: ImportJobPersistence = new LocalStorageImportJobs();
+  readonly djSets: SetPersistence = new LocalStorageSets();
+  readonly setStudioDocs: DocPersistence = new LocalStorageDocs();
+  async saveTextFile(name: string, text: string): Promise<boolean> { return downloadText(name, text); }
   /** The browser can't write back to a file picked via <input type=file>. */
   readonly embeddedCues = null;
   readonly writeTags = null;

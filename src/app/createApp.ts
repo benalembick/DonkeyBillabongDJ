@@ -34,6 +34,7 @@ import { PlaylistStore } from "../library/PlaylistStore";
 import { AutoDJ } from "../autodj/AutoDJ";
 import { DEFAULT_AUTO_DJ } from "../autodj/transition";
 import { PreparationStore } from "../preparation/PreparationStore";
+import { BeatGridService } from "../preparation/BeatGridService";
 import { CueSourceRouter, toDeckFields } from "../preparation/CueSourceRouter";
 import type { EmbeddedCue } from "../library/embeddedCues";
 import { LiveMashupService } from "../mashup/LiveMashupService";
@@ -47,6 +48,21 @@ import { LiveLooper } from "../production/looper/LiveLooper";
 import { TeachLoopService } from "../teachloop/TeachLoopService";
 import { HeadphonePreview } from "../audio/HeadphonePreview";
 import { browserSpotifySessionStore, RecordingSourceAdapter, SpotifyPlaybackAdapter, SpotifySessionCoordinator } from "../acquire/SpotifySessionCoordinator";
+import { SetStore } from "../setstudio/SetStore";
+import { LibraryIntelligence } from "../setstudio/LibraryIntelligence";
+import { SetStudioService } from "../setstudio/SetStudioService";
+import { regionsFromEnvelope, vocalEnvelopeFromStems } from "../transitions/vocals";
+import { DocStore, LocalStorageDocs, withLocalFallback } from "../setstudio/DocStore";
+import { DrumTranscriber } from "../production/drums/DrumTranscriber";
+import { migrateMapPreset, migrateTranscription, type DrumMapPreset, type DrumTranscription } from "../production/drums/types";
+import { contentTrackId } from "../preparation/types";
+import { isManualGrid } from "../preparation/beatGrid";
+import { AutoCueService } from "../setstudio/AutoCueService";
+import { TransitionLabService } from "../setstudio/TransitionLabService";
+import { BlendGroupService, migrateGroup, migrateJourney, type BlendGroup, type GroupJourney } from "../setstudio/BlendGroups";
+import { findPrepared, migratePreset, migrateTransition, type PreparedTransition, type TransitionPreset } from "../setstudio/transitionModel";
+
+declare const __APP_VERSION__: string;
 
 export interface App {
   bus: CommandBus;
@@ -59,6 +75,8 @@ export interface App {
   autoDJ: AutoDJ;
   analysis: AnalysisService;
   preparation: PreparationStore;
+  /** Beat grid edits (deck editor, waveform drag, Transition Guides): saved as set by hand, pushed to the decks. */
+  beatGrid: BeatGridService;
   liveMashup: LiveMashupService;
   practice: PracticeService;
   /** STEM separation (desktop only; local ONNX model). */
@@ -86,10 +104,22 @@ export interface App {
   pitch: VocalPitch;
   /** Live Looper (Production Studio → LOOPER). */
   looper: LiveLooper;
+  /** Production Studio → Drum Transcriber: audio → editable MIDI drums (see docs/DRUM-TRANSCRIBER.md). */
+  drums: DrumTranscriber;
   /** Learn → Teach Me: Live Looping — isolated lesson sandbox (its own ProductionStudio + LiveLooper, pad-only). */
   teachLoop: TeachLoopService;
   /** Library track preview in the headphones only (needs 4-channel routing); never touches the decks or master. */
   preview: HeadphonePreview;
+  /** AI Set Studio: saved sets, set builder, recommendations and playlist/deck/Auto DJ integration. */
+  setStudio: SetStudioService;
+  /** AI Set Studio: Analyse Library job (reuses AnalysisService) and per-track set intelligence. */
+  libraryIntel: LibraryIntelligence;
+  sets: SetStore;
+  /** AI Set Studio Phase 2. */
+  autoCue: AutoCueService;
+  transitionLab: TransitionLabService;
+  blendGroups: BlendGroupService;
+  preparedTransitions: DocStore<PreparedTransition>;
   /** Set a local track's star rating (persisted). */
   setRating(ref: string, rating: number): Promise<void>;
   /** Renames/retags/re-covers a local track, writing the change into the file itself (desktop only). */
@@ -154,6 +184,7 @@ export function createApp(): App {
     settings: { ...storedSettings, jog: { ...DEFAULT_ENGINE_SETTINGS.jog, ...storedSettings.jog } },
   });
   const preparation = new PreparationStore(platform.preparation, (err) => log.warn("analysis", `Preparation storage: ${String(err)}`));
+  const beatGrid = new BeatGridService({ preparation, engine, log: (level, m) => log[level]("analysis", m) });
   engine.setPreparationPort(new CueSourceRouter(preparation, platform.embeddedCues, (deck) => cueSourceFor(engine.getSettings(), deck), (msg) => log.warn("cues", msg)));
   const analysis = new AnalysisService(engine, {
     preparation,
@@ -163,6 +194,9 @@ export function createApp(): App {
     onInfo: (message) => log.info("analysis", message),
     probeDuration: async (ref) => ((await platform.readTags([ref]))[0]?.durationMs ?? 0) / 1000 || null,
   });
+  // Older analyses get the whole-track beat-grid fit from their cached bands (no decoding), once, in the
+  // background after startup has settled. Tracks loaded onto a deck before then are re-fitted on load.
+  void preparation.ready.then(() => setTimeout(() => void analysis.refitLibrary().catch((err) => log.warn("analysis", `Beat grid re-fit: ${String(err)}`)), 10_000)).catch(() => undefined);
   const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
   void playlists.load();
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
@@ -193,7 +227,7 @@ export function createApp(): App {
   bus.handle("sampler.bank.prev", (v) => { if (v > 0) production.setSamplerBank(production.getState().project.sampler.bank - 1); });
   bus.handle("sampler.stopall", (v) => { if (v > 0) production.stopAllPads(); });
   bus.handle("sampler.volume", (v) => production.setPadVolume(v * 1.5));
-  const transitions = new TransitionService({ engine, bus, library, preparation, analysis, stems, log, readAudio: (ref) => platform.readAudio(ref) });
+  const transitions = new TransitionService({ engine, bus, library, preparation, analysis, stems, log, readAudio: (ref) => platform.readAudio(ref), grid: beatGrid });
   const training = new TrainingService({ engine, bus, audio, library, preparation, analysis,
     // Coaching names the keyboard/mouse controls when no mapped controller is connected.
     keyboardOnly: () => !controllers.getControllers().some((c) => c.connected && c.mappingId),
@@ -201,6 +235,12 @@ export function createApp(): App {
   const lighting = new LightingService({ bus, log, dj: engine, audio, sections: (deck) => analysis.get(deck)?.sections ?? null, bridge: platform.kind === "desktop" ? (window.dbdjDesktop?.lighting ?? null) : null });
   void lighting.start();
   const autoDJ = new AutoDJ({ engine, bus, audio, library, playlists, analysis, stemAvailable: (ref) => stems.index()[ref] === "complete",
+    // AI Set Studio prepared transitions: the playing set's (found via the playlist made from it), else a set-independent one.
+    preparedTransitions: { find: (outRef, inRef, playlistId) => {
+      const set = playlistId ? sets.getState().sets.find((s) => s.playlistIds?.includes(playlistId)) : undefined;
+      if (set?.preparedTransitions === false) return null;
+      return findPrepared(preparedTransitions.all(), preparation.forRef(outRef)?.trackId ?? null, preparation.forRef(inRef)?.trackId ?? null, set?.id ?? null);
+    } },
     settings: load("dbdj.autoDJ.v1", DEFAULT_AUTO_DJ), saveSettings: (s) => save("dbdj.autoDJ.v1", s),
     rememberedQueue: load("dbdj.autoDJ.queue.v1", { playlistId: null, current: null, upcoming: [], played: [] }), saveQueue: (q) => save("dbdj.autoDJ.queue.v1", q) });
   const liveMashup = new LiveMashupService({ engine, bus, preparation, persistence: platform.mashups, lookup: (ref) => library.getByRef(ref) ?? undefined, envelopes: (deck) => stems.envelopes(deck), renderData: (ref) => stems.renderData(ref), sourcePcm: (deck) => audio.exportPcm(deck), saveFile: (name,data) => platform.saveMashup(name,data), importRendered: async (file,track) => {
@@ -208,6 +248,88 @@ export function createApp(): App {
     let mashups = playlists.getState().playlists.find((p) => p.name === "Mashups"); if (!mashups) mashups = playlists.create("Mashups"); playlists.addTracks(mashups.id,[file.ref]); analysis.queueTracks([track]);
   } });
   const practice = new PracticeService({ engine, bus, audio, library, playlists, preparation });
+  // AI Set Studio — reuses the library, preparation records, AnalysisService, playlists, decks, preview and Auto DJ.
+  const sets = new SetStore(platform.djSets, (err) => log.warn("setstudio", `Set storage: ${String(err)}`));
+  void sets.load();
+  const libraryIntel = new LibraryIntelligence({
+    library, preparation, analysis,
+    stemsComplete: (ref) => stems.index()[ref] === "complete",
+    // Vocal presence only from completed STEMS separation (the app's only real vocal data).
+    vocalFraction: async (ref) => {
+      if (stems.index()[ref] !== "complete") return null;
+      const data = await stems.renderData(ref);
+      const total = data.pcm.byteLength / 12 / data.rate;
+      if (!(total > 0)) return null;
+      const regions = regionsFromEnvelope(vocalEnvelopeFromStems(new Int16Array(data.pcm), data.rate), 0.1);
+      return Math.min(1, regions.reduce((a, [s, e]) => a + (e - s), 0) / total);
+    },
+    log: (level, message) => log[level]("setstudio", message),
+  });
+  const setStudio = new SetStudioService({ library, preparation, playlists, store: sets, intel: libraryIntel, engine, autoDJ, preview,
+    play: (deck, on) => { if (engine.getState().decks[deck]?.playing !== on) bus.send(`deck${deck + 1}.play`, 1, "system"); },
+    send: (action, value) => bus.send(action, value, "system"),
+    saveText: (name, text, ext) => platform.saveTextFile(name, text, ext), pickText: () => platform.pickTextFile(".json,application/json"),
+    log, appVersion: typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "" });
+  // AI Set Studio Phase 2: Auto Cue, Transition Lab (prepared transitions + presets), Blend Steering Groups.
+  const docErr = (err: unknown) => log.warn("setstudio", `Preparation storage: ${String(err)}`);
+  const preparedTransitions = new DocStore<PreparedTransition>("transition", platform.setStudioDocs, migrateTransition, docErr);
+  const transitionPresets = new DocStore<TransitionPreset>("preset", platform.setStudioDocs, migratePreset, docErr);
+  const groupDocs = new DocStore<BlendGroup>("group", platform.setStudioDocs, migrateGroup, docErr);
+  const journeyDocs = new DocStore<GroupJourney>("journey", platform.setStudioDocs, migrateJourney, docErr);
+  for (const s of [preparedTransitions, transitionPresets, groupDocs, journeyDocs]) void s.load();
+  // Drum Transcriber — reuses Production Studio sources (files, recordings, stems), the audio engine's decoder and
+  // Production output, library beat grids (hand-edited ones win) and the shared versioned document store.
+  // Saves fall back to localStorage if the running Electron main predates the drum document kinds (until restart).
+  const drumDocs = withLocalFallback(platform.setStudioDocs, new LocalStorageDocs("dbdj.drums.docs.")); let drumsRef: DrumTranscriber | null = null;
+  const drumsErr = (what: string) => (err: unknown) => { log.warn("drums", `${what}: ${String(err)}`); drumsRef?.reportError(`${what} storage problem — ${err instanceof Error ? err.message : String(err)}`); };
+  const drums = new DrumTranscriber({
+    readBytes: (ref) => production.sourceBytes(ref),
+    decode: async (bytes) => { const d = await audio.decode(bytes); const b = d.handle as AudioBuffer; return { channels: Array.from({ length: b.numberOfChannels }, (_, i) => b.getChannelData(i)), sampleRate: b.sampleRate, duration: b.duration, buffer: b }; },
+    hash: contentTrackId,
+    store: new DocStore<DrumTranscription>("drumtx", drumDocs, migrateTranscription, drumsErr("Transcription")),
+    presets: new DocStore<DrumMapPreset>("drummap", drumDocs, migrateMapPreset, drumsErr("Drum map")),
+    pickFile: async () => (await platform.pickAudioFiles())[0] ?? null,
+    output: () => audio.createProductionOutput(),
+    libraryGrid: (hash, ref) => { const g = (preparation.get(hash) ?? preparation.forRef(ref))?.beatGrid; return g && g.bpm > 0 && Number.isFinite(g.firstBeat) ? { bpm: g.bpm, firstBeat: g.firstBeat, confidence: g.confidence, manual: isManualGrid(g) } : null; },
+    download: (name, bytes, mime) => { const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime })); const a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); },
+    saveText: (name, text, ext) => platform.saveTextFile(name, text, ext),
+    storage: (() => { try { return localStorage; } catch { return null; } })(),
+  });
+  drumsRef = drums;
+  void preparation.ready.then(() => drums.init()).catch((err) => log.warn("drums", String(err)));
+  const autoCue = new AutoCueService({
+    preparation,
+    vocals: (ref) => transitions.vocalRegionsFor(ref),
+    // Restore original pads without a backup: the deck's ↻ path (fresh analysis, re-suggest into empty pads; user cues kept).
+    resuggest: async (trackId) => {
+      const t = preparation.get(trackId)?.refs.map((r) => library.getByRef(r)).find((x): x is TrackInfo => !!x);
+      if (!t) throw new Error("Track not in the library");
+      await analysis.analyseOne(t, () => undefined, true, true);
+    },
+    // Accepted cues land in the app's cue database: refresh decks that show the Suggested cue source (Embedded decks are left alone).
+    onCuesChanged: (trackId) => {
+      const record = preparation.get(trackId);
+      if (!record) return;
+      for (const d of engine.getState().decks) {
+        if (d.status !== "ready" || d.track?.trackId !== trackId || cueSourceFor(engine.getSettings(), d.index) !== "suggested") continue;
+        const f = preparation.fields(record, d.duration);
+        engine.refreshPreparation(trackId, { hotcues: f.hotcues, cueDetails: f.cueDetails });
+      }
+    },
+  });
+  const blendGroups = new BlendGroupService({
+    groups: groupDocs, journeys: journeyDocs, pool: () => setStudio.pool(), resolve: (r) => setStudio.resolve(r).track, toRef: (t) => setStudio.toRef(t),
+    usedInSets: () => new Set(sets.getState().sets.flatMap((s) => [...s.slots.map((x) => x.track?.ref), ...s.groups.flatMap((g) => g.tracks.map((t) => t.ref))]).filter((r): r is string => !!r)),
+    recentlyPlayed: () => new Set(autoDJ.getState().played),
+    onDeleted: (id) => setStudio.onGroupDeleted(id),
+  });
+  setStudio.attachGroups(blendGroups);
+  const transitionLab = new TransitionLabService({
+    engine, send: (action, value = 1) => bus.send(action, value, "system"), audioRouting: () => audio.getStatus().routing, autoDJ, library, preparation,
+    transitions: preparedTransitions, presets: transitionPresets, log: (level, m) => log[level]("setstudio", m),
+  });
+  // Grid edits (or any other preparation change) refresh the Lab's track cards: "grid unreliable", SYNCED.
+  preparation.on("record", (r) => transitionLab.refreshTrack(r.trackId));
   const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
   // MIDI keyboards and drum controllers without a DJ mapping play the Sampler pads / chromatic instrument.
   controllers.on("monitor", (entry) => { if (!entry.mapping && entry.message.deviceId !== "simulator") production.handleSamplerMidi(entry.message); });
@@ -385,7 +507,7 @@ export function createApp(): App {
   window.addEventListener("error", (e) => log.error("ui", e.message));
   window.addEventListener("unhandledrejection", (e) => log.error("ui", `Unhandled: ${String(e.reason)}`));
   window.addEventListener("beforeunload", () => controllers.shutdown());
-  window.addEventListener("beforeunload", () => { autoDJ.dispose(); spotifyLocal.flush(); void playlists.flush(); void preparation.flush(); });
+  window.addEventListener("beforeunload", () => { autoDJ.dispose(); spotifyLocal.flush(); setStudio.flushSave(); void sets.flush(); transitionLab.stop(); drums.dispose(); for (const s of [preparedTransitions, transitionPresets, groupDocs, journeyDocs]) void s.flush(); void playlists.flush(); void preparation.flush(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden) { void playlists.flush(); void preparation.flush(); } });
 
   log.info("app", `Donkey Billabong DJ starting (${platform.kind} mode, ${platform.os})`);
@@ -430,8 +552,17 @@ export function createApp(): App {
     vocal,
     pitch,
     looper,
+    drums,
     teachLoop,
     preview,
+    setStudio,
+    libraryIntel,
+    sets,
+    autoCue,
+    transitionLab,
+    beatGrid,
+    blendGroups,
+    preparedTransitions,
     setRating: async (ref, rating) => {
       const t = library.setRating(ref, rating);
       if (t) await platform.library?.save([t]).catch((err) => log.warn("library", `Library database: ${String(err)}`));

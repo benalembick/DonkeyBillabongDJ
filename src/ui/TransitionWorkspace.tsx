@@ -8,6 +8,8 @@ import { useAnimationFrame } from "./hooks";
 import { barLabel, barLength, fmtTime, TECHNIQUES, timeAtBar, type Difficulty, type TechniqueId, type TrackFacts, type TransitionPlan } from "../transitions/planner";
 import type { Side, TransitionService, TransitionState } from "../transitions/TransitionService";
 import type { TrackInfo } from "../core/engine/types";
+import { gridReliable } from "../preparation/beatGrid";
+import { fixGridFor } from "./gridEditorStore";
 
 function useTransitions(svc: TransitionService): TransitionState {
   return useSyncExternalStore(useCallback((cb) => svc.on("change", cb), [svc]), () => svc.getState());
@@ -91,7 +93,7 @@ function SavedPlans({ s, svc }: { s: TransitionState; svc: TransitionService }) 
 // ─────────────────────────── track slots ───────────────────────────
 
 function TrackSlot({ side, s, svc }: { side: Side; s: TransitionState; svc: TransitionService }) {
-  const { engine } = useApp();
+  const app = useApp(), { engine } = app;
   const ref = side === "out" ? s.outRef : s.inRef;
   const f = side === "out" ? s.out : s.in;
   const job = ref ? s.jobs[ref] : undefined;
@@ -125,6 +127,7 @@ function TrackSlot({ side, s, svc }: { side: Side; s: TransitionState; svc: Tran
             </li>
             <li className={f.grid ? (f.grid.manual ? "ok" : f.grid.confidence < 1.4 ? "warn" : "ok") : "bad"}>
               {f.grid ? `${f.grid.manual ? "✓" : f.grid.confidence < 1.4 ? "⚠" : "✓"} Beat grid ${f.grid.bpm.toFixed(2)} BPM · ${f.grid.manual ? "set by hand" : `confidence ${f.grid.confidence.toFixed(1)}`}` : "✕ No beat grid"}
+              {ref && f.grid && !gridReliable(f.grid) && <button className="tiny" onClick={() => fixGridFor(app, ref)} title="Open the Beat grid editor on a deck (BPM, tap tempo, downbeat)">Fix grid…</button>}
             </li>
             <li className={f.key ? "ok" : "warn"}>{f.key ? `✓ Key ${f.key}` : "? Key unknown"}</li>
             <li className={f.energy !== null ? "ok" : "warn"}>{f.energy !== null ? `✓ Energy ${f.energy}/10 · ${f.sections.length} sections (approximate)` : "? Energy unknown"}</li>

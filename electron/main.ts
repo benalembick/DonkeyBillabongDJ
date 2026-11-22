@@ -37,6 +37,8 @@ import { runTransitionSmoke } from "./transitionSmoke";
 import { runTrainingSmoke } from "./trainingSmoke";
 import { dropWatchedFile, runSpotifyLocalSmoke, spotifyLocalFixtures } from "./spotifyLocalSmoke";
 import { runLooksSmoke } from "./looksSmoke";
+import { runDeckThemeSmoke } from "./deckThemeSmoke";
+import { runDrumsSmoke } from "./drumsSmoke";
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".mp4", ".flac", ".ogg", ".opus", ".aif", ".aiff"]);
 // "media" (microphone/camera) is deliberately NOT here: granting it made Chromium touch the
@@ -117,6 +119,21 @@ function registerIpc(): void {
   ipcMain.handle("dbdj:mashups:load", () => libraryDb.loadMashupRecipes());
   ipcMain.handle("dbdj:mashups:save", (_e, r) => libraryDb.saveMashupRecipe(r));
   ipcMain.handle("dbdj:mashups:remove", (_e, id: string) => libraryDb.removeMashupRecipe(String(id)));
+  ipcMain.handle("dbdj:sets:load", () => libraryDb.loadDjSets());
+  ipcMain.handle("dbdj:sets:save", (_e, s) => libraryDb.saveDjSet(s));
+  ipcMain.handle("dbdj:sets:remove", (_e, id: string) => libraryDb.removeDjSet(String(id)));
+  ipcMain.handle("dbdj:docs:load", (_e, kind: string) => libraryDb.loadDocs(kind));
+  ipcMain.handle("dbdj:docs:save", (_e, kind: string, d) => libraryDb.saveDoc(kind, d));
+  ipcMain.handle("dbdj:docs:remove", (_e, kind: string, id: string) => libraryDb.removeDoc(kind, String(id)));
+  ipcMain.handle("dbdj:file:saveText", async (e, name: string, text: string, ext: string) => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    const extension = String(ext).replace(/[^a-z0-9]/gi, "").slice(0, 8) || "txt";
+    const opts = { defaultPath: String(name).replace(/[<>:"/\\|?*]/g, "_"), filters: [{ name: extension.toUpperCase(), extensions: [extension] }] };
+    const r = w ? await dialog.showSaveDialog(w, opts) : await dialog.showSaveDialog(opts);
+    if (r.canceled || !r.filePath) return false;
+    await fs.writeFile(r.filePath, String(text), "utf8");
+    return true;
+  });
   ipcMain.handle("dbdj:mashup:saveFile", async (e, name: string, data: ArrayBuffer) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     const opts = { defaultPath: String(name).replace(/[<>:"/\\|?*]/g, "_"), filters: [{ name: "MP3 audio", extensions: ["mp3"] }] };
@@ -257,6 +274,8 @@ function runSmokeTest(win: BrowserWindow): void {
   let smokeTransitions: unknown = null;
   let smokeTraining: unknown = null;
   let smokeLooks: unknown = null;
+  let smokeDecks: unknown = null;
+  let smokeDrums: unknown = null;
   // Peak renderer memory (MB) while the smoke test runs, for the analysis memory check.
   let peakRendererMb = 0;
   const rendererMbTimeline: number[] = []; // once a second
@@ -291,6 +310,8 @@ function runSmokeTest(win: BrowserWindow): void {
         if (process.env.DBDJ_SMOKE_TRANSITIONS) smokeTransitions = await runTransitionSmoke(win, process.env.DBDJ_SMOKE_TRANSITIONS).catch((e) => ({ error: String(e) }));
         if (process.env.DBDJ_SMOKE_TRAINING) smokeTraining = await runTrainingSmoke(win, process.env.DBDJ_SMOKE_TRAINING, process.env.DBDJ_SMOKE_TRAINING_STOP ?? "").catch((e) => ({ error: String(e) }));
         if (process.env.DBDJ_SMOKE_LOOKS) smokeLooks = await runLooksSmoke(win, process.env.DBDJ_SMOKE_LOOKS).catch((e) => ({ error: String(e) }));
+        if (process.env.DBDJ_SMOKE_DRUMS) smokeDrums = await runDrumsSmoke(win, process.env.DBDJ_SMOKE_DRUMS, process.env.DBDJ_SMOKE_DRUMS_SHOTS ?? "").catch((e) => ({ error: String(e) }));
+        if (process.env.DBDJ_SMOKE_DECKS) smokeDecks = await runDeckThemeSmoke(win, process.env.DBDJ_SMOKE_DECKS, process.env.DBDJ_SMOKE_DECKS_SHOTS ?? "").catch((e) => ({ error: String(e) }));
         smokeLighting = process.env.DBDJ_SMOKE_LIGHTING ? await runLightingSmoke(win, process.env.DBDJ_SMOKE_LIGHTING, process.env.DBDJ_SMOKE_LIGHTING_TRACK ?? "").catch((e) => ({ error: String(e) })) : null;
         report = await win.webContents.executeJavaScript(`(async () => {
           const a = window.dbdj;
@@ -753,7 +774,7 @@ function runSmokeTest(win: BrowserWindow): void {
       }
       const gpuStatus = app.getGPUFeatureStatus() as unknown as Record<string, string>;
       const gpu = { canvas: gpuStatus["2d_canvas"], compositing: gpuStatus.gpu_compositing, rasterization: gpuStatus.rasterization };
-      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ report, errors, gpu, lighting: smokeLighting, knobs: smokeKnobs, scratch: smokeScratch, keylock: smokeKeylock, bigLibrary: smokeBigLib, movement: smokeMovement, deskLink: smokeDeskLink, transitions: smokeTransitions, training: smokeTraining, looks: smokeLooks, peakRendererMb, rendererMbTimeline }, null, 2)}\n`);
+      process.stdout.write(`DBDJ_SMOKE ${JSON.stringify({ drums: smokeDrums, report, errors, gpu, lighting: smokeLighting, knobs: smokeKnobs, scratch: smokeScratch, keylock: smokeKeylock, bigLibrary: smokeBigLib, movement: smokeMovement, deskLink: smokeDeskLink, transitions: smokeTransitions, training: smokeTraining, looks: smokeLooks, decks: smokeDecks, peakRendererMb, rendererMbTimeline }, null, 2)}\n`);
       clearInterval(memTimer);
       app.exit(errors.length ? 1 : 0);
     }, Number(process.env.DBDJ_SMOKE_WAIT_MS ?? 8000));

@@ -45,9 +45,12 @@ export class HeadphonePreview extends Emitter<{ change: HeadphonePreviewState }>
     return this.audio.getStatus().routing === "quad";
   }
 
-  /** Starts previewing `track` in the headphones; the same track again (or while it loads) stops it. */
-  async toggle(track: TrackInfo): Promise<void> {
-    if (this.st.ref === track.ref) return this.stop();
+  /**
+   * Starts previewing `track` in the headphones; the same track again (or while it loads) stops it.
+   * `offset` (s): start part-way in (AI Set Studio cue preview) — given, it always (re)starts there.
+   */
+  async toggle(track: TrackInfo, offset?: number): Promise<void> {
+    if (this.st.ref === track.ref && offset === undefined) return this.stop();
     if (track.source !== "local") throw new Error("Only local files can be previewed in the headphones");
     if (!this.headphonesAvailable()) throw new Error(HeadphonePreview.unavailableReason);
     this.stop();
@@ -69,7 +72,9 @@ export class HeadphonePreview extends Emitter<{ change: HeadphonePreviewState }>
       input.gain.linearRampToValueAtTime(1, now + FADE_S);
       source.connect(input);
       source.onended = () => { if (this.source === source) this.finish(); };
-      source.start(now);
+      const startAt = Math.max(0, Math.min(offset ?? 0, Math.max(0, (source.buffer?.duration ?? 0) - 0.05)));
+      source.start(now, startAt);
+      this.clock = { context, startedAt: now, offset: startAt };
       this.source = source;
       this.out = input;
       this.patch({ status: "playing" });
@@ -79,8 +84,16 @@ export class HeadphonePreview extends Emitter<{ change: HeadphonePreviewState }>
     }
   }
 
+  /** Seconds into the previewed track right now (null when nothing is previewing). */
+  position(): number | null {
+    const c = this.clock;
+    return c && this.source ? c.offset + Math.max(0, c.context.currentTime - c.startedAt) : null;
+  }
+  private clock: { context: BaseAudioContext; startedAt: number; offset: number } | null = null;
+
   stop(): void {
     this.token++;
+    this.clock = null;
     const source = this.source, out = this.out;
     this.source = this.out = null;
     if (source && out) {
@@ -100,6 +113,7 @@ export class HeadphonePreview extends Emitter<{ change: HeadphonePreviewState }>
 
   private finish(): void {
     this.source = null;
+    this.clock = null;
     this.out?.disconnect();
     this.out = null;
     this.patch({ ref: null, status: "idle" });

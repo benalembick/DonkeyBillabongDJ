@@ -6,7 +6,7 @@ export function TrackDiscoveryActions({ track, tracks, compact = false, onDone }
   const [mode, setMode] = useState<DiscoveryMode | null>(null);
   const open = (next: DiscoveryMode) => { if (track) setMode(next); onDone?.(); };
   return <>
-    {!compact && <button disabled={!track} onClick={() => open("matches")}><span aria-hidden>◎</span> FIND MATCHES</button>}
+    {!compact && <button className="discovery-action matches-action" disabled={!track} onClick={() => open("matches")}><span aria-hidden>◎</span> FIND MATCHES</button>}
     <button className={compact ? "" : "discovery-action djmix-action"} disabled={!track} onClick={() => open("djmix")}><span aria-hidden>☷</span> {compact ? "Create DJMix from this track" : "CREATE DJMIX"}</button>
     <button className={compact ? "" : "discovery-action mashup-action"} disabled={!track} onClick={() => open("mashup")}><span aria-hidden>⚡</span> {compact ? "Find mashups for this track" : "FIND MASHUPS"}</button>
     {mode && track && <DiscoveryDialog mode={mode} start={track} tracks={tracks} onClose={() => setMode(null)} />}

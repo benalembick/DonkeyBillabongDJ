@@ -135,6 +135,16 @@ describe("Auto DJ", () => {
     auto.saveToPlaylist();
     expect(playlists.get(playlist.id)?.refs).toEqual(["a", "d", "c"]);
   });
+  it("moves and removes a multi-track queue selection by position", async () => {
+    const { auto, playlist } = await setup();
+    await auto.start(playlist.id);
+    auto.add(["d", "b"]); await settle();
+    expect(auto.getState().upcoming).toEqual(["b", "c", "d", "b"]);
+    auto.playNextAt([3, 2]); await settle();
+    expect(auto.getState().upcoming).toEqual(["d", "b", "b", "c"]);
+    auto.removeAt([1, 2]); await settle();
+    expect(auto.getState().upcoming).toEqual(["d", "c"]);
+  });
   it("starts from a selected track and refuses to overwrite a playing set", async () => {
     const { auto, playlist, engine } = await setup();
     await auto.start(playlist.id, "b");

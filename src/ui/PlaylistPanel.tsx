@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { openStudio } from "./setstudio/nav";
 import type { TrackInfo } from "../core/engine/types";
 import { PlaylistStore } from "../library/PlaylistStore";
 import type { AutoDJSettings } from "../autodj/transition";
@@ -16,6 +17,9 @@ import { TrackMenu } from "./TrackMenu";
 import { useStemIndex, useStemProgress } from "./stemHooks";
 import { StemBadge } from "./StemBadge";
 import { useMenuPosition } from "./useMenuPosition";
+import { gridReliable } from "../preparation/beatGrid";
+import { openGridEditor } from "./gridEditorStore";
+import { deckLetter } from "../core/actions";
 
 export const TRACK_REFS = "application/x-dbdj-track-refs";
 const PLAYLIST_MOVE = "application/x-dbdj-playlist-move";
@@ -64,19 +68,21 @@ export function PlaylistNav({ mashipsSelected, playlistsSelected, activeArea, on
   </>;
 }
 
-export function LearnNav({ learnSelected, activeArea, onArea, onLearn }: { learnSelected: "transitions" | "practice" | "history" | null; activeArea: "playlists" | "mashups" | "practice" | null; onArea: (area: "playlists" | "mashups" | "practice") => void; onLearn: (view: "transitions" | "training" | "practice" | "history") => void }) {
+export function LearnNav({ learnSelected, activeArea, onArea, onLearn }: { learnSelected: "transitions" | "training" | "teachloop" | "practice" | "history" | null; activeArea: "playlists" | "mashups" | "practice" | null; onArea: (area: "playlists" | "mashups" | "practice") => void; onLearn: (view: "transitions" | "training" | "teachloop" | "practice" | "history") => void }) {
   const app = useApp();
   const practice = useFrameStore(useCallback((cb) => app.practice.on("change", cb), [app.practice]), () => app.practice.getState());
   return <>
     <button data-nav-area="practice" className={`browser-heading browser-section-link${activeArea === "practice" ? " active" : ""}`} onClick={() => onArea("practice")}>LEARN <span>›</span></button>
     <button data-source="learn-transitions" className={learnSelected === "transitions" ? "active" : ""} onClick={() => onLearn("transitions")}><span><span className="nav-icon" aria-hidden>⇄</span>Transition Guides</span></button>
-    <button data-source="learn-training" onClick={() => onLearn("training")}><span><span className="nav-icon" aria-hidden>◇</span>DJ Training</span></button>
+    <button data-source="learn-training" className={learnSelected === "training" ? "active" : ""} onClick={() => onLearn("training")}><span><span className="nav-icon" aria-hidden>◇</span>DJ Training</span></button>
+    <button data-source="learn-teachloop" className={learnSelected === "teachloop" ? "active" : ""} onClick={() => onLearn("teachloop")}><span><span className="nav-icon" aria-hidden>⟲</span>Teach Me: Looping</span></button>
     <button data-source="learn-practice" className={learnSelected === "practice" ? "active" : ""} onClick={() => onLearn("practice")}><span><span className="nav-icon" aria-hidden>▶</span>Practice Mode</span></button>
     <button data-source="learn-history" data-nav-end="practice" className={learnSelected === "history" ? "active" : ""} onClick={() => onLearn("history")}><span><span className="nav-icon" aria-hidden>↗</span>Practice History</span><span className="count">{practice.history.length}</span></button>
   </>;
 }
 
-export function PlaylistActions({ refs, onDone }: { refs: string[]; onDone?: () => void }) {
+/** `toolbar`: the Collection toolbar's styled variant — a feature-styled queue button and no Play Next (that stays in the track menu). */
+export function PlaylistActions({ refs, onDone, toolbar = false }: { refs: string[]; onDone?: () => void; toolbar?: boolean }) {
   const { playlists, autoDJ } = useApp();
   const state = usePlaylists();
   const auto = useAutoDJ();
@@ -90,8 +96,10 @@ export function PlaylistActions({ refs, onDone }: { refs: string[]; onDone?: () 
       <option value="__new">Create New Playlist</option>
       {state.playlists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
     </select>
-    <button disabled={!refs.length} onClick={() => { autoDJ.add(refs); onDone?.(); }}>Add to Auto DJ Queue</button>
-    <button disabled={!refs.length || auto.status === "TRANSITIONING"} onClick={() => { autoDJ.playNextRefs(refs); onDone?.(); }}>Play Next</button>
+    {toolbar
+      ? <button className="discovery-action queue-action" disabled={!refs.length} onClick={() => { autoDJ.add(refs); onDone?.(); }}><span aria-hidden>↝</span> ADD TO AUTO DJ QUEUE</button>
+      : <button disabled={!refs.length} onClick={() => { autoDJ.add(refs); onDone?.(); }}>Add to Auto DJ Queue</button>}
+    {!toolbar && <button disabled={!refs.length || auto.status === "TRANSITIONING"} onClick={() => { autoDJ.playNextRefs(refs); onDone?.(); }}>Play Next</button>}
   </>;
 }
 
@@ -112,7 +120,7 @@ function AutoSettings() {
       <label>Crossfade duration <select value={settings.transitionSeconds} onChange={(e) => autoDJ.configure({ transitionSeconds: e.target.value === "auto" ? "auto" : Number(e.target.value) })}>
         <option value="auto">Auto</option>{[3, 5, 8, 10, 15, 20, 30, 45, 60].map((n) => <option key={n} value={n}>{n} sec</option>)}
       </select></label>
-      {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering'], ['intelligentMashups', 'Intelligent Mashups'], ['tempoLeadIn', 'Tempo Lead-in']] as const).map(([key, label]) =>
+      {([['shuffle', 'Shuffle'], ['repeat', 'Repeat Playlist'], ['bpmSync', 'BPM Sync'], ['keyAware', 'Key-aware ordering'], ['intelligentMashups', 'Intelligent Mashups'], ['tempoLeadIn', 'Tempo Lead-in'], ['preparedTransitions', 'Prepared transitions (Transition Lab)']] as const).map(([key, label]) =>
         <label key={key}><input type="checkbox" checked={settings[key]} onChange={(e) => autoDJ.configure({ [key]: e.target.checked })} />{label}</label>)}
     </div><p className="hint">Shuffle and key-aware ordering apply when starting a set or repeating it. Beat Mix falls back to a fade when grids or tempos are unsuitable. Tempo Lead-in gradually nudges both decks' tempo toward each other beforehand (up to ±16%) when that's the only thing stopping Beat Mix — move either deck's tempo fader to take over.</p>
     <div className="toolbar auto-eq-settings">
@@ -136,10 +144,13 @@ export function AutoDJControls({ onQueue }: { onQueue?: () => void }) {
   const styleName = (style: AutoDJSettings["style"] | "beat-mix" | "crossfade" | "quick-fade") => style === "beat-mix" ? "Beat Mix" : style === "quick-fade" ? "Quick Fade" : style === "crossfade" ? "Crossfade" : "Smart";
   const requested = styleName(s.settings.style);
   const effective = s.plan ? styleName(s.plan.kind) : requested;
-  const fellBack = !!s.plan && s.settings.style !== "smart" && s.plan.kind !== s.settings.style;
+  // A Transition Lab transition replaces the style setting for this change, so it is never a "fallback".
+  const fellBack = !s.prepared && !!s.plan && s.settings.style !== "smart" && s.plan.kind !== s.settings.style;
   return <div className="auto-controls">
     <b className={`auto-status ${s.status.toLowerCase()}`}>AUTO DJ — {s.status}</b>
-    <strong className={`auto-transition-type ${fellBack ? "fallback" : ""}`}>Transition: {effective}{fellBack ? ` (${requested} unavailable)` : ""}</strong>
+    {s.prepared
+      ? <strong className="auto-transition-type prepared" title={`Saved in Transition Lab — its mix points, length, crossfader and EQ curves are used for this change (${s.plan?.sync ? "beat-synced" : "not beat-synced"}). Your Auto DJ style and Auto EQ settings apply to other changes.`}>Transition: ★ {s.prepared.name} (Transition Lab{s.plan ? ` · ${s.plan.sync ? "beat-synced" : "crossfade"}` : ""})</strong>
+      : <strong className={`auto-transition-type ${fellBack ? "fallback" : ""}`}>Transition: {effective}{fellBack ? ` (${requested} unavailable)` : ""}</strong>}
     <strong className="auto-duration">Duration: {s.plan ? `${Math.round(s.plan.seconds)} sec` : s.settings.transitionSeconds === "auto" ? "Auto" : `${s.settings.transitionSeconds} sec`}</strong>
     {s.status === "TRANSITIONING" && <strong className="auto-transition-banner">AUTO DJ TRANSITION — Deck {s.deck ? "B" : "A"} → Deck {s.deck ? "A" : "B"}</strong>}
     {s.status === "OFF" && s.current && <button className="primary" onClick={() => void autoDJ.restart()}>▶ RESTART AUTO DJ</button>}
@@ -235,16 +246,11 @@ export function TrackDetails({ track, onClose }: { track: TrackInfo; onClose: ()
     <button onClick={onClose}>Close</button></div>;
 }
 
-export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: string; onOpen: (id: string) => void; onQueue: () => void; onOpenSpotifyLocal?: (jobId: string) => void }) {
-  const app = useApp();
-  const { playlists, library, engine, autoDJ } = app;
-  const { settings: autoSettings } = useAutoDJ();
-  const ps = usePlaylists();
-  const libraryState = useLibraryState();
+/** Stem badge state per ref: a deck actively loading/separating STEMS is the most current state for that ref — matches the Collection listing. */
+function useStemCells() {
   const decks = useEngineState().decks;
   const stemIdx = useStemIndex();
   const stemProgress = useStemProgress();
-  // A deck actively loading/separating STEMS is the most current state for that ref — matches the Collection listing.
   const liveStemByRef = useMemo(() => {
     const map = new Map<string, { status: "loading" | "analysing"; progress: number }>();
     for (const d of decks) {
@@ -252,6 +258,31 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
     }
     return map;
   }, [decks]);
+  return { stemIdx, stemProgress, liveStemByRef };
+}
+type StemCells = ReturnType<typeof useStemCells>;
+
+/** The standard track-listing columns (Title → Added), shared by playlists and the Auto DJ queue so they stay in step with the Collection. */
+const TRACK_COLUMN_HEADERS = <><th>Title</th><th>Artist</th><th>Album</th><th>Genre</th><th className="num">BPM</th><th>Key</th><th>Camelot</th><th className="num">Energy</th><th className="num">Match</th><th className="num">Time</th><th>Rating</th><th>Source</th><th>Stems</th><th>Added</th></>;
+const TRACK_COLUMN_COUNT = 14;
+type MatchResult = ReturnType<typeof compatibility> | null;
+function TrackColumnCells({ trackRef, track, match, stems }: { trackRef: string; track: TrackInfo | null; match: MatchResult; stems: StemCells }) {
+  return <>
+    <td className="title-cell">{track?.title ?? trackRef}{track?.unavailableReason && <span className="warn"> · Reconnect file</span>}</td><td>{track?.artist}</td><td>{track?.album}</td><td>{track?.genre ?? ""}</td><td className="num">{track?.bpm?.toFixed(1) ?? "—"}</td><td>{track?.key ?? "—"}</td><td>{track?.camelot ?? "—"}</td><td className="num" title={track?.analysisConfidence === undefined ? "Not analysed" : `${Math.round(track.analysisConfidence * 100)}% confidence`}>{track?.energy ?? "—"}</td><td className="num" title={match?.reasons.join(" · ") ?? ""}>{match ? `${match.score}%` : "—"}</td><td className="num">{duration(track?.durationMs)}</td><td>{track && <PlaylistStars track={track} />}</td><td>{track && <span className="source-badge">LOCAL</span>}</td>
+    <td className="stems-cell">{track && <StemBadge stem={stems.stemIdx[track.ref]} stemProgress={stems.stemProgress[track.ref]} liveStem={stems.liveStemByRef.get(track.ref)} />}</td>
+    <td className="hint">{track?.addedAt ? new Date(track.addedAt).toLocaleDateString() : ""}</td>
+  </>;
+}
+
+export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: string; onOpen: (id: string) => void; onQueue: () => void; onOpenSpotifyLocal?: (jobId: string) => void }) {
+  const app = useApp();
+  const { playlists, library, engine, autoDJ } = app;
+  const { settings: autoSettings } = useAutoDJ();
+  const ps = usePlaylists();
+  const libraryState = useLibraryState();
+  const decks = useEngineState().decks;
+  const stems = useStemCells();
+  const stemIdx = stems.stemIdx;
   const p = ps.playlists.find((p) => p.id === id);
   const [selected, setSelected] = useState<string[]>([]);
   const [name, setName] = useState<string | null>(null);
@@ -346,7 +377,7 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
     {onOpenSpotifyLocal && <LinkedPlaylistBanner playlistId={id} onOpen={onOpenSpotifyLocal} />}
     <div className="toolbar"><button onClick={() => setSelected(visible.map((x) => x.ref))}>Select visible</button><span>{selected.length} selected</span><button disabled={!selected.length} onClick={() => { playlists.removeAt(id, selected.map((r) => p.refs.indexOf(r))); setSelected([]); }}>Remove from playlist</button><PlaylistActions refs={selected} /></div>
     </div>
-    <div className="table-wrap"><table className="tracks"><thead><tr><th /><th>Title</th><th>Artist</th><th>Album</th><th>Genre</th><th className="num">BPM</th><th>Key</th><th>Camelot</th><th className="num">Energy</th><th className="num">Match</th><th className="num">Time</th><th>Rating</th><th>Source</th><th>Stems</th><th>Added</th><th>Load</th></tr></thead><tbody>
+    <div className="table-wrap"><table className="tracks"><thead><tr><th />{TRACK_COLUMN_HEADERS}<th>Load</th></tr></thead><tbody>
       {visible.map(({ ref, index: i, track }) => {
         return <tr key={`${i}:${ref}`} className={selected.includes(ref) ? "selected" : ""} draggable onClick={(e) => select(ref, e)}
           tabIndex={0} aria-selected={selected.includes(ref)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected([ref]); } if (e.key === "Delete") { playlists.removeAt(id, [i]); setSelected((s) => s.filter((r) => r !== ref)); } }}
@@ -354,14 +385,12 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
           onDragStart={(e) => { e.dataTransfer.setData(PLAYLIST_MOVE, JSON.stringify({ id, from: i })); e.dataTransfer.setData(TRACK_REFS, JSON.stringify(selected.includes(ref) ? selected : [ref])); if (track) e.dataTransfer.setData("application/x-dbdj-track", JSON.stringify(track)); e.dataTransfer.effectAllowed = "copyMove"; }}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, i)}
           onContextMenu={(e) => { e.preventDefault(); if (!selected.includes(ref)) setSelected([ref]); setInfo((cur) => { if (!cur) return cur; const t = library.getByRef(ref); return t ?? cur; }); setMenu({ x: e.clientX, y: e.clientY }); }}>
-          <td>{track && <PreviewArtTile track={track} size={22} />}</td><td className="title-cell">{track?.title ?? ref}{track?.unavailableReason && <span className="warn"> · Reconnect file</span>}</td><td>{track?.artist}</td><td>{track?.album}</td><td>{track?.genre ?? ""}</td><td className="num">{track?.bpm?.toFixed(1) ?? "—"}</td><td>{track?.key ?? "—"}</td><td>{track?.camelot ?? "—"}</td><td className="num" title={track?.analysisConfidence === undefined ? "Not analysed" : `${Math.round(track.analysisConfidence * 100)}% confidence`}>{track?.energy ?? "—"}</td><td className="num" title={track ? trackMatch(track)?.reasons.join(" · ") : ""}>{track ? trackMatch(track)?.score ?? "—" : "—"}{track && trackMatch(track) ? "%" : ""}</td><td className="num">{duration(track?.durationMs)}</td><td>{track && <PlaylistStars track={track} />}</td><td>{track && <span className="source-badge">LOCAL</span>}</td>
-          <td className="stems-cell">{track && <StemBadge stem={stemIdx[track.ref]} stemProgress={stemProgress[track.ref]} liveStem={liveStemByRef.get(track.ref)} />}</td>
-          <td className="hint">{track?.addedAt ? new Date(track.addedAt).toLocaleDateString() : ""}</td>
-          <td className="row-actions" onClick={(e) => e.stopPropagation()}>{decks.map((d, deck) => <button key={deck} className={`tiny ${deck === 0 ? "deck-a-btn" : "deck-b-btn"}`} aria-label={`Load ${track?.title ?? "track"} to Deck ${deck ? "B" : "A"}`} disabled={!track || d.playing || !!track.unavailableReason} onClick={() => track && void engine.loadTrack(deck, track)}>→ {deck ? "B" : "A"}</button>)}<button disabled={!track} onClick={() => app.autoDJ.add([ref])}>Queue</button>{(!track || track.unavailableReason) && <button onClick={() => void importFiles(true)}>Locate…</button>}<button disabled={i === 0} onClick={() => playlists.move(id, i, i - 1)}>↑</button><button disabled={i === p.refs.length - 1} onClick={() => playlists.move(id, i, i + 2)}>↓</button><button onClick={() => playlists.removeAt(id, [i])}>Remove</button></td>
+          <td>{track && <PreviewArtTile track={track} size={22} />}</td><TrackColumnCells trackRef={ref} track={track ?? null} match={track ? trackMatch(track) : null} stems={stems} />
+          <td className="row-actions" onClick={(e) => e.stopPropagation()}>{decks.map((d, deck) => { const onDeck = !!track && d.track?.ref === track.ref; return <button key={deck} className={`tiny ${deck === 0 ? "deck-a-btn" : "deck-b-btn"} ${onDeck ? "on-deck" : ""}`} aria-label={`${onDeck ? `Loaded on Deck ${deck ? "B" : "A"}. ` : ""}Load ${track?.title ?? "track"} to Deck ${deck ? "B" : "A"}`} disabled={!track || d.playing || !!track.unavailableReason} onClick={() => track && void engine.loadTrack(deck, track)}>{onDeck ? "●" : "→"} {deck ? "B" : "A"}</button>; })}<button disabled={!track} onClick={() => app.autoDJ.add([ref])}>Queue</button>{(!track || track.unavailableReason) && <button onClick={() => void importFiles(true)}>Locate…</button>}<button disabled={i === 0} onClick={() => playlists.move(id, i, i - 1)}>↑</button><button disabled={i === p.refs.length - 1} onClick={() => playlists.move(id, i, i + 2)}>↓</button><button onClick={() => playlists.removeAt(id, [i])}>Remove</button></td>
         </tr>;
       })}
-      {p.refs.length > 0 && visible.length === 0 && <tr><td colSpan={16} className="empty">No tracks match these filters. <button onClick={clearFilters}>Clear filters</button></td></tr>}
-      <tr onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e)}><td colSpan={16} className="empty">{p.refs.length ? "Drop here to move to the end" : "Drop library tracks or local files here. Use Ctrl/⌘ or Shift to select multiple tracks."}</td></tr>
+      {p.refs.length > 0 && visible.length === 0 && <tr><td colSpan={TRACK_COLUMN_COUNT + 2} className="empty">No tracks match these filters. <button onClick={clearFilters}>Clear filters</button></td></tr>}
+      <tr onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e)}><td colSpan={TRACK_COLUMN_COUNT + 2} className="empty">{p.refs.length ? "Drop here to move to the end" : "Drop library tracks or local files here. Use Ctrl/⌘ or Shift to select multiple tracks."}</td></tr>
     </tbody></table></div>
     {info && <TrackDetails track={library.getByRef(info.ref) ?? info} onClose={() => setInfo(null)} />}
     {menu && (selectedTrack
@@ -381,21 +410,69 @@ export function AutoDJQueue() {
   const s = useAutoDJ();
   useLibraryState();
   usePlaylists();
+  const stems = useStemCells();
   const [info, setInfo] = useState<TrackInfo | null>(null);
+  // Selection is by queue position (a ref can be queued twice). Any queue change shifts positions, so it clears.
+  const [selected, setSelected] = useState<number[]>([]);
+  const [anchor, setAnchor] = useState<number | null>(null);
+  useEffect(() => { setSelected([]); setAnchor(null); }, [s.upcoming]);
   const current = s.current ? library.getByRef(s.current) : null;
   const editable = !s.queueLocked;
+  const select = (i: number, e: React.MouseEvent) => {
+    if (e.shiftKey && anchor !== null) {
+      const lo = Math.min(anchor, i), hi = Math.max(anchor, i);
+      setSelected(Array.from({ length: hi - lo + 1 }, (_, k) => lo + k));
+      return;
+    }
+    setAnchor(i);
+    setSelected((cur) => e.ctrlKey || e.metaKey ? cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i] : [i]);
+  };
+  const selectedRefs = [...selected].sort((a, b) => a - b).map((i) => s.upcoming[i]).filter((r): r is string => !!r);
+  const allSelected = s.upcoming.length > 0 && selected.length === s.upcoming.length;
+  // In a queue, the useful match is against the track each one will be mixed out of: Now Playing for NEXT, then the row above.
+  const matchAfter = (prev: TrackInfo | null | undefined, track: TrackInfo | null | undefined): MatchResult =>
+    prev && track && prev.ref !== track.ref ? compatibility(prev, track, app.preparation.forRef(prev.ref), app.preparation.forRef(track.ref)) : null;
   return <div className="library auto-queue" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (!e.dataTransfer.types.includes(QUEUE_MOVE)) autoDJ.add(draggedRefs(e.dataTransfer)); }}>
     <div className="toolbar"><b>Auto DJ Queue {s.playlistId && `· ${playlists.get(s.playlistId)?.name ?? "Deleted playlist"}`}</b><span className="hint">Queue edits leave your playlist unchanged.</span><button disabled={!s.playlistId || !playlists.get(s.playlistId)} onClick={() => autoDJ.saveToPlaylist()}>Save queue back to playlist</button></div>
     <AutoDJControls />
     {app.platform.kind === "browser" && <div className="toolbar"><button onClick={() => { void app.platform.pickAudioFiles().then((refs) => app.addFiles(refs)).catch((err) => app.log.warn("library", String(err))); }}>Reconnect files</button><span className="hint">Select the original files, then resume Auto DJ.</span></div>}
     <AutoSettings />
-    <div className="queue-now"><b>NOW PLAYING · DECK {s.deck ? "B" : "A"}</b>{current ? <><ArtTile track={current} size={40} /><span>{current.title} · {current.artist}</span><button onClick={() => setInfo(current)}>Info</button></> : <span>Open a playlist and select START AUTO DJ.</span>}</div>
-    {s.plan && <div className="hint queue-plan">{s.plan.kind} · {s.plan.seconds.toFixed(1)}s · Mix-out {duration(s.plan.mixOut * 1000)} · Mix-in {duration(s.plan.mixIn * 1000)} · {s.plan.reason}</div>}
-    <div className="table-wrap"><table className="tracks"><thead><tr><th>Queue</th><th /><th>Track</th><th>Artist</th><th>Time</th><th>Actions</th></tr></thead><tbody>
-      {s.upcoming.map((ref, i) => { const t = library.getByRef(ref); return <tr key={`${i}:${ref}`} draggable={editable} onDragStart={(e) => { e.dataTransfer.setData(QUEUE_MOVE, String(i)); e.dataTransfer.effectAllowed = "move"; }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { if (!e.dataTransfer.types.includes(QUEUE_MOVE)) return; e.preventDefault(); e.stopPropagation(); autoDJ.move(Number(e.dataTransfer.getData(QUEUE_MOVE)), i); }}>
-        <td>{i === 0 ? `NEXT · DECK ${s.deck ? "A" : "B"}` : `UPCOMING ${i}`}</td><td>{t && <PreviewArtTile track={t} size={28} />}</td><td>{t?.title ?? ref}{t?.unavailableReason && <span className="warn"> · Reconnect file</span>}</td><td>{t?.artist}</td><td>{duration(t?.durationMs)}</td><td className="row-actions"><button disabled={!editable || i === 0} onClick={() => autoDJ.playNext(i)}>Play Next</button><button disabled={!editable || i === 0} onClick={() => autoDJ.move(i, i - 1)}>↑</button><button disabled={!editable || i === s.upcoming.length - 1} onClick={() => autoDJ.move(i, i + 2)}>↓</button><button disabled={!editable} onClick={() => autoDJ.remove(i)}>Remove</button><button disabled={!t} onClick={() => setInfo(t)}>Info</button></td>
+    <div className="queue-now"><b>NOW PLAYING · DECK {s.deck ? "B" : "A"}</b>{current ? <><ArtTile track={current} size={40} /><span>{current.title} · {current.artist}</span><button onClick={() => setInfo(current)}>Info</button>{s.upcoming[0] && <button title="Open this change in AI Set Studio's Transition Lab to prepare how it blends" onClick={() => openStudio({ tab: "lab", outRef: current.ref, inRef: s.upcoming[0] })}>⇄ Transition Lab: now → next</button>}{s.prepared && <span className="hint">★ Prepared: {s.prepared.name}</span>}</> : <span>Open a playlist and select START AUTO DJ.</span>}</div>
+    {s.status !== "OFF" && <AutoDJGridFix />}{s.plan && <div className="hint queue-plan">{s.plan.kind} · {s.plan.seconds.toFixed(1)}s · Mix-out {duration(s.plan.mixOut * 1000)} · Mix-in {duration(s.plan.mixIn * 1000)} · {s.plan.reason}</div>}
+    <div className="toolbar queue-selection">
+      <button disabled={!s.upcoming.length || allSelected} onClick={() => { setSelected(s.upcoming.map((_, i) => i)); setAnchor(0); }}>Select all</button>
+      <button disabled={!selected.length} onClick={() => { setSelected([]); setAnchor(null); }}>Clear selection</button>
+      <span>{selected.length} selected</span>
+      <button disabled={!editable || !selected.length} onClick={() => autoDJ.playNextAt(selected)}>Play Next</button>
+      <button disabled={!editable || !selected.length} onClick={() => autoDJ.removeAt(selected)}>Remove from queue</button>
+      <select aria-label="Add selected queue tracks to playlist" value="" disabled={!selectedRefs.length} onChange={(e) => {
+        if (e.target.value === "__new") playlists.create("New Playlist", selectedRefs);
+        else playlists.addTracks(e.target.value, selectedRefs);
+      }}>
+        <option value="" disabled>Add to Playlist…</option>
+        <option value="__new">Create New Playlist</option>
+        {playlists.getState().playlists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <span className="hint">Click, Ctrl/⌘-click or Shift-click rows to select.</span>
+    </div>
+    <div className="table-wrap"><table className="tracks"><thead><tr><th>Queue</th><th />{TRACK_COLUMN_HEADERS}<th>Actions</th></tr></thead><tbody>
+      {s.upcoming.map((ref, i) => { const t = library.getByRef(ref); const prev = i === 0 ? current : library.getByRef(s.upcoming[i - 1]); return <tr key={`${i}:${ref}`} className={selected.includes(i) ? "selected" : ""} aria-selected={selected.includes(i)} onClick={(e) => select(i, e)} draggable={editable} onDragStart={(e) => { e.dataTransfer.setData(QUEUE_MOVE, String(i)); e.dataTransfer.effectAllowed = "move"; }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { if (!e.dataTransfer.types.includes(QUEUE_MOVE)) return; e.preventDefault(); e.stopPropagation(); autoDJ.move(Number(e.dataTransfer.getData(QUEUE_MOVE)), i); }}>
+        <td>{i === 0 ? `NEXT · DECK ${s.deck ? "A" : "B"}` : `UPCOMING ${i}`}</td><td>{t && <PreviewArtTile track={t} size={22} />}</td><TrackColumnCells trackRef={ref} track={t ?? null} match={matchAfter(prev, t)} stems={stems} /><td className="row-actions" onClick={(e) => e.stopPropagation()}><button disabled={!editable || i === 0} onClick={() => autoDJ.playNext(i)}>Play Next</button><button disabled={!editable || i === 0} onClick={() => autoDJ.move(i, i - 1)}>↑</button><button disabled={!editable || i === s.upcoming.length - 1} onClick={() => autoDJ.move(i, i + 2)}>↓</button><button disabled={!editable} onClick={() => autoDJ.remove(i)}>Remove</button><button disabled={!t} onClick={() => setInfo(t)}>Info</button></td>
       </tr>; })}
-      <tr onDragOver={(e) => e.preventDefault()} onDrop={(e) => { if (!e.dataTransfer.types.includes(QUEUE_MOVE)) return; e.preventDefault(); e.stopPropagation(); autoDJ.move(Number(e.dataTransfer.getData(QUEUE_MOVE)), s.upcoming.length); }}><td colSpan={6} className="empty">Drop library tracks to add to the queue; drag queue tracks here to move to the end.</td></tr>
+      <tr onDragOver={(e) => e.preventDefault()} onDrop={(e) => { if (!e.dataTransfer.types.includes(QUEUE_MOVE)) return; e.preventDefault(); e.stopPropagation(); autoDJ.move(Number(e.dataTransfer.getData(QUEUE_MOVE)), s.upcoming.length); }}><td colSpan={TRACK_COLUMN_COUNT + 3} className="empty">Drop library tracks to add to the queue; drag queue tracks here to move to the end.</td></tr>
     </tbody></table></div>{info && <TrackDetails track={info} onClose={() => setInfo(null)} />}
   </div>;
+}
+
+/** Auto DJ can only Beat Mix decks whose grids are trusted: say which deck isn't, with a direct way to fix it. */
+function AutoDJGridFix() {
+  const decks = useEngineState().decks;
+  const bad = decks.filter((d) => d.status === "ready" && d.track && !gridReliable(d.beatGrid));
+  if (!bad.length) return null;
+  return (
+    <div className="hint queue-grid-fix">
+      ⚠ Beat Mix needs a trusted beat grid on both decks:
+      {bad.map((d) => <button key={d.index} className="tiny" onClick={() => openGridEditor(d.index)} title={`Open Deck ${deckLetter(d.index)}'s Beat grid editor`}>Fix Deck {deckLetter(d.index)} grid…</button>)}
+    </div>
+  );
 }

@@ -4,8 +4,11 @@
  *  - ScrollingWaveform: styled waveform around the playhead with beat
  *    grid (beats + bars), cue / hot-cue markers; horizontal or vertical.
  *  - OverviewWaveform: whole track, played region, markers, click-to-seek.
- * Colours come from the selected waveform style (see waveStyle.ts): Simple,
- * Filtered, RGB, RGB L/R or HSV — the same renderer for every view.
+ * Colours come from the selected waveform style (see waveStyle.ts): Dual-Deck
+ * Tonal (default; the deck's own blue/amber ramp from deckTheme.ts), Simple,
+ * Filtered, RGB, RGB L/R or HSV — the same renderer for every view, so a deck's
+ * overview and scrolling waveform always agree. Colours follow the deck, not the
+ * track: the cached analysis is reused, only the palette changes.
  */
 import { useEffect, useRef, useState } from "react";
 import type { Overview } from "../analysis/AnalysisService";
@@ -13,9 +16,13 @@ import { deckLetter } from "../core/actions";
 import { useApp, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
 import { HOTCUE_COLORS, STEM_COLORS, setLayout, useLayout, zoom } from "./layout";
-import { column, deckEq, drawColumn, EqSmoother, newColumn, PixelSink, waveData, type EqGains, type WaveData, type WaveStyle } from "./waveStyle";
+import { column, deckEq, drawColumn, EqSmoother, NEUTRAL_EQ, newColumn, PixelSink, waveData, type EqGains, type WaveData, type WaveStyle } from "./waveStyle";
+import { deckThemeVersion, deckWavePalette, type WavePalette } from "./deckTheme";
+import type { EngineState } from "../core/engine/DJEngine";
 import type { StemEnvelopes } from "../stems/StemService";
 import { transitionRegion } from "../autodj/transition";
+import { useGridEditorDeck } from "./gridEditorStore";
+import { PHRASE_BARS, phraseOffsetBars } from "../preparation/beatGrid";
 
 
 /** Draw-time stats for diagnostics (ms per waveform frame). */
@@ -45,6 +52,21 @@ function useOverview(deck: number): Overview | null {
 
 const TILE_PX = 1024;
 
+/** The EQ gains a waveform draws with: the deck's live EQ, or neutral when EQ-reactive waveforms are off. */
+function displayEq(s: Pick<EngineState, "mixer">, deck: number, reactive: boolean): EqGains {
+  return reactive ? deckEq(s, deck) : NEUTRAL_EQ;
+}
+
+/** Neutral playhead with a dark outline, so it stays distinct on both the blue and the amber waveform. */
+function drawPlayhead(g: CanvasRenderingContext2D, at: number, cross: number, dpr: number, vertical: boolean): void {
+  g.fillStyle = "rgba(0,0,0,0.7)";
+  if (vertical) g.fillRect(0, at - 2 * dpr, cross, 4 * dpr);
+  else g.fillRect(at - 2 * dpr, 0, 4 * dpr, cross);
+  g.fillStyle = "#ff2d2d";
+  if (vertical) g.fillRect(0, at - dpr, cross, 2 * dpr);
+  else g.fillRect(at - dpr, 0, 2 * dpr, cross);
+}
+
 /** Render one waveform tile (TILE_PX along the time axis) starting at `startSec`, in the chosen style. */
 interface Tile {
   canvas: HTMLCanvasElement;
@@ -53,7 +75,7 @@ interface Tile {
   eqKey: string;
 }
 
-function renderTile(wd: WaveData, style: WaveStyle, startSec: number, secPerPx: number, cross: number, vertical: boolean, eq: EqGains, reuse?: Tile): Tile {
+function renderTile(wd: WaveData, style: WaveStyle, palette: WavePalette, startSec: number, secPerPx: number, cross: number, vertical: boolean, eq: EqGains, reuse?: Tile): Tile {
   let c = reuse?.canvas;
   let sink = reuse?.sink;
   if (!c || !sink) {
@@ -70,7 +92,7 @@ function renderTile(wd: WaveData, style: WaveStyle, startSec: number, secPerPx: 
     const i0 = Math.floor(ta * wd.fps);
     const i1 = Math.max(i0 + 1, Math.floor((ta + secPerPx) * wd.fps));
     if (i1 <= 0 || i0 >= wd.n) continue;
-    drawColumn(sink, style, column(wd, i0, i1, col), wd, p, mid, mid, vertical, eq);
+    drawColumn(sink, style, column(wd, i0, i1, col), wd, p, mid, mid, vertical, eq, palette);
   }
   g.putImageData(sink.img, 0, 0);
   return { canvas: c, sink, eqKey: "" };
@@ -139,12 +161,25 @@ function fitCanvas(c: HTMLCanvasElement): { w: number; h: number; dpr: number } 
 export function ScrollingWaveform({ deck, orientation }: { deck: number; orientation: "horizontal" | "vertical" }) {
   const eqSmooth = useRef(new EqSmoother());
   const tileEq = useRef<EqGains>([1, 1, 1]);
-  const { engine, stems, autoDJ, transitions } = useApp();
+  const { engine, stems, autoDJ, transitions, beatGrid } = useApp();
   const ov = useOverview(deck);
-  const { zoomSeconds, waveMode, waveStyle } = useLayout();
+  const { zoomSeconds, waveMode, waveStyle, waveEqReactive } = useLayout();
   const stemNorm = useRef<{ env: StemEnvelopes | null; version: number; norms: number[] }>({ env: null, version: -1, norms: [1, 1, 1, 1] });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ id: number; last: number } | null>(null);
+  // Beat grid editor open on this deck: dragging slides the grid (previewed live, saved on release) instead of scratching.
+  const editingGrid = useGridEditorDeck() === deck;
+  const editingRef = useRef(editingGrid);
+  editingRef.current = editingGrid;
+  const gridDrag = useRef<{ id: number; start: number; delta: number } | null>(null);
+  const endGridDrag = (e: React.PointerEvent, commit: boolean): boolean => {
+    const gd = gridDrag.current;
+    if (!gd || gd.id !== e.pointerId) return false;
+    gridDrag.current = null;
+    const id = engine.getState().decks[deck]?.track?.trackId;
+    if (commit && id && Math.abs(gd.delta) > 0.0005) beatGrid.shift(id, gd.delta);
+    return true;
+  };
   const endScratch = (e: React.PointerEvent) => {
     if (drag.current?.id !== e.pointerId) return;
     drag.current = null;
@@ -200,9 +235,10 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     const muted = d.stems.muted.map((m, k) => d.stems.enabled && (m || d.stems.volume[k] === 0));
     if (ov || env) {
       const trackKey = d.track?.trackId ?? d.track?.ref ?? `deck-${deck}`;
-      const eq = eqSmooth.current.step(deckEq(engine.getState(), deck), performance.now());
+      const eq = eqSmooth.current.step(displayEq(engine.getState(), deck, waveEqReactive), performance.now());
       // EQ is not part of the cache key: tiles are redrawn in place when it changes (see below).
-      const cacheKey = `${trackKey}|${orientation}|${secPerPx.toFixed(7)}|${cross}|${ov?.low.length ?? 0}|${ov?.bands ? "b" : "m"}|${env ? `stems:${env.version}:${muted.join()}` : waveStyle}`;
+      // The palette is the deck's (fixed per component); the theme version covers future theme switches.
+      const cacheKey = `${trackKey}|${orientation}|${secPerPx.toFixed(7)}|${cross}|${ov?.low.length ?? 0}|${ov?.bands ? "b" : "m"}|${env ? `stems:${env.version}:${muted.join()}` : `${waveStyle}:${deck}:${deckThemeVersion()}`}`;
       const eqKey = env ? "" : eq.key;
       tileEq.current = eq.gains;
       if (tiles.current.key !== cacheKey || tiles.current.ov !== ov || tiles.current.env !== env) tiles.current = { key: cacheKey, ov, env, map: new Map() };
@@ -215,7 +251,7 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
         if (!tile || tile.eqKey !== eqKey) {
           tile = env
             ? { canvas: renderStemTile(env, stemNorm.current.norms, muted, ti * tileSec, secPerPx, cross, vertical), eqKey }
-            : { ...renderTile(waveData(ov!), waveStyle, ti * tileSec, secPerPx, cross, vertical, tileEq.current, tile), eqKey };
+            : { ...renderTile(waveData(ov!), waveStyle, deckWavePalette(deck), ti * tileSec, secPerPx, cross, vertical, tileEq.current, tile), eqKey };
           tiles.current.map.set(ti, tile);
           if (tiles.current.map.size > 24) tiles.current.map.delete(tiles.current.map.keys().next().value!);
         }
@@ -236,14 +272,20 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     // Beat grid: full-span high-contrast lines so both decks can be aligned by
     // eye. Bar/downbeat boundaries are brighter and thicker than other beats.
     const grid = d.beatGrid;
-    if (grid && !document.documentElement.classList.contains("practice-hide-grid")) {
+    const editing = editingRef.current;
+    if (grid && (editing || !document.documentElement.classList.contains("practice-hide-grid"))) {
       const period = 60 / grid.bpm;
-      let k = Math.ceil((t0 - grid.firstBeat) / period);
-      for (let t = grid.firstBeat + k * period; t < t0 + len * secPerPx; t += period, k++) {
+      // While dragging in the grid editor the lines follow the pointer (saved on release).
+      const first = grid.firstBeat + (gridDrag.current?.delta ?? 0);
+      // Grid editor: 8-bar phrase starts are marked too (from the hand-set phrase start, else bar 1).
+      const phraseOff = editing ? phraseOffsetBars({ bpm: grid.bpm, firstBeat: first }, grid.phraseAnchor) : 0;
+      let k = Math.ceil((t0 - first) / period);
+      for (let t = first + k * period; t < t0 + len * secPerPx; t += period, k++) {
         const p = (t - t0) / secPerPx;
         const isBar = ((k % 4) + 4) % 4 === 0;
-        g.fillStyle = isBar ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.68)";
-        const thick = isBar ? Math.max(2, 2 * dpr) : Math.max(1, dpr);
+        const isPhrase = editing && isBar && (((k / 4 - phraseOff) % PHRASE_BARS) + PHRASE_BARS) % PHRASE_BARS === 0;
+        g.fillStyle = isPhrase ? "#ffd166" : isBar ? "rgba(255,255,255,0.98)" : "rgba(255,255,255,0.68)";
+        const thick = isPhrase ? Math.max(3, 3 * dpr) : isBar ? Math.max(2, 2 * dpr) : Math.max(1, dpr);
         if (vertical) g.fillRect(0, Math.round(p - thick / 2), cross, thick);
         else g.fillRect(Math.round(p - thick / 2), 0, thick, cross);
       }
@@ -293,26 +335,52 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
     }
 
     // Playhead.
-    g.fillStyle = "#ff2d2d";
-    if (vertical) g.fillRect(0, playheadPx - dpr, cross, 2 * dpr);
-    else g.fillRect(playheadPx - dpr, 0, 2 * dpr, cross);
+    drawPlayhead(g, playheadPx, cross, dpr, vertical);
+    // Grid editor: a frame and a label so it's clear dragging moves the grid, not the record.
+    if (editing) {
+      g.strokeStyle = "#ffd166";
+      g.lineWidth = 2 * dpr;
+      g.strokeRect(dpr, dpr, w - 2 * dpr, h - 2 * dpr);
+      const text = grid ? "GRID EDIT · drag to slide the grid · yellow = phrase start" : "GRID EDIT · set the BPM first";
+      g.font = `bold ${10 * dpr}px system-ui`;
+      const tw = g.measureText(text).width, x = vertical ? 6 * dpr : playheadPx + 10 * dpr, y = 6 * dpr;
+      g.fillStyle = "rgba(0,0,0,.72)";
+      g.fillRect(x - 4 * dpr, y - 2 * dpr, tw + 8 * dpr, 15 * dpr);
+      g.fillStyle = "#ffd166";
+      g.fillText(text, x, y + 10 * dpr);
+    }
   };
 
   return (
     <canvas
       ref={canvasRef}
       className={`scroll-wave ${orientation}`}
-      title="Drag to scratch (like a hand on the record) · scroll to zoom"
+      title={editingGrid ? "Beat grid editor open: drag to slide the grid · scroll to zoom" : "Drag to scratch (like a hand on the record) · scroll to zoom"}
       onWheel={(e) => zoom(e.deltaY > 0 ? 1 : -1)}
       // Scratch: the waveform under the pointer moves with it, like the record under your hand.
       // Holding still stops the sound; letting go carries on playing (or stays paused).
       onPointerDown={(e) => {
-        if (e.button !== 0 || !engine.beginScratch(deck)) return;
+        if (e.button !== 0) return;
+        if (editingRef.current && engine.getState().decks[deck]?.beatGrid) {
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          gridDrag.current = { id: e.pointerId, start: orientation === "vertical" ? e.clientY : e.clientX, delta: 0 };
+          return;
+        }
+        if (!engine.beginScratch(deck)) return;
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
         drag.current = { id: e.pointerId, last: orientation === "vertical" ? e.clientY : e.clientX };
       }}
       onPointerMove={(e) => {
+        const gd = gridDrag.current, cv = canvasRef.current;
+        if (gd && gd.id === e.pointerId && cv) {
+          const len = orientation === "vertical" ? cv.clientHeight : cv.clientWidth;
+          const rate = engine.getState().decks[deck]?.rate ?? 1;
+          // The grid follows the pointer, at the drawing's scale.
+          gd.delta = ((orientation === "vertical" ? e.clientY : e.clientX) - gd.start) * ((zoomSeconds * Math.max(0.01, rate)) / Math.max(1, len));
+          return;
+        }
         const dr = drag.current;
         const c = canvasRef.current;
         if (!dr || dr.id !== e.pointerId || !c) return;
@@ -323,9 +391,9 @@ export function ScrollingWaveform({ deck, orientation }: { deck: number; orienta
         engine.scratchBy(deck, -(at - dr.last) * ((zoomSeconds * Math.max(0.01, d.rate)) / Math.max(1, len)));
         dr.last = at;
       }}
-      onPointerUp={endScratch}
-      onPointerCancel={endScratch}
-      onLostPointerCapture={endScratch}
+      onPointerUp={(e) => { if (!endGridDrag(e, true)) endScratch(e); }}
+      onPointerCancel={(e) => { if (!endGridDrag(e, false)) endScratch(e); }}
+      onLostPointerCapture={(e) => { if (!endGridDrag(e, true)) endScratch(e); }}
     />
   );
 }
@@ -334,7 +402,7 @@ export function OverviewWaveform({ deck }: { deck: number }) {
   const eqSmooth = useRef(new EqSmoother());
   const baseSink = useRef<PixelSink | null>(null);
   const { engine, autoDJ } = useApp();
-  const { waveStyle } = useLayout();
+  const { waveStyle, waveEqReactive } = useLayout();
   const ov = useOverview(deck);
   const send = useSend();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -368,8 +436,8 @@ export function OverviewWaveform({ deck }: { deck: number }) {
     const trackKey = d?.track?.trackId ?? d?.track?.ref ?? "empty";
     // Static colour waveform is cached per track, analysis and size. Array
     // length alone is not unique: similarly sized songs often have equal frames.
-    const eq = eqSmooth.current.step(deckEq(engine.getState(), deck), performance.now());
-    const key = `${deck}:${trackKey}:${w}x${h}:${ov ? `${ov.low.length}:${ov.fps}:${ov.bands ? "b" : "m"}` : "none"}:${waveStyle}:${eq.key}`;
+    const eq = eqSmooth.current.step(displayEq(engine.getState(), deck, waveEqReactive), performance.now());
+    const key = `${deck}:${trackKey}:${w}x${h}:${ov ? `${ov.low.length}:${ov.fps}:${ov.bands ? "b" : "m"}` : "none"}:${waveStyle}:${deckThemeVersion()}:${eq.key}`;
     if (baseKey.current !== key) {
       baseKey.current = key;
       let off = baseRef.current;
@@ -382,8 +450,9 @@ export function OverviewWaveform({ deck }: { deck: number }) {
       const og = off.getContext("2d")!;
       og.clearRect(0, 0, w, h);
       if (ov) {
-        // Same style renderer as the scrolling waveform, so both always match.
+        // Same style renderer and deck palette as the scrolling waveform, so both always match.
         const wd = waveData(ov);
+        const palette = deckWavePalette(deck);
         const col = newColumn();
         const sink = baseSink.current ?? new PixelSink(w, h);
         baseSink.current = sink;
@@ -392,7 +461,7 @@ export function OverviewWaveform({ deck }: { deck: number }) {
         for (let x = 0; x < w; x++) {
           const i0 = Math.floor((x / w) * wd.n);
           const i1 = Math.max(i0 + 1, Math.floor(((x + 1) / w) * wd.n));
-          drawColumn(sink, waveStyle, column(wd, i0, i1, col), wd, x, centre, centre, false, eq.gains);
+          drawColumn(sink, waveStyle, column(wd, i0, i1, col), wd, x, centre, centre, false, eq.gains, palette);
         }
         og.putImageData(sink.img, 0, 0);
       }
@@ -432,8 +501,7 @@ export function OverviewWaveform({ deck }: { deck: number }) {
       g.fillStyle = HOTCUE_COLORS[i];
       g.fillRect(x(hc) - dpr, 0, 2 * dpr, h);
     });
-    g.fillStyle = "#ff2d2d";
-    g.fillRect(x(pos) - dpr, 0, 2 * dpr, h);
+    drawPlayhead(g, x(pos), h, dpr, false);
   });
 
   return (

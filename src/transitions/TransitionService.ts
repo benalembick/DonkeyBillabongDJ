@@ -11,13 +11,14 @@
  */
 import { Emitter } from "../core/events";
 import type { CommandBus } from "../core/commands";
-import { cueSourceFor, type DJEngine } from "../core/engine/DJEngine";
+import type { DJEngine } from "../core/engine/DJEngine";
 import type { TrackInfo } from "../core/engine/types";
 import type { AnalysisService } from "../analysis/AnalysisService";
 import type { LibraryStore } from "../library/LibraryStore";
 import type { PreparationStore } from "../preparation/PreparationStore";
 import type { StemService } from "../stems/StemService";
 import type { EventLog } from "../core/log";
+import type { BeatGridService } from "../preparation/BeatGridService";
 import {
   barEnergyFrom, barLength, beatLength, buildPlan, DEFAULT_SETTINGS, missingAnalysis, rehearsalCue, technique, techniqueOptions, timeAtBar,
   type Grid, type PlanSettings, type RehearsalCue, type TechniqueOption, type TrackFacts, type TransitionPlan,
@@ -85,6 +86,8 @@ interface Deps {
   stems: StemService;
   log: EventLog;
   readAudio: (ref: string) => Promise<ArrayBuffer>;
+  /** Every grid edit goes through the shared Beat grid service (same code as the deck's editor). */
+  grid: Pick<BeatGridService, "nudge">;
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
 }
 
@@ -184,22 +187,10 @@ export class TransitionService extends Emitter<{ change: TransitionState }> {
     this.setSettings({ [k]: (((this.s.settings[k] + delta) % 8) + 8) % 8, ...(side === "out" ? { outStartBar: null } : { inCueBar: null }) });
   }
 
-  /** Beat-grid correction: shift the downbeat by whole beats, or nudge by milliseconds. */
+  /** Beat-grid correction (the deck Beat grid editor's code): whole beats, milliseconds or ±BPM. */
   nudgeGrid(side: Side, by: { beats?: number; ms?: number; bpm?: number }): void {
     const f = side === "out" ? this.s.out : this.s.in;
-    if (!f?.grid) return;
-    const g = f.grid;
-    const bpm = Math.round((g.bpm + (by.bpm ?? 0)) * 1000) / 1000;
-    let first = g.firstBeat + (by.beats ?? 0) * beatLength(g.bpm) + (by.ms ?? 0) / 1000;
-    if (first < 0) first += barLength(g.bpm);
-    const r = this.d.preparation.editGrid(f.trackId, bpm, first);
-    if (r) {
-      const fields = this.d.preparation.fields(r);
-      // Hot cues currently shown from the track's own embedded tag must not be replaced here.
-      const deck = side === "out" ? this.decksFor().outDeck : this.decksFor().inDeck;
-      if (cueSourceFor(this.d.engine.getSettings(), deck) === "embedded") { delete fields.hotcues; delete fields.cueDetails; }
-      this.d.engine.refreshPreparation(r.trackId, fields);
-    }
+    if (f?.grid) this.d.grid.nudge(f.trackId, by);
   }
 
   // ─────────────────────────── facts ───────────────────────────
@@ -315,6 +306,23 @@ export class TransitionService extends Emitter<{ change: TransitionState }> {
     } catch (e) {
       this.job(ref, { kind: "error", stage: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  /**
+   * Vocal regions for a track (AI Set Studio Auto Cue): the cached result of Detect vocals, or — when the
+   * track's STEMS are already separated — computed from them now and cached. Never starts a separation;
+   * null means no vocal analysis exists.
+   */
+  async vocalRegionsFor(ref: string): Promise<[number, number][] | null> {
+    const r = this.d.preparation.forRef(ref);
+    if (!r) return null;
+    if (this.vocals[r.trackId]) return this.vocals[r.trackId];
+    if (this.d.stems.index()[ref] !== "complete") return null;
+    const data = await this.d.stems.renderData(ref);
+    const regions = regionsFromEnvelope(vocalEnvelopeFromStems(new Int16Array(data.pcm), data.rate), 0.1);
+    this.vocals = { ...this.vocals, [r.trackId]: regions };
+    this.write(VOCALS_KEY, this.vocals);
+    return regions;
   }
 
   private async waitForStems(ref: string): Promise<void> {

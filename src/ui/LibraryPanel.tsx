@@ -29,9 +29,14 @@ import { TransitionWorkspace } from "./TransitionWorkspace";
 import { TrackDiscoveryActions } from "./TrackDiscoveryActions";
 import { ManualMashupWizard } from "./ManualMashupWizard";
 import { AudioSourcesWorkspace } from "./AudioSourcesWorkspace";
+import { LearnTabs } from "./LearnTabs";
+import { AddToLibraryIcon } from "./NavIcons";
+import { TrainingWorkspace } from "./TrainingWorkspace";
+import { TeachLoopWorkspace } from "./TeachLoopWorkspace";
 
-type Source = "local" | "audius" | "playlist" | "practice" | "transitions" | "auto-mashups" | "manual-mashups" | "queue" | "spotify-local" | "converter" | "recorder" | StreamingProviderId;
-export type MainBrowserArea = "collections" | "playlists" | "mashups" | "practice" | "streaming" | "transitions";
+type Source = "local" | "audius" | "playlist" | "practice" | "transitions" | "training" | "teachloop" | "auto-mashups" | "manual-mashups" | "queue" | "spotify-local" | "converter" | "recorder" | StreamingProviderId;
+/** "transitions", "training" and "teachloop" open those Learn pages directly (they are not section homes). */
+export type MainBrowserArea = "collections" | "playlists" | "mashups" | "practice" | "streaming" | "transitions" | "training" | "teachloop";
 
 function fmtDuration(ms?: number): string {
   if (!ms) return "—";
@@ -66,10 +71,12 @@ function useFreeDeck(): number | null {
 
 /** "10" = deck A playing, deck B not. */
 const usePlayingFlags = () => useEngineValue((s) => s.decks.map((d) => (d.playing ? "1" : "0")).join(""));
+/** Track ref loaded on each deck, NUL-separated ("" = empty deck); changes only when a deck loads/unloads. */
+const useLoadedRefs = () => useEngineValue((s) => s.decks.map((d) => d.track?.ref ?? "").join("\0"));
 
 type LocalCollection = "all" | "recent" | "rated";
 
-export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onToggleExpanded }: { navigation?: { area: MainBrowserArea; id: number }; onNavigateArea?: (area: MainBrowserArea) => void; expanded?: boolean; onToggleExpanded?: () => void }) {
+export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onToggleExpanded }: { navigation?: { area: MainBrowserArea; id: number; open?: "all-tracks" | "learn-practice" | "learn-history" }; onNavigateArea?: (area: MainBrowserArea) => void; expanded?: boolean; onToggleExpanded?: () => void }) {
   const app = useApp();
   const navRef = useRef<HTMLElement>(null);
   const [source, setSource] = useState<Source>(() => {
@@ -132,10 +139,10 @@ export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onT
   };
   const recent = lib.tracks.filter((t) => t.addedAt && Date.now() - t.addedAt < 30 * 86400_000).length;
   const rated = lib.tracks.filter((t) => (t.rating ?? 0) > 0).length;
-  useEffect(() => { if (navigation) { if (navigation.area === "transitions") { setHome(null); setSource("transitions"); } else setHome(navigation.area); } }, [navigation]);
+  useEffect(() => { if (navigation) { if (navigation.area === "transitions" || navigation.area === "training" || navigation.area === "teachloop") { setHome(null); setSource(navigation.area); } else if (navigation.open === "all-tracks") { setHome(null); choose("local", "all"); } else if (navigation.open === "learn-practice" || navigation.open === "learn-history") { setHome(null); setPracticeView(navigation.open === "learn-practice" ? "practice" : "history"); choose("practice"); } else setHome(navigation.area); } }, [navigation]);
   useLayoutEffect(() => {
     if (!navigation) return;
-    const nav=navRef.current,area=navigation.area==="transitions"?"practice":navigation.area;
+    const nav=navRef.current,area=navigation.area==="transitions"||navigation.area==="training"||navigation.area==="teachloop"?"practice":navigation.area;
     const start=nav?.querySelector<HTMLElement>(`[data-nav-area="${area}"]`),end=nav?.querySelector<HTMLElement>(`[data-nav-end="${area}"]`)??start;
     if(!nav||!start||!end)return;
     const navBox=nav.getBoundingClientRect(),startBox=start.getBoundingClientRect(),endBox=end.getBoundingClientRect();
@@ -143,7 +150,7 @@ export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onT
     nav.scrollTop=sectionHeight<=room?Math.max(0,Math.min(top-4,bottom-nav.clientHeight+4)):Math.max(0,top-4);
   }, [navigation?.area, navigation?.id]);
   const open = (s: Source, c?: LocalCollection) => { setHome(null); choose(s, c); };
-  const activeArea: MainBrowserArea = home ?? (source === "local" ? "collections" : source === "playlist" || source === "queue" || source === "spotify-local" ? "playlists" : source === "auto-mashups" || source === "manual-mashups" ? "mashups" : source === "practice" || source === "transitions" ? "practice" : "streaming");
+  const activeArea: MainBrowserArea = home ?? (source === "local" ? "collections" : source === "playlist" || source === "queue" || source === "spotify-local" ? "playlists" : source === "auto-mashups" || source === "manual-mashups" ? "mashups" : source === "practice" || source === "transitions" || source === "training" || source === "teachloop" ? "practice" : "streaming");
   const item = (s: Source, label: React.ReactNode, c?: LocalCollection, navEnd?: MainBrowserArea) => (
     <button data-source={c ? `local-${c}` : s} data-nav-end={navEnd} className={!home && source === s && (!c || collection === c) ? "active" : ""} onClick={() => open(s, c)}>
       {label}
@@ -164,10 +171,10 @@ export function LibraryPanel({ navigation, onNavigateArea, expanded = false, onT
         {item("audius", <>{label("◎", "Audius")}<span className={`count nav-status${audiusState.connection === "ok" ? " on" : ""}`} title={audiusState.connection === "error" ? "Can't reach Audius" : "Free streaming"}>{audiusState.connection === "ok" ? "● free" : audiusState.connection === "error" ? "▲ offline" : "○ free"}</span></>)}
         {item("converter", <>{label("⇩", "High Speed Converter")}</>)}
         {item("recorder", <>{label("●", "App Recorder")}</>, undefined, "streaming")}
-        <LearnNav learnSelected={!home && source === "transitions" ? "transitions" : !home && source === "practice" ? practiceView : null} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onArea={(area) => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(false); setHome(area); onNavigateArea?.(area); }} onLearn={(view) => { if (view === "training") window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: "training" })); else if (view === "transitions") { open("transitions"); onNavigateArea?.("transitions"); } else { setPracticeView(view); open("practice"); } }} />
+        <LearnNav learnSelected={!home && (source === "transitions" || source === "training" || source === "teachloop") ? source : !home && source === "practice" ? practiceView : null} activeArea={activeArea === "playlists" || activeArea === "mashups" || activeArea === "practice" ? activeArea : null} onArea={(area) => { setPlaylistManagerOpen(false); setPlaylistsGridOnly(false); setHome(area); onNavigateArea?.(area); }} onLearn={(view) => { if (view === "training" || view === "teachloop") window.dispatchEvent(new CustomEvent("dbdj:navigate", { detail: view })); else if (view === "transitions") { open("transitions"); onNavigateArea?.("transitions"); } else { setPracticeView(view); open("practice"); } }} />
       </nav>
       <div className="browser-body">
-        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setPlaylistManagerOpen(false); setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} managingPlaylists={playlistManagerOpen} setManagingPlaylists={setPlaylistManagerOpen} playlistsGridOnly={playlistsGridOnly} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <PracticePanel key={practiceView} initialView={practiceView} /> : source === "transitions" ? <TransitionWorkspace /> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} expanded={expanded} onToggleExpanded={onToggleExpanded} /> : source === "audius" ? <AudiusPane /> : source === "converter" || source === "recorder" ? <AudioSourcesWorkspace mode={source} /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}
+        {home ? <SectionHome area={home} open={open} openPlaylist={(id) => { setPlaylistManagerOpen(false); setHome(null); openPlaylist(id); }} openPractice={(view) => { setPracticeView(view); open("practice"); }} managingPlaylists={playlistManagerOpen} setManagingPlaylists={setPlaylistManagerOpen} playlistsGridOnly={playlistsGridOnly} /> : source === "playlist" ? <PlaylistView id={playlistId ?? ""} onOpen={openPlaylist} onQueue={openQueue} onOpenSpotifyLocal={openSpotifyLocal} /> : source === "spotify-local" ? <SpotifyLocalPanel jobId={spotifyLocalJob} onOpenPlaylist={openPlaylist} /> : source === "practice" ? <div className="learn-area"><LearnTabs active={practiceView} /><div className="learn-area-body"><PracticePanel key={practiceView} initialView={practiceView} /></div></div> : source === "transitions" ? <div className="learn-area"><LearnTabs active="transitions" /><div className="learn-area-body"><TransitionWorkspace /></div></div> : source === "training" ? <div className="learn-area"><LearnTabs active="training" /><div className="learn-area-body"><TrainingWorkspace /></div></div> : source === "teachloop" ? <div className="learn-area"><LearnTabs active="teachloop" /><div className="learn-area-body"><TeachLoopWorkspace /></div></div> : source === "auto-mashups" ? <MashipsView kind="auto" /> : source === "manual-mashups" ? <MashipsView kind="manual" /> : source === "queue" ? <AutoDJQueue /> : source === "local" ? <LocalView collection={collection} /> : source === "audius" ? <AudiusPane /> : source === "converter" || source === "recorder" ? <AudioSourcesWorkspace mode={source} /> : <ProviderPane id={source} onPrepare={() => openSpotifyLocal(null)} />}
       </div>
       {creatingMashup && <ManualMashupWizard onClose={() => setCreatingMashup(false)} />}
     </div>
@@ -336,7 +343,7 @@ function AnalysisProgress() {
   return <><span className="hint">Analysing {s.done + 1}/{s.total}: {s.current}</span><button onClick={() => analysis.cancelBatch()}>Cancel</button></>;
 }
 
-function LocalView({ collection, expanded, onToggleExpanded }: { collection: LocalCollection; expanded: boolean; onToggleExpanded?: () => void }) {
+function LocalView({ collection }: { collection: LocalCollection }) {
   const app = useApp();
   const { library, platform, engine, log, browser } = app;
   const state = useLibraryState();
@@ -544,24 +551,22 @@ function LocalView({ collection, expanded, onToggleExpanded }: { collection: Loc
             </select>
           </label>
         )}
-        {onToggleExpanded && <button className={`library-focus-toggle${expanded ? " active" : ""}`} aria-pressed={expanded} title={expanded ? "Return to the decks (Esc)" : "Give the collection the full workspace"} onClick={onToggleExpanded}><span aria-hidden>{expanded ? "▣" : "□"}</span>{expanded ? " Show decks" : " Expand Library"}</button>}
-        <button className="primary" onClick={() => void add(false)}>+ Add files…</button>
-        <button onClick={() => void add(true)}>+ Add folder…</button>
+        <button className="primary add-source-btn" title="Add individual audio files to the collection" onClick={() => void add(false)}><AddToLibraryIcon kind="files" />Add files…</button>
+        <button className="primary add-source-btn" title="Add every audio file in a folder (and its subfolders) to the collection" onClick={() => void add(true)}><AddToLibraryIcon kind="folder" />Add folder…</button>
         {platform.kind === "browser" && <button onClick={() => void add(false)}>Reconnect files</button>}
         <button onClick={() => setSelectedRefs(visible.map((t) => t.ref))}>Select all</button>
-        <PlaylistActions refs={selectedRefs.length ? selectedRefs : selectedTrack ? [selectedTrack.ref] : []} />
-        <button onClick={() => void app.analysis.analyseTracks((selectedRefs.length ? selectedRefs : selectedTrack ? [selectedTrack.ref] : []).map((r) => library.getByRef(r)).filter((t): t is TrackInfo => !!t))}>ANALYSE TRACK</button>
-        <button onClick={() => void app.analysis.analyseTracks(state.tracks, true)}>REANALYSE LIBRARY</button>
-        <TrackDiscoveryActions track={selectedTrack} tracks={state.tracks} />
+        <PlaylistActions toolbar refs={selectedRefs.length ? selectedRefs : selectedTrack ? [selectedTrack.ref] : []} />
+        <button className="discovery-action reanalyse-action" title="Re-run BPM, key, energy and beat-grid analysis on every track in the collection" onClick={() => void app.analysis.analyseTracks(state.tracks, true)}><span aria-hidden>⟳</span> REANALYSE LIBRARY</button>
+        {/* FIND MATCHES / CREATE DJMIX / FIND MASHUPS stay side by side (they wrap together on narrow windows). */}
+        <span className="discovery-group"><TrackDiscoveryActions track={selectedTrack} tracks={state.tracks} /></span>
         <AnalysisProgress />
-        <span className="hint">
-          {visible.length} of {state.tracks.length} tracks · double-click loads into a free deck · drag to a deck · browse knob + LOAD on the DDJ-SB
-        </span>
       </div>
       <div className="advanced-filters">
         <input type="number" placeholder="Min BPM" value={advanced.minBpm} onChange={(e) => setAdvanced({ ...advanced, minBpm: e.target.value })}/><input type="number" placeholder="Max BPM" value={advanced.maxBpm} onChange={(e) => setAdvanced({ ...advanced, maxBpm: e.target.value })}/>
         <input placeholder="Key / Camelot" value={advanced.key} onChange={(e) => setAdvanced({ ...advanced, key: e.target.value })}/><input type="number" min="1" max="10" placeholder="Min energy" value={advanced.minEnergy} onChange={(e) => setAdvanced({ ...advanced, minEnergy: e.target.value })}/><input type="number" min="1" max="10" placeholder="Max energy" value={advanced.maxEnergy} onChange={(e) => setAdvanced({ ...advanced, maxEnergy: e.target.value })}/><select aria-label="Genre" value={advanced.genre} onChange={(e) => setAdvanced({ ...advanced, genre: e.target.value })}><option value="">Genre</option>{genres.map((g) => <option key={g} value={g}>{g}</option>)}</select><input type="number" min="0" max="100" placeholder="Min match %" value={advanced.minMatch} onChange={(e) => setAdvanced({ ...advanced, minMatch: e.target.value })}/>
         <button onClick={() => setAdvanced({ ...advanced, minEnergy: "4", maxEnergy: "6" })}>Warm Up</button><button onClick={() => setAdvanced({ ...advanced, minEnergy: "7", maxEnergy: "10" })}>Peak Hour Bangers</button><button onClick={() => setAdvanced({ minBpm: "", maxBpm: "", key: "", minEnergy: "", maxEnergy: "", genre: "", minMatch: "" })}>Clear</button>
+        {/* Track count + how to load: on the filter row so the toolbar above stays one line. */}
+        <span className="hint library-count">{visible.length} of {state.tracks.length} tracks · double-click loads into a free deck · drag to a deck · browse knob + LOAD on the DDJ-SB</span>
       </div>
       </div>
       <div className="table-wrap" ref={wrapRef}>
@@ -581,7 +586,7 @@ function LocalView({ collection, expanded, onToggleExpanded }: { collection: Loc
               <tr>
                 <td colSpan={COLUMNS.length} className="empty dropzone">
                   <div className="dropzone-big">⤓ Drop audio files or folders here</div>
-                  or use <b>+ Add files…</b> / <b>+ Add folder…</b>. Files are referenced in place, never moved or modified.
+                  or use <b>Add files…</b> / <b>Add folder…</b>. Files are referenced in place, never moved or modified.
                 </td>
               </tr>
             )}
@@ -615,22 +620,28 @@ function LocalView({ collection, expanded, onToggleExpanded }: { collection: Loc
 function LoadButtons({ track }: { track: TrackInfo }) {
   const { engine } = useApp();
   const playing = usePlayingFlags();
+  const loaded = useLoadedRefs().split("\0");
   return (
     <>
-      {[...playing].map((flag, i) => (
-        <button
-          key={i}
-          className={`tiny ${i === 0 ? "deck-a-btn" : "deck-b-btn"}`}
-          disabled={flag === "1"}
-          title={flag === "1" ? `Deck ${String.fromCharCode(65 + i)} is playing` : `Load into deck ${String.fromCharCode(65 + i)}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            void engine.loadTrack(i, track);
-          }}
-        >
-          → {String.fromCharCode(65 + i)}
-        </button>
-      ))}
+      {[...playing].map((flag, i) => {
+        const L = String.fromCharCode(65 + i);
+        // Loaded on this deck: filled in the deck's colour and marked "●" (not colour alone). Both light up if it's on both decks.
+        const onDeck = loaded[i] === track.ref;
+        return (
+          <button
+            key={i}
+            className={`tiny ${i === 0 ? "deck-a-btn" : "deck-b-btn"} ${onDeck ? "on-deck" : ""}`}
+            disabled={flag === "1"}
+            title={`${onDeck ? `Loaded on deck ${L}` : ""}${onDeck && flag === "1" ? " · " : ""}${flag === "1" ? `Deck ${L} is playing` : onDeck ? " — load again" : `Load into deck ${L}`}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void engine.loadTrack(i, track);
+            }}
+          >
+            {onDeck ? "●" : "→"} {L}
+          </button>
+        );
+      })}
     </>
   );
 }

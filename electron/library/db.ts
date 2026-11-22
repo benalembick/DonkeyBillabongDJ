@@ -95,7 +95,9 @@ function migrate(d: DatabaseSync): void {
   d.exec(`CREATE TABLE IF NOT EXISTS track_preparation (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS track_waveforms (track_id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS mashup_recipes (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS import_jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS import_jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS dj_sets (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS setstudio_docs (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (kind, id));`);
   const cols = (d.prepare("PRAGMA table_info(tracks)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("rating")) d.exec("ALTER TABLE tracks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("artwork_read")) d.exec("ALTER TABLE tracks ADD COLUMN artwork_read INTEGER NOT NULL DEFAULT 0");
@@ -146,6 +148,24 @@ export function saveMashupRecipe(r: MashupRecipe): void {
   open().prepare("INSERT INTO mashup_recipes(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data").run(r.id, JSON.stringify(r));
 }
 export function removeMashupRecipe(id: string): void { open().prepare("DELETE FROM mashup_recipes WHERE id=?").run(id); }
+
+/** AI Set Studio sets: one versioned JSON document per set (see docs/architecture/AI_SET_STUDIO.md). */
+export function loadDjSets(): unknown[] { return (open().prepare("SELECT data FROM dj_sets ORDER BY updated_at DESC").all() as { data: string }[]).map((r) => JSON.parse(r.data)); }
+export function saveDjSet(s: { id?: unknown; schemaVersion?: unknown; updatedAt?: unknown; slots?: unknown }): void {
+  if (!s || typeof s.id !== "string" || !/^set_[a-z0-9_]+$/i.test(s.id) || typeof s.schemaVersion !== "number" || !Array.isArray(s.slots)) throw new Error("Invalid set");
+  open().prepare("INSERT INTO dj_sets(id,data,updated_at) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").run(s.id, JSON.stringify(s), Number(s.updatedAt) || Date.now());
+}
+export function removeDjSet(id: string): void { open().prepare("DELETE FROM dj_sets WHERE id=?").run(id); }
+
+/** AI Set Studio Phase 2 documents (prepared transitions, presets, blend groups, journeys). */
+const DOC_KINDS = new Set(["transition", "preset", "group", "journey", "drumtx", "drummap"]); // + Drum Transcriber (Production Studio)
+function docKind(kind: unknown): string { if (typeof kind !== "string" || !DOC_KINDS.has(kind)) throw new Error("Invalid document kind"); return kind; }
+export function loadDocs(kind: string): unknown[] { return (open().prepare("SELECT data FROM setstudio_docs WHERE kind=? ORDER BY updated_at DESC").all(docKind(kind)) as { data: string }[]).map((r) => JSON.parse(r.data)); }
+export function saveDoc(kind: string, d: { id?: unknown; updatedAt?: unknown }): void {
+  if (!d || typeof d.id !== "string" || !/^[a-z]+_[a-z0-9_]+$/i.test(d.id)) throw new Error("Invalid document");
+  open().prepare("INSERT INTO setstudio_docs(kind,id,data,updated_at) VALUES (?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at").run(docKind(kind), d.id, JSON.stringify(d), Number(d.updatedAt) || Date.now());
+}
+export function removeDoc(kind: string, id: string): void { open().prepare("DELETE FROM setstudio_docs WHERE kind=? AND id=?").run(docKind(kind), String(id)); }
 
 export function upsertTracks(rows: TrackRow[]): void {
   const d = open();

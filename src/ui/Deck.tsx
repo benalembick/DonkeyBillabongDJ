@@ -14,6 +14,9 @@ import { OverviewWaveform } from "./Waveforms";
 import { ArtTile } from "./ArtTile";
 import { EMBEDDED_CUE_FORMATS, fileExtension } from "../library/embeddedCues";
 import { useAutoDJ } from "./PlaylistPanel";
+import { BeatGridEditor } from "./BeatGridEditor";
+import { toggleGridEditor, useGridEditorDeck } from "./gridEditorStore";
+import { gridStatus } from "../preparation/beatGrid";
 
 const RANGE_LABEL: Record<string, string> = { "0.06": "±6", "0.1": "±10", "0.16": "±16", "1": "WIDE" };
 const SOURCE_LABEL: Record<string, string> = { "apple-music": "APPLE MUSIC" };
@@ -474,6 +477,9 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
   const [dragOver, setDragOver] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
   const bpm = engine.getBpm(deck);
+  const bpmRef = useRef<HTMLButtonElement>(null);
+  const gridEditorOpen = useGridEditorDeck() === deck;
+  const gStatus = d.track ? gridStatus(d.beatGrid) : "none";
 
   const pickAndLoad = async () => {
     try {
@@ -488,7 +494,8 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
 
   return (
     <section
-      className={`deck deck-${L.toLowerCase()} ${variant} ${dragOver ? "drag-over" : ""}`}
+      // deck-a / deck-b scope the deck colour identity (CSS variables from deckTheme.ts); is-playing raises its intensity.
+      className={`deck deck-${L.toLowerCase()} ${variant} ${d.playing ? "is-playing" : ""} ${dragOver ? "drag-over" : ""}`}
       onDragOver={(e) => {
         const types = e.dataTransfer.types;
         if (types.includes("application/x-dbdj-track") || types.includes("Files")) {
@@ -543,10 +550,19 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
             )}
           </div>
         </div>
-        <div className="deck-bpm" title={d.beatGrid ? `Beat grid: ${d.beatGrid.source}, confidence ${d.beatGrid.confidence}` : "BPM from tags/service"}>
+        <button
+          ref={bpmRef}
+          className={`deck-bpm grid-${gStatus}${gridEditorOpen ? " open" : ""}`}
+          disabled={!d.track}
+          aria-haspopup="dialog"
+          aria-expanded={gridEditorOpen}
+          title={!d.track ? "" : !d.beatGrid ? "No beat grid — click to set one (BPM, tap tempo, downbeat)" : `Beat grid ${gStatus === "manual" ? "set by hand" : gStatus === "unreliable" ? "UNRELIABLE" : "analysed"} · ${d.beatGrid.source}, confidence ${d.beatGrid.confidence.toFixed(1)} — click to check or edit`}
+          onClick={() => toggleGridEditor(deck)}
+        >
           <span className="big">{bpm ? bpm.toFixed(1) : "—"}</span>
-          <span className="key">{d.track?.key ?? ""}</span>
-        </div>
+          <span className="key">{gStatus === "unreliable" ? <span className="grid-flag warn">⚠ GRID</span> : gStatus === "manual" ? <span className="grid-flag ok" aria-label="Beat grid set by hand">✎</span> : null}{d.track?.key ?? ""}</span>
+        </button>
+        {gridEditorOpen && <BeatGridEditor deck={deck} anchor={bpmRef.current} />}
         <Clock deck={deck} big={variant === "full"} />
         <button className="load-btn" onClick={() => void pickAndLoad()} disabled={d.playing} title={d.playing ? "Pause the deck to load another track" : "Choose an audio file for this deck"}>
           LOAD

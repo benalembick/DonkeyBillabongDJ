@@ -37,6 +37,8 @@
 | Library | `src/library/` | Core | UI, audio |
 | Platform | `src/platform/` | Electron preload bridge / DOM file inputs | engine |
 | Providers | `src/providers/` | engine types | engine internals |
+| AI Set Studio | `src/setstudio/` (pure scoring/curves/optimiser + `SetStudioService`, `LibraryIntelligence`) | Library, Preparation, AnalysisService, Playlists, Auto DJ, DJ Engine (public APIs only) | Web Audio, a second analysis or playback path — see [architecture/AI_SET_STUDIO.md](architecture/AI_SET_STUDIO.md) |
+| Drum Transcriber | `src/production/drums/` (pure DSP/classifier/timing/MIDI + `DrumTranscriber` service, worker) | Production Studio sources and output, WebAudioEngine decode, Preparation grids, `DocStore` — see [DRUM-TRANSCRIBER.md](DRUM-TRANSCRIBER.md) | a second sequencer, audio engine or persistence path |
 | UI | `src/ui/` | everything above, via `App` services | — |
 | Composition root | `src/app/createApp.ts` | wires all layers | — |
 
@@ -76,6 +78,15 @@
 ## Scaling to 4 decks
 
 `DJEngine` and `WebAudioEngine` take `deckCount`, and actions exist for decks 1–4. The UI currently renders 2 decks. Crossfader assignment per deck is in `EngineSettings.crossfaderAssign`.
+
+## Deck colour identity
+
+Deck A is blue and deck B amber. Every deck-specific colour comes from `src/ui/deckTheme.ts`:
+
+- **Canvas waveforms** read the packed palette (`deckWavePalette(deck)`).
+- **CSS** reads variables that `installDeckThemeCss()` writes onto `:root` at startup. Deck scopes (`.deck-a`/`.deck-b`, `.deck-scope-a`/`-b`, `.strip.channel-a`/`-b`) map them to `--deck-color` and related names.
+
+Do not hardcode deck colours in components. Colours belong to the deck index, never to the track, and functional colours keep their meaning: hot cues, STEM colours, transport states, meters, warnings. The default waveform style, Dual-Deck Tonal, maps the cached low/mid/high analysis onto each deck's three-band ramp at draw time, so no re-analysis is needed. See [DECK-COLOUR-IDENTITY.md](DECK-COLOUR-IDENTITY.md).
 
 ## Feature catalogue
 
