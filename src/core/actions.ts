@@ -96,10 +96,28 @@ export function buildActionCatalog(deckCount = MAX_DECKS): ActionMeta[] {
     add(`${m}.volume`, `Channel fader ch${d}`, "absolute", mg);
     add(`${m}.cue`, `Headphone cue ch${d}`, "button", mg);
     add(`${m}.mute`, `Mute ch${d}`, "button", mg);
+    add(`${m}.xfader.a`, `Crossfader assign A ch${d}`, "button", mg);
+    add(`${m}.xfader.thru`, `Crossfader assign THRU ch${d}`, "button", mg);
+    add(`${m}.xfader.b`, `Crossfader assign B ch${d}`, "button", mg);
+    add(`${m}.xfader.cycle`, `Crossfader assign A/THRU/B cycle ch${d}`, "button", mg);
+    add(`workspace.focus.deck${d}`, `Focus deck ${L} (keyboard / Load to focused deck)`, "button", "Workspace");
 
     add(`browser.load.deck${d}`, `Load selected into deck ${L}`, "button", "Browser");
   }
 
+  // Four-deck workspace and controller deck layers (docs/architecture/four-deck-performance-engine.md).
+  add("workspace.bottomPanel.toggle", "Expand / restore bottom panel", "button", "Workspace");
+  add("workspace.deckMode.toggle", "Switch 2 DECK / 4 DECK", "button", "Workspace");
+  add("workspace.deckMode.2", "2 DECK mode", "button", "Workspace");
+  add("workspace.deckMode.4", "4 DECK mode", "button", "Workspace");
+  add("browser.load.focused", "Load selected into the focused deck", "button", "Browser");
+  for (const side of ["left", "right"] as const) {
+    const S = side === "left" ? "Left" : "Right";
+    const [a, b] = side === "left" ? [1, 3] : [2, 4];
+    add(`controller.layer.${side}.toggle`, `${S} controller side: toggle deck ${deckLetter(a - 1)}/${deckLetter(b - 1)}`, "button", "Controller");
+    add(`controller.layer.${side}.deck${a}`, `${S} controller side: deck ${deckLetter(a - 1)}`, "button", "Controller");
+    add(`controller.layer.${side}.deck${b}`, `${S} controller side: deck ${deckLetter(b - 1)}`, "button", "Controller");
+  }
   add("mixer.crossfader", "Crossfader", "absolute", "Mixer");
   add("mixer.master.level", "Master level", "absolute", "Mixer");
   add("mixer.headphone.mix", "Headphone cue/master mix", "absolute", "Mixer");

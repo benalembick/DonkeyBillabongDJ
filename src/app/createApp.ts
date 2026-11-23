@@ -14,7 +14,10 @@ import { DEFAULT_AUDIO_CONFIG, type AudioConfig } from "../core/engine/types";
 import { EventLog } from "../core/log";
 import { ControllerManager } from "../controllers/ControllerManager";
 import { buildDdjSbMapping } from "../controllers/profiles/pioneer-ddj-sb";
-import { KeyboardShortcuts } from "../input/keyboard";
+import { applyKeymapOverrides, DEFAULT_KEYMAP, KeyboardShortcuts, type KeyBinding, type KeymapOverrides } from "../input/keyboard";
+import { DeckLayers, DEFAULT_LAYER_SETTINGS, registerLayerActions, type LayerSettings } from "../controllers/layers";
+import { DEFAULT_TAKEOVER, SoftTakeover, type TakeoverSettings } from "../controllers/softTakeover";
+import { WorkspaceStore } from "../workspace/WorkspaceStore";
 import { LibraryStore } from "../library/LibraryStore";
 import { createPlatform, type AudioFileRef, type Platform } from "../platform";
 import { PROVIDER_CAPABILITIES } from "../providers/MusicProvider";
@@ -130,12 +133,37 @@ export interface App {
   saveEngineSettings(s: Partial<EngineSettings>): void;
   /** Overwrites a deck's loaded track's embedded hot cues with its currently suggested ones. Desktop + MP3/WAV only. */
   saveSuggestedCuesToEmbedded(deck: number): Promise<void>;
+  /** Four-deck workspace: 2/4 DECK mode, C/D density, waveform lanes, mixer order, focused deck. */
+  workspace: WorkspaceStore;
+  /** Controller deck layers (left A/C, right B/D) and soft takeover settings (persisted). */
+  saveControllerPrefs(p: { layers?: Partial<LayerSettings>; takeover?: Partial<TakeoverSettings> }): void;
+  /** Performance prefs: background-work deferral and master clip protection (persisted). */
+  performancePrefs(): PerformancePrefs;
+  savePerformancePrefs(p: Partial<PerformancePrefs>): void;
+  /** Change (or clear, with null) the keyboard shortcut of a rebindable action; persisted. */
+  rebindShortcut(action: string, binding: Omit<KeyBinding, "action"> | null): void;
+  /** Restore every rebindable shortcut to its default. */
+  resetShortcuts(): void;
   /** Forces a fresh analysis and replaces a deck's auto-suggested hot cues with it, keeping any the user placed or edited. */
   regenerateSuggestedCues(deck: number): Promise<void>;
 }
 
 const AUDIO_KEY = "dbdj.audioConfig.v1";
 const ENGINE_KEY = "dbdj.engineSettings.v1";
+const CONTROLLER_PREFS_KEY = "dbdj.controllerLayers.v1";
+const PERFORMANCE_KEY = "dbdj.performance.v1";
+const KEYMAP_KEY = "dbdj.keymap.overrides.v1";
+
+/** Number of decks the engine and audio graph run (2 DECK mode just shows fewer of them). */
+export const DECK_COUNT = 4;
+
+export interface PerformancePrefs {
+  /** Background library analysis / STEMS pre-analysis waits while at least this many decks play (0 = never). */
+  deferBackgroundAt: 0 | 2 | 3 | 4;
+  /** Master clip protection (soft limit above -1 dBFS). */
+  clipGuard: boolean;
+}
+const DEFAULT_PERFORMANCE: PerformancePrefs = { deferBackgroundAt: 3, clipGuard: true };
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -163,7 +191,7 @@ export function createApp(): App {
   const audiusStore = new AudiusStore(audiusClient, log);
   const browser = new BrowserRouter(library);
   const audioConfig = load<AudioConfig>(AUDIO_KEY, DEFAULT_AUDIO_CONFIG);
-  const audio = new WebAudioEngine(2, audioConfig);
+  const audio = new WebAudioEngine(DECK_COUNT, audioConfig);
   const desktop = platform.kind === "desktop" ? window.dbdjDesktop : undefined;
   if (desktop?.platform === "darwin" && desktop.transcodeAudio) audio.setDecodeFallback((bytes) => desktop.transcodeAudio!(bytes));
   const storedSettings = load<Partial<EngineSettings>>(ENGINE_KEY, {});
@@ -176,13 +204,22 @@ export function createApp(): App {
     loadBytes: (t, { onProgress, signal }) =>
       t.source === "audius" ? audiusClient.downloadAudio(audiusIdFromRef(t.ref), onProgress, signal) : platform.readAudio(t.ref),
     onBrowserLoad: (deck, t) => void matching.loadToDeck(deck, t),
-    deckCount: 2,
+    deckCount: DECK_COUNT,
     canLoad: (t) => {
       const cap = PROVIDER_CAPABILITIES[t.source];
       return cap?.canLoadIntoDeck ? { ok: true } : { ok: false, reason: cap?.restriction ?? "source not permitted" };
     },
     settings: { ...storedSettings, jog: { ...DEFAULT_ENGINE_SETTINGS.jog, ...storedSettings.jog } },
   });
+  // Crossfader assignments changed from a controller/key are persisted like any other engine setting.
+  engine.on("event", (e) => { if (e.type === "settingsChanged") save(ENGINE_KEY, engine.getSettings()); });
+  let perfPrefs: PerformancePrefs = { ...DEFAULT_PERFORMANCE, ...load<Partial<PerformancePrefs>>(PERFORMANCE_KEY, {}) };
+  audio.setClipGuard(perfPrefs.clipGuard);
+  /** Live playback first: background analysis waits while enough decks play. */
+  const deferBackground = (): string | null => {
+    const n = engine.getState().decks.filter((d) => d.playing).length;
+    return perfPrefs.deferBackgroundAt && n >= perfPrefs.deferBackgroundAt ? `${n} decks playing` : null;
+  };
   const preparation = new PreparationStore(platform.preparation, (err) => log.warn("analysis", `Preparation storage: ${String(err)}`));
   const beatGrid = new BeatGridService({ preparation, engine, log: (level, m) => log[level]("analysis", m) });
   engine.setPreparationPort(new CueSourceRouter(preparation, platform.embeddedCues, (deck) => cueSourceFor(engine.getSettings(), deck), (msg) => log.warn("cues", msg)));
@@ -193,6 +230,7 @@ export function createApp(): App {
     onError: (err) => log.warn("analysis", err instanceof Error ? err.message : String(err)),
     onInfo: (message) => log.info("analysis", message),
     probeDuration: async (ref) => ((await platform.readTags([ref]))[0]?.durationMs ?? 0) / 1000 || null,
+    deferWhile: deferBackground,
   });
   // Older analyses get the whole-track beat-grid fit from their cached bands (no decoding), once, in the
   // background after startup has settled. Tracks loaded onto a deck before then are re-fitted on load.
@@ -200,6 +238,7 @@ export function createApp(): App {
   const playlists = new PlaylistStore(platform.playlists, (err) => log.warn("library", `Playlist storage: ${String(err)}`));
   void playlists.load();
   const stems = new StemService(engine, audio, log, platform.kind === "desktop" ? (window.dbdjDesktop?.stems ?? null) : null);
+  stems.setDeferral(deferBackground);
   const production = new ProductionStudio(audio, platform, stems);
   const preview = new HeadphonePreview(audio, (ref) => platform.readAudio(ref));
   const vocal = new VocalStudio(audio, production);
@@ -330,12 +369,40 @@ export function createApp(): App {
   });
   // Grid edits (or any other preparation change) refresh the Lab's track cards: "grid unreliable", SYNCED.
   preparation.on("record", (r) => transitionLab.refreshTrack(r.trackId));
-  const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()] });
+  // Four-deck workspace + controller deck layers (left side A/C, right side B/D) with soft takeover.
+  const workspace = new WorkspaceStore();
+  const storedControllerPrefs = load<{ layers?: Partial<LayerSettings>; takeover?: Partial<TakeoverSettings> }>(CONTROLLER_PREFS_KEY, {});
+  const layers = new DeckLayers({ ...DEFAULT_LAYER_SETTINGS, ...storedControllerPrefs.layers });
+  const takeover = new SoftTakeover((action) => engine.getActionValue(action), { ...DEFAULT_TAKEOVER, ...storedControllerPrefs.takeover });
+  layers.setEnabled(workspace.get().deckMode === 4);
+  workspace.on("change", (p) => layers.setEnabled(p.deckMode === 4));
+  // Follow Hardware Layer: a deck the controller switches to opens from its slim (micro) view.
+  layers.on("change", (s) => {
+    if (!s.changed || !layers.getSettings().followHardwareLayer) return;
+    const deck = s[s.changed];
+    if (deck >= 2 && workspace.densityOf(deck) === "micro") workspace.setDensity(deck, "compact");
+  });
+  const controllers = new ControllerManager({ bus, feedback: engine, log, mappings: [buildDdjSbMapping()], layers, takeover });
   // MIDI keyboards and drum controllers without a DJ mapping play the Sampler pads / chromatic instrument.
   controllers.on("monitor", (entry) => { if (!entry.mapping && entry.message.deviceId !== "simulator") production.handleSamplerMidi(entry.message); });
   // No jog wheel left to drive it: a live Adjust Loop Out would otherwise get stuck showing its indicator.
   controllers.on("controllers", (list) => { if (!list.some((c) => c.connected)) engine.exitAllLoopOutAdjust(); });
-  const keyboard = new KeyboardShortcuts(bus);
+  let keymapOverrides = load<KeymapOverrides>(KEYMAP_KEY, {});
+  const keyboard = new KeyboardShortcuts(bus, applyKeymapOverrides(DEFAULT_KEYMAP, keymapOverrides));
+  const pressed = (fn: () => void) => (v: number) => { if (v > 0) fn(); };
+  bus.handle("workspace.bottomPanel.toggle", pressed(() => window.dispatchEvent(new CustomEvent("dbdj:toggle-bottom-panel"))));
+  bus.handle("workspace.deckMode.toggle", pressed(() => workspace.toggleDeckMode()));
+  bus.handle("workspace.deckMode.2", pressed(() => workspace.setDeckMode(2)));
+  bus.handle("workspace.deckMode.4", pressed(() => workspace.setDeckMode(4)));
+  for (let d = 0; d < DECK_COUNT; d++) {
+    bus.handle(`workspace.focus.deck${d + 1}`, pressed(() => {
+      workspace.focus(d);
+      // Opt-in only: on-screen focus never moves the hardware unless "Controller follows deck focus" is on.
+      if (layers.getSettings().hardwareFollowsFocus) layers.set(DeckLayers.sideOf(d), d);
+    }));
+  }
+  registerLayerActions(bus, layers, () => log.info("controllers", "Deck layers switch decks in 4 DECK mode"));
+  bus.handle("browser.load.focused", pressed(() => bus.send(`browser.load.deck${workspace.get().focusedDeck + 1}`, 1, "system")));
   const streaming = new StreamingStore(platform.streaming, log);
   const spotifyPlayback = new SpotifyPlaybackAdapter(async (url) => { platform.openExternal(url); });
   const spotifySession = new SpotifySessionCoordinator(
@@ -596,6 +663,28 @@ export function createApp(): App {
     },
     saveSuggestedCuesToEmbedded,
     regenerateSuggestedCues,
+    workspace,
+    saveControllerPrefs: (p) => {
+      if (p.layers) layers.updateSettings(p.layers);
+      if (p.takeover) takeover.updateSettings(p.takeover);
+      save(CONTROLLER_PREFS_KEY, { layers: layers.getSettings(), takeover: takeover.getSettings() });
+    },
+    performancePrefs: () => perfPrefs,
+    savePerformancePrefs: (p) => {
+      perfPrefs = { ...perfPrefs, ...p };
+      audio.setClipGuard(perfPrefs.clipGuard);
+      save(PERFORMANCE_KEY, perfPrefs);
+    },
+    rebindShortcut: (action, binding) => {
+      keymapOverrides = { ...keymapOverrides, [action]: binding };
+      keyboard.setKeymap(applyKeymapOverrides(DEFAULT_KEYMAP, keymapOverrides));
+      save(KEYMAP_KEY, keymapOverrides);
+    },
+    resetShortcuts: () => {
+      keymapOverrides = {};
+      keyboard.setKeymap(DEFAULT_KEYMAP);
+      save(KEYMAP_KEY, keymapOverrides);
+    },
   };
 
   async function addFiles(refs: AudioFileRef[], loadIntoDeck?: number): Promise<number> {

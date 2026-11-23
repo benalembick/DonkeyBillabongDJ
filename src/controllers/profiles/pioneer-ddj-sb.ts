@@ -13,6 +13,13 @@
  *   5 / 6  FX unit 1 / 2
  *   7      global: browse encoder, load buttons, crossfader, headphone mix, filters
  *   8 / 9  performance pads for deck A / B (note number depends on pad mode)
+ *
+ * Four decks: the DDJ-SB has two channels and no dedicated deck 3/4 buttons. As in Mixxx's 4-deck DDJ-SB
+ * mapping (PioneerDDJSB.deckToggleButton, note 0x60 on status 0x90/0x91), SHIFT + KEY LOCK — printed
+ * TEMPO RANGE on the unit — toggles that side between deck 1/3 (left) or 2/4 (right) in 4-deck mode, and
+ * LED 0x60 lights while deck 3/4 is selected. In 2-deck mode it stays TEMPO RANGE. Every deck/mixer
+ * control below is bound to the side's deck1/deck2 actions and routed to the selected deck at run time
+ * (src/controllers/layers.ts).
  */
 import type { ControllerMapping, InputBinding, OutputBinding, PhysicalControl } from "../mapping/schema";
 import { MAPPING_SCHEMA } from "../mapping/schema";
@@ -66,8 +73,13 @@ export function buildDdjSbMapping(): ControllerMapping {
 
     control(c("keylock"), `Key Lock ${L}`, "button", sec, `KEY LOCK ${L}`);
     note(c("keylock"), ch, 0x1a, `${d}.keylock`);
-    note(c("keylock"), ch, 0x60, `${d}.tempo.range`, { note: "SHIFT+KEY LOCK = TEMPO RANGE (Mixxx uses it as deck 3/4 toggle)" });
+    note(c("keylock"), ch, 0x60, `${d}.tempo.range`, {
+      fourDeckAction: `controller.layer.${s === 0 ? "left" : "right"}.toggle`,
+      note: `SHIFT+KEY LOCK (printed TEMPO RANGE): tempo range in 2-deck mode; deck ${s === 0 ? "1/3" : "2/4"} layer toggle in 4-deck mode (as Mixxx's DDJ-SB deckToggleButton)`,
+    });
     led(c("keylock"), ch, 0x1a, `${d}.keylock`);
+    // Layer indicator (as Mixxx's DDJ-SB script: the SHIFT+KEY LOCK LED, lit while deck 3/4 is selected).
+    led(c("keylock"), ch, 0x60, `controller.layer.${s === 0 ? "left" : "right"}.alt`);
 
     control(c("vinyl"), `Vinyl ${L}`, "button", sec, `VINYL ${L}`);
     note(c("vinyl"), ch, 0x17, `${d}.vinyl`);
@@ -200,7 +212,7 @@ export function buildDdjSbMapping(): ControllerMapping {
     name: "Pioneer DDJ-SB",
     vendor: "Pioneer DJ",
     version: "1.0.0",
-    description: "Mixxx DDJ-SB compatible mapping (two decks).",
+    description: "Mixxx DDJ-SB compatible mapping: two decks, or four with SHIFT + KEY LOCK deck layers.",
     match: { portNamePatterns: ["DDJ[- ]?SB(?![0-9])"] },
     provenance: {
       source: "Derived from the Mixxx Pioneer DDJ-SB mapping (Pioneer-DDJ-SB.midi.xml / Pioneer-DDJ-SB-scripts.js)",

@@ -18,6 +18,8 @@ import { StemBadge, stemRank } from "./StemBadge";
 import { PreviewArtTile } from "./PreviewArt";
 import { AutoDJQueue, LearnNav, PlaylistActions, PlaylistNav, PlaylistView, TrackDetails, TRACK_REFS } from "./PlaylistPanel";
 import { TrackMenu } from "./TrackMenu";
+import { deckCssLetter } from "./deckTheme";
+import { useWorkspace } from "./workspaceHooks";
 import { compatibility } from "../analysis/discovery";
 import { MashipsView } from "./MashipsPanel";
 import { PracticePanel } from "./PracticePanel";
@@ -556,7 +558,7 @@ function LocalView({ collection }: { collection: LocalCollection }) {
         {platform.kind === "browser" && <button onClick={() => void add(false)}>Reconnect files</button>}
         <button onClick={() => setSelectedRefs(visible.map((t) => t.ref))}>Select all</button>
         <PlaylistActions toolbar refs={selectedRefs.length ? selectedRefs : selectedTrack ? [selectedTrack.ref] : []} />
-        <button className="discovery-action reanalyse-action" title="Re-run BPM, key, energy and beat-grid analysis on every track in the collection" onClick={() => void app.analysis.analyseTracks(state.tracks, true)}><span aria-hidden>⟳</span> REANALYSE LIBRARY</button>
+        <button className="discovery-action reanalyse-action" title="Re-run BPM, key, energy and beat-grid analysis on every track in the collection" onClick={() => void app.analysis.analyseTracks(state.tracks, true, false, true)}><span aria-hidden>⟳</span> REANALYSE LIBRARY</button>
         {/* FIND MATCHES / CREATE DJMIX / FIND MASHUPS stay side by side (they wrap together on narrow windows). */}
         <span className="discovery-group"><TrackDiscoveryActions track={selectedTrack} tracks={state.tracks} /></span>
         <AnalysisProgress />
@@ -621,16 +623,19 @@ function LoadButtons({ track }: { track: TrackInfo }) {
   const { engine } = useApp();
   const playing = usePlayingFlags();
   const loaded = useLoadedRefs().split("\0");
+  const { deckMode } = useWorkspace();
   return (
     <>
       {[...playing].map((flag, i) => {
         const L = String.fromCharCode(65 + i);
-        // Loaded on this deck: filled in the deck's colour and marked "●" (not colour alone). Both light up if it's on both decks.
+        // Loaded on this deck: filled in the deck's colour and marked "●" (not colour alone). Every deck holding it lights up.
         const onDeck = loaded[i] === track.ref;
+        // 2 DECK mode offers A/B; a hidden deck C/D still shows when it holds this track.
+        if (i >= deckMode && !onDeck) return null;
         return (
           <button
             key={i}
-            className={`tiny ${i === 0 ? "deck-a-btn" : "deck-b-btn"} ${onDeck ? "on-deck" : ""}`}
+            className={`tiny deck-${deckCssLetter(i)}-btn ${onDeck ? "on-deck" : ""}`}
             disabled={flag === "1"}
             title={`${onDeck ? `Loaded on deck ${L}` : ""}${onDeck && flag === "1" ? " · " : ""}${flag === "1" ? `Deck ${L} is playing` : onDeck ? " — load again" : `Load into deck ${L}`}`}
             onClick={(e) => {
@@ -997,6 +1002,7 @@ function StreamingTracks({ view, onPrepare }: { view: ProviderView; onPrepare?: 
     onPrepare();
   };
   const engineState = useEngineState();
+  const { deckMode } = useWorkspace();
   useMatchingTick();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [resolving, setResolving] = useState(false);
@@ -1106,10 +1112,10 @@ function StreamingTracks({ view, onPrepare }: { view: ProviderView; onPrepare?: 
                   </button>
                 </td>
                 <td className="row-actions">
-                  {engineState.decks.map((d, deck) => (
+                  {engineState.decks.slice(0, deckMode).map((d, deck) => (
                     <button
                       key={deck}
-                      className={`tiny ${deck === 0 ? "deck-a-btn" : "deck-b-btn"}`}
+                      className={`tiny deck-${deckCssLetter(deck)}-btn`}
                       disabled={d.playing}
                       title={r?.status === "resolved" ? `Load the matched file into deck ${String.fromCharCode(65 + deck)}` : "Find a playable version first"}
                       onClick={() => void matching.loadToDeck(deck, toTrackInfo(t), t)}

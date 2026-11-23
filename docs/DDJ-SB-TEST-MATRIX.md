@@ -15,8 +15,8 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch1 0x48 <br><sub>SHIFT+CUE (Mixxx: brake)</sub> | `deck1.brake` | _not implemented yet (logged once)_ |  | ☐ |
 | **Sync A** | Note ch1 0x58  | `deck1.sync` | Sync A | 0x58→deck1.sync | ☐ |
 |  | Note ch1 0x5C <br><sub>SHIFT+SYNC</sub> | `deck1.quantize` | _not implemented yet (logged once)_ |  | ☐ |
-| **Key Lock A** | Note ch1 0x1A  | `deck1.keylock` | Key Lock A | 0x1A→deck1.keylock | ☐ |
-|  | Note ch1 0x60 <br><sub>SHIFT+KEY LOCK = TEMPO RANGE (Mixxx uses it as deck 3/4 toggle)</sub> | `deck1.tempo.range` | Tempo range cycle A |  | ☐ |
+| **Key Lock A** | Note ch1 0x1A  | `deck1.keylock` | Key Lock A | 0x1A→deck1.keylock<br>0x60→controller.layer.left.alt | ☐ |
+|  | Note ch1 0x60 <br><sub>SHIFT+KEY LOCK (printed TEMPO RANGE): tempo range in 2-deck mode; deck 1/3 layer toggle in 4-deck mode (as Mixxx's DDJ-SB deckToggleButton)</sub> | `deck1.tempo.range` | Tempo range cycle A |  | ☐ |
 | **Vinyl A** | Note ch1 0x17  | `deck1.vinyl` | Vinyl/Scratch mode A | 0x17→deck1.vinyl | ☐ |
 |  | Note ch1 0x4E <br><sub>SHIFT+VINYL</sub> | `deck1.slip` | _not implemented yet (logged once)_ |  | ☐ |
 | **Shift A** | Note ch1 0x3F  | `modifier.shift` | Shift (mapping modifier) |  | ☐ |
@@ -112,8 +112,8 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 |  | Note ch2 0x48 <br><sub>SHIFT+CUE (Mixxx: brake)</sub> | `deck2.brake` | _not implemented yet (logged once)_ |  | ☐ |
 | **Sync B** | Note ch2 0x58  | `deck2.sync` | Sync B | 0x58→deck2.sync | ☐ |
 |  | Note ch2 0x5C <br><sub>SHIFT+SYNC</sub> | `deck2.quantize` | _not implemented yet (logged once)_ |  | ☐ |
-| **Key Lock B** | Note ch2 0x1A  | `deck2.keylock` | Key Lock B | 0x1A→deck2.keylock | ☐ |
-|  | Note ch2 0x60 <br><sub>SHIFT+KEY LOCK = TEMPO RANGE (Mixxx uses it as deck 3/4 toggle)</sub> | `deck2.tempo.range` | Tempo range cycle B |  | ☐ |
+| **Key Lock B** | Note ch2 0x1A  | `deck2.keylock` | Key Lock B | 0x1A→deck2.keylock<br>0x60→controller.layer.right.alt | ☐ |
+|  | Note ch2 0x60 <br><sub>SHIFT+KEY LOCK (printed TEMPO RANGE): tempo range in 2-deck mode; deck 2/4 layer toggle in 4-deck mode (as Mixxx's DDJ-SB deckToggleButton)</sub> | `deck2.tempo.range` | Tempo range cycle B |  | ☐ |
 | **Vinyl B** | Note ch2 0x17  | `deck2.vinyl` | Vinyl/Scratch mode B | 0x17→deck2.vinyl | ☐ |
 |  | Note ch2 0x4E <br><sub>SHIFT+VINYL</sub> | `deck2.slip` | _not implemented yet (logged once)_ |  | ☐ |
 | **Shift B** | Note ch2 0x3F <br><sub>Deck B SHIFT assumed to mirror deck A on channel 2 (Mixxx binds only channel 1) — verify</sub> | `modifier.shift` | Shift (mapping modifier) |  | ☐ |
@@ -210,4 +210,4 @@ MIDI channels are 1-based (status 0x90 = channel 1). "CC14" = 14-bit value sent 
 | **Browse push** | Note ch7 0x41  | `browser.select` | _not implemented yet (logged once)_ |  | ☐ |
 |  | Note ch7 0x42 <br><sub>SHIFT + push</sub> | `browser.back` | _not implemented yet (logged once)_ |  | ☐ |
 
-Totals: 52 physical controls, 200 input bindings, 86 LED outputs.
+Totals: 52 physical controls, 200 input bindings, 88 LED outputs.

@@ -14,7 +14,8 @@ export interface Translation {
   value: number;
 }
 
-export type DispatchFn = (action: string, value: number) => void;
+/** `binding` lets the controller layer route by deck layer and apply soft takeover to absolute controls. */
+export type DispatchFn = (action: string, value: number, binding: InputBinding) => void;
 export type SendFn = (bytes: number[]) => void;
 export type FeedbackFn = (key: string) => number;
 
@@ -93,7 +94,7 @@ export class MappingRuntime {
         if (value > 0) this.modifiers.add(name);
         else this.modifiers.delete(name);
       } else {
-        this.dispatch(b.action, value);
+        this.dispatch(b.action, value, b);
       }
     }
     return out;

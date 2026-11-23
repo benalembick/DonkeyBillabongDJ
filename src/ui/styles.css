@@ -10,14 +10,18 @@
   --ok: #3ddc97;
   --warn: #ffb020;
   --danger: #ff4d4d;
-  /* Deck identity: blue vs amber (distinguishable with common colour-vision deficiencies).
-     The --deck-a-* / --deck-b-* values (primary, deep, highlight, bg, glow, ink, low, mid, high)
+  /* Deck identity: A blue, B orange, C green, D purple (each deck also has its letter and badge shape).
+     The --deck-a-* … --deck-d-* values (primary, deep, highlight, bg, glow, ink, low, mid, high)
      are written onto :root at startup by src/ui/deckTheme.ts — the same definitions the
      waveform renderer uses. These are the short aliases the rest of the stylesheet uses. */
   --deck-a: var(--deck-a-primary);
   --deck-a-strong: var(--deck-a-highlight);
   --deck-b: var(--deck-b-primary);
   --deck-b-strong: var(--deck-b-highlight);
+  --deck-c: var(--deck-c-primary);
+  --deck-c-strong: var(--deck-c-highlight);
+  --deck-d: var(--deck-d-primary);
+  --deck-d-strong: var(--deck-d-highlight);
   --cue: #ffc233;
   --hotcue: #c77dff;
   color-scheme: dark;
@@ -535,6 +539,15 @@ tr:hover .art-preview-btn, .art-preview-btn:focus-visible, .art-preview.active .
 .ctrl-label { flex: 1; }
 .ctrl-shortcuts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; flex-wrap: wrap; max-width: 150px; }
 .ctrl-shortcuts kbd { padding: 1px 4px; border: 1px solid #465363; border-bottom-width: 2px; border-radius: 3px; background: #171e27; color: #bfe5ff; font: 9px/1.25 ui-monospace,"Cascadia Mono",monospace; white-space: nowrap; box-shadow: 0 1px #0008; }
+.keyboard-shortcuts-panel > header { margin-bottom: 12px; }
+.keyboard-shortcuts-panel h3 { margin: 0 0 3px; }
+.keyboard-shortcuts-panel p { margin: 0; color: var(--muted); }
+.keyboard-shortcut-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; align-items: start; }
+.keyboard-shortcut-group { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); }
+.keyboard-shortcut-group h4 { margin: 0; padding: 7px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.keyboard-shortcut-row { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: 12px; padding: 5px 9px; border-bottom: 1px solid #ffffff08; }
+.keyboard-shortcut-row:last-child { border-bottom: 0; }
+.keyboard-shortcut-row kbd { padding: 2px 6px; border: 1px solid #465363; border-bottom-width: 2px; border-radius: 4px; background: #111820; color: #bfe5ff; font: 10px/1.3 ui-monospace,"Cascadia Mono",monospace; white-space: nowrap; }
 .ctrl-count { color: var(--muted); font-size: 11px; min-width: 24px; text-align: right; }
 .ctrl .note { width: 100%; }
 .tag { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
@@ -1897,7 +1910,7 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .lyrics-overlay{position:fixed;inset:0;z-index:120;background:#000b;display:grid;place-items:center;padding:30px}.lyrics-panel{width:min(680px,90vw);max-height:80vh;background:#101923;border:1px solid #3b4d60;border-radius:9px;box-shadow:0 20px 70px #000;display:flex;flex-direction:column}.lyrics-panel header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #283746}.lyrics-panel header div{display:flex;flex-direction:column}.lyrics-panel header small{color:#96a9bc}.lyrics-panel pre{white-space:pre-wrap;overflow:auto;margin:0;padding:22px;font:16px/1.7 inherit;text-align:center;color:#eef5fb}
 .spotify-session-capabilities{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 12px;padding:10px 12px;border:1px solid #304153;border-radius:7px;background:#101923}.spotify-session-capabilities>div{display:flex;flex-direction:column;gap:3px}.spotify-session-capabilities span{font-size:12px;color:#9fb0c2}
 
-/* ══ Deck colour identity: deck A electric blue, deck B warm amber ══
+/* ══ Deck colour identity: deck A blue, deck B orange (C green and D purple: see "Four decks" below) ══
    Colours come from src/ui/deckTheme.ts (CSS variables on :root) through the deck scopes
    defined with .deck above (.deck-a/.deck-b, .deck-scope-a/-b, .strip.channel-a/-b).
    Deck colour = ownership, selection and active state. Functional colours are kept:
@@ -1984,6 +1997,218 @@ button.tiny.master-lit { background: #ffb020; border-color: #ffb020; color: #000
 .deck-b-btn:not(:disabled):hover { background: color-mix(in srgb, var(--deck-b-primary) 16%, var(--panel-2)); }
 .deck-a-btn.on-deck { background: var(--deck-a-primary); color: var(--deck-a-ink); font-weight: 800; }
 .deck-b-btn.on-deck { background: var(--deck-b-primary); color: var(--deck-b-ink); font-weight: 800; }
+
+/* ══ Four decks (docs/architecture/four-deck-performance-engine.md) ══
+   Deck C green and deck D purple join A blue and B orange through the same deck scopes. Shape cues
+   on the deck badges (A square, B circle, C hexagon, D tab) mean identity never relies on colour alone. */
+.deck-c, .deck-scope-c, .strip.channel-c { --deck-color: var(--deck-c-primary); --deck-color-strong: var(--deck-c-highlight); --deck-deep: var(--deck-c-deep); --deck-tint: var(--deck-c-bg); --deck-glow: var(--deck-c-glow); --deck-ink: var(--deck-c-ink); }
+.deck-d, .deck-scope-d, .strip.channel-d { --deck-color: var(--deck-d-primary); --deck-color-strong: var(--deck-d-highlight); --deck-deep: var(--deck-d-deep); --deck-tint: var(--deck-d-bg); --deck-glow: var(--deck-d-glow); --deck-ink: var(--deck-d-ink); }
+.deck-c .deck-letter { border-radius: 0; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.deck-d .deck-letter { border-radius: 13px 13px 3px 3px; }
+.wave-lane.deck-c .wave-label { background: var(--deck-c); }
+.wave-lane.deck-d .wave-label { background: var(--deck-d); border-radius: 8px 8px 2px 2px; }
+.wave-lane.deck-c, .wave-lane.deck-d { box-shadow: inset 2px 0 0 var(--deck-color); }
+.fx-assign .fx-assign-c.lit { background: var(--deck-c-primary); border-color: var(--deck-c-primary); color: var(--deck-c-ink); }
+.fx-assign .fx-assign-d.lit { background: var(--deck-d-primary); border-color: var(--deck-d-primary); color: var(--deck-d-ink); }
+.strip.channel-c, .strip.channel-d { background: linear-gradient(180deg, color-mix(in srgb, var(--deck-tint) 85%, var(--panel-2)) 0, var(--panel-2) 55%); box-shadow: inset 0 2px 0 var(--deck-color); }
+.strip.channel-c .strip-name, .strip.channel-d .strip-name { color: var(--deck-color); }
+.strip.channel-c .knob:not(.auto-driven) .knob-arc, .strip.channel-d .knob:not(.auto-driven) .knob-arc { stroke: var(--deck-color); }
+.strip.channel-c .knob:not(.auto-driven) .knob-readout, .strip.channel-d .knob:not(.auto-driven) .knob-readout { border-color: var(--deck-color); }
+.strip.channel-c .vfader, .strip.channel-d .vfader { accent-color: var(--deck-color); }
+.deck-c-btn { border-color: var(--deck-c); color: var(--deck-c); }
+.deck-d-btn { border-color: var(--deck-d); color: var(--deck-d); }
+.deck-c-btn:not(:disabled):hover { background: color-mix(in srgb, var(--deck-c-primary) 16%, var(--panel-2)); }
+.deck-d-btn:not(:disabled):hover { background: color-mix(in srgb, var(--deck-d-primary) 16%, var(--panel-2)); }
+.deck-c-btn.on-deck { background: var(--deck-c-primary); color: var(--deck-c-ink); font-weight: 800; }
+.deck-d-btn.on-deck { background: var(--deck-d-primary); color: var(--deck-d-ink); font-weight: 800; }
+.ctx-menu .ctx-load { border-left: 3px solid var(--deck-color); }
+
+/* 2 DECK | 4 DECK in the workspace toolbar */
+.deck-mode-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; flex: none; }
+.deck-mode-switch button { border: 0; border-radius: 0; padding: 3px 9px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; color: var(--muted); background: transparent; }
+.deck-mode-switch button + button { border-left: 1px solid var(--line); }
+.deck-mode-switch button.active { background: var(--accent); color: #fff; }
+
+/* Deck columns: principal deck (A / B) over its controller-side partner (C / D) */
+.deck-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; }
+.deck-col > .deck { flex: 1 1 auto; }
+.deck-col > .deck.secondary { flex: 0 0 auto; }
+/* Two full decks in one column keep every control at its natural size; the column scrolls if the window is short. */
+.deck-col.partner-full { overflow-y: auto; scrollbar-gutter: stable; }
+.deck-col.partner-full > .deck { flex: 0 0 auto; overflow: visible; }
+.deck-row-3.four { grid-template-columns: minmax(0, 1fr) minmax(380px, 440px) minmax(0, 1fr); }
+.stage.horizontal.four { grid-template-rows: clamp(150px, 25vh, 340px) auto minmax(min-content, 1fr); }
+.stage.classic.four { grid-template-rows: clamp(110px, 17vh, 220px) auto auto; }
+.stage.vertical.four { grid-template-columns: minmax(0, 1fr) minmax(380px, 440px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.stage.vertical.four > .four-deck-bar { grid-column: 1 / -1; }
+.stage.vertical.four .center-col { grid-template-rows: minmax(140px, 1fr) minmax(280px, 48%); }
+
+/* Four-deck bar: controller sides, master clock, pickup guidance */
+.four-deck-bar { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 2px 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font-size: 11px; min-width: 0; overflow: hidden; }
+.hw-side { display: flex; align-items: center; gap: 3px; flex: none; }
+.hw-side.hw-right { margin-left: auto; }
+.hw-side-label { font-weight: 800; letter-spacing: 0.06em; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.hw-pick { font-weight: 800; }
+.hw-pick.lit { background: var(--deck-color); border-color: var(--deck-color); color: var(--deck-ink); font-weight: 900; }
+.master-clock { display: flex; align-items: center; gap: 6px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; flex: none; white-space: nowrap; }
+.master-clock > b { font-size: 10px; letter-spacing: 0.1em; color: var(--muted); }
+.mc-source { font-weight: 900; color: var(--deck-color, var(--text)); }
+.mc-bpm { font-variant-numeric: tabular-nums; font-weight: 800; min-width: 70px; }
+.mc-bpm small { color: var(--muted); font-size: 9px; }
+.mc-beats { display: inline-flex; gap: 3px; }
+.mc-beats span { width: 7px; height: 7px; border-radius: 50%; background: #2a2f39; }
+.mc-beats span.on { background: var(--deck-color, var(--text)); }
+.mc-beats span.downbeat.on { background: #fff; box-shadow: 0 0 4px var(--deck-color, #fff); }
+.mc-state { color: var(--muted); }
+.mc-sync { color: var(--muted); font-size: 10px; font-weight: 700; }
+.mc-pick { display: inline-flex; gap: 2px; }
+.mc-pick button { min-width: 20px; padding: 0 4px; font-weight: 800; }
+.mc-pick button.lit { background: var(--deck-color); border-color: var(--deck-color); color: var(--deck-ink); }
+.pickup-guide { display: flex; gap: 4px; min-width: 0; overflow: hidden; }
+.pickup-chip { padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--warn); color: var(--warn); font-weight: 800; font-size: 10px; white-space: nowrap; }
+.pickup-chip b { color: var(--deck-color, var(--warn)); }
+
+/* Deck status chips (text, never colour alone) */
+.deck-status-line { display: flex; align-items: center; gap: 6px; min-height: 18px; min-width: 0; }
+.deck-status-line .chip.hw { display: none; } /* the full deck shows the bigger hardware tag instead */
+.deck-chips { display: inline-flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
+.deck-chips.compact { flex-wrap: nowrap; overflow: hidden; }
+.deck-chips .chip { font-size: 9px; font-weight: 800; letter-spacing: 0.05em; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.playing { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, var(--line)); }
+.chip.state-error { color: var(--danger); border-color: var(--danger); }
+.chip.state-loading { color: var(--warn); }
+.chip.loop { color: var(--ok); }
+.chip.sync { color: var(--deck-color-strong); border-color: var(--deck-color); }
+.chip.master { color: #000; background: #ffb020; border-color: #ffb020; }
+.chip.cue { color: var(--cue); border-color: color-mix(in srgb, var(--cue) 55%, var(--line)); }
+.chip.hw { color: var(--deck-ink); background: var(--deck-color); border-color: var(--deck-color); }
+.chip.kb { border-style: dashed; color: var(--text); }
+.on-air-badge { font-size: 9px; font-weight: 900; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+.on-air-badge:empty { display: none; }
+.on-air-badge[data-state="on-air"] { background: var(--danger); color: #fff; }
+.on-air-badge[data-state="tail"] { background: color-mix(in srgb, var(--danger) 50%, transparent); color: #fff; }
+.on-air-badge[data-state="off-air"] { border: 1px solid var(--line); color: var(--muted); }
+
+/* Hardware focus (which deck the controller side drives), keyboard focus, dimming */
+.deck.hw-focus:not(.drag-over) { outline: 2px solid var(--deck-color); outline-offset: -2px; }
+.deck.hw-flash { animation: hw-flash 0.9s ease-out; }
+@keyframes hw-flash { 0% { box-shadow: 0 0 0 4px var(--deck-color), 0 0 26px var(--deck-glow); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.deck.kb-focus .deck-letter { outline: 2px dashed var(--text); outline-offset: 2px; }
+.deck.inactive { filter: saturate(0.8) brightness(0.93); }
+.deck.inactive:hover, .deck.inactive.hw-focus { filter: none; }
+.hw-tag { font-size: 9px; font-weight: 900; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 3px; background: var(--deck-color); color: var(--deck-ink); white-space: nowrap; flex: none; }
+.density-buttons { display: inline-flex; gap: 2px; margin-left: auto; flex: none; }
+button.density-btn { padding: 0 5px; line-height: 15px; font-size: 10px; }
+
+/* Compact deck (C/D) */
+.compact-deck { gap: 3px; padding: 4px 6px; }
+.sd-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sd-head .deck-letter { width: 22px; height: 22px; font-size: 13px; flex: none; }
+.sd-meta { flex: 1 1 60px; min-width: 0; display: flex; gap: 6px; align-items: baseline; overflow: hidden; }
+.sd-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sd-artist { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sd-bpm { font-weight: 800; font-variant-numeric: tabular-nums; flex: none; }
+.sd-time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11px; flex: none; min-width: 52px; }
+.sd-head .deck-chips { flex: 0 1 auto; }
+.sd-body { display: grid; grid-template-columns: minmax(60px, 1fr) 48px auto auto auto; gap: 6px; align-items: center; min-width: 0; }
+.sd-wave .overview { height: 26px; }
+.sd-transport { display: flex; gap: 4px; align-items: center; }
+.sd-transport .round.small { width: 32px; height: 32px; font-size: 10px; }
+.sd-pads { display: grid; grid-template-columns: repeat(8, minmax(16px, 24px)); gap: 2px; }
+.pad.mini { height: 24px; font-size: 10px; padding: 0; min-width: 0; }
+.compact-deck .cue-btn { width: auto; padding: 3px 6px; }
+.phase-meter { position: relative; height: 12px; border: 1px solid var(--line); border-radius: 3px; background: #0b0d12; }
+.phase-centre { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #ffffff66; }
+.phase-marker { position: absolute; top: 1px; bottom: 1px; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--muted); }
+.phase-meter[data-state="locked"] .phase-marker { background: var(--ok); }
+.phase-meter[data-state="off"] .phase-marker { background: var(--warn); }
+.phase-meter[data-state="none"] .phase-marker, .phase-meter[data-state="master"] .phase-marker { opacity: 0.2; }
+.phase-meter[data-state="master"] { border-color: #ffb020; }
+
+/* Micro deck (one slim row) and the 2 DECK hidden-deck indicator */
+.deck.micro-deck { flex-direction: row; align-items: center; gap: 6px; padding: 2px 6px; min-height: 28px; }
+.micro-deck .deck-letter { width: 20px; height: 20px; font-size: 12px; flex: none; }
+.md-title { flex: 1 1 auto; min-width: 40px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 700; font-size: 12px; }
+.md-bpm { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 11px; flex: none; }
+.md-progress { flex: 0 1 140px; min-width: 50px; height: 7px; border-radius: 3px; background: #1d222b; cursor: pointer; overflow: hidden; }
+.md-progress > span { display: block; height: 100%; background: var(--deck-color); }
+.md-volume { width: 70px; flex: none; accent-color: var(--deck-color); }
+.md-note { font-size: 9px; font-weight: 900; color: var(--ok); letter-spacing: 0.06em; flex: none; }
+.deck.hidden-indicator { border-style: dashed; }
+
+/* Four-channel mixer */
+.mixer.four .mixer-strips { grid-template-columns: 1fr 1fr 0.8fr 1fr 1fr; }
+.xf-assign { grid-column: 1 / -1; display: flex; justify-content: center; margin-top: 2px; }
+.xf-assign button { padding: 0 4px; font-size: 9px; font-weight: 800; border-radius: 0; line-height: 15px; color: var(--muted); }
+.xf-assign button:first-child { border-radius: 3px 0 0 3px; }
+.xf-assign button:last-child { border-radius: 0 3px 3px 0; }
+.xf-assign button.lit { background: var(--deck-color); border-color: var(--deck-color); color: var(--deck-ink); }
+.strip.hw-focus { outline: 2px solid var(--deck-color); outline-offset: -2px; }
+.strip-hw { margin-left: 3px; font-size: 9px; color: var(--deck-color); }
+.auto-eq-badge.xf-warn { background: var(--warn); }
+.knob.pickup .knob-dial { box-shadow: 0 0 0 2px var(--warn); }
+.knob-ghost { stroke: var(--warn); stroke-width: 3; stroke-linecap: round; }
+.knob-pickup { position: absolute; right: -7px; top: -7px; font-size: 10px; color: var(--warn); font-weight: 900; pointer-events: none; }
+.fader-row { position: relative; }
+.fader-ghost { position: absolute; right: 0; transform: translateY(50%); font-size: 9px; color: var(--warn); font-weight: 900; pointer-events: none; text-shadow: 0 0 3px #000; }
+.crossfader { position: relative; }
+.xf-ghost { position: absolute; top: -7px; transform: translateX(-50%); color: var(--warn); font-size: 10px; pointer-events: none; }
+
+/* Four waveform lanes: deck label collapses a lane; empty C/D lanes stay slim */
+button.wave-label { pointer-events: auto; cursor: pointer; border: 0; line-height: 14px; }
+.wave-lane.collapsed { display: flex; align-items: center; gap: 8px; padding-left: 28px; }
+.wave-lane.collapsed .wave-label { top: 2px; }
+.lane-slim-title { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane-sync { position: absolute; z-index: 1; top: 3px; left: 26px; font-size: 9px; font-weight: 900; padding: 0 4px; border-radius: 3px; background: #000000a8; letter-spacing: 0.05em; pointer-events: none; }
+.lane-sync.free { color: var(--warn); }
+.lane-sync.sync { color: var(--ok); }
+.lane-sync.master { color: #ffb020; }
+.wave-stack.four .bar-counter { font-size: 10px; }
+.wave-stack.four .wave-mode { left: auto; right: 72px; top: 3px; bottom: auto; }
+
+/* Settings → four decks */
+.shortcut-editor { display: grid; gap: 4px; margin-top: 6px; }
+.shortcut-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px auto auto; gap: 6px; align-items: center; }
+.shortcut-row kbd { font-family: ui-monospace, Menlo, monospace; font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--panel-2); }
+
+/* Nothing inside the workspace may widen the page past the window. */
+.app { grid-template-columns: minmax(0, 1fr); }
+.stage.horizontal, .stage.classic { grid-template-columns: minmax(0, 1fr); }
+.four-deck-bar > * { min-width: 0; }
+.four-deck-bar .master-clock { flex: 0 1 auto; overflow: hidden; }
+.mixer.four .strip { padding: 3px 2px; column-gap: 2px; min-width: 0; }
+.mixer.four .cue-btn { font-size: 9px; padding: 2px 0; }
+.mixer.four .strip.master { padding: 3px 1px; }
+.deck-row-3.four, .stage.vertical.four { grid-template-columns: minmax(0, 1fr) minmax(430px, 470px) minmax(0, 1fr); }
+
+/* Narrower windows in 4 DECK mode: hide the big jog display, tighten the mixer */
+@media (max-width: 1500px) {
+  .stage.four .deck.full .jog { display: none; }
+  .deck-row-3.four, .stage.vertical.four { grid-template-columns: minmax(0, 1fr) minmax(410px, 440px) minmax(0, 1fr); }
+  .sd-pads { grid-template-columns: repeat(8, minmax(14px, 20px)); }
+  .hw-side-label { display: none; }
+}
+@media (max-width: 1279px) {
+  .deck-mode-switch .dm-word { display: none; }
+  .deck-mode-switch button { padding: 3px 8px; }
+  .compact-deck .sd-artist, .four-deck-bar .mc-sync, .four-deck-bar .mc-pick { display: none; }
+  .deck-row-3.four, .stage.vertical.four { grid-template-columns: minmax(0, 1fr) 400px minmax(0, 1fr); }
+  .sd-body { grid-template-columns: minmax(40px, 1fr) 36px auto auto auto; }
+  .sd-pads { grid-template-columns: repeat(4, 18px); }
+  .pad.mini { height: 18px; }
+  .stage.four .deck .pad small { display: none; }
+  .compact-deck .sd-time { display: none; }
+  /* Decks A/B use the compact design here: drop its jog display and cue-source switch so the pads keep their room. */
+  .stage.four .deck.compact .jog, .stage.four .deck.compact .cue-source-toggle { display: none; }
+  .stage.four .deck.compact .compact-side { width: 116px; }
+  .stage.four .deck.compact .deck-row { gap: 5px; }
+}
+/* Short windows in 4 DECK mode: slimmer waveform lanes (decks A/B switch to the compact deck design in App.tsx). */
+@media (max-height: 819px) {
+  .stage.horizontal.four { grid-template-rows: 116px auto minmax(min-content, 1fr); }
+  .stage.classic.four { grid-template-rows: 100px auto auto; }
+  .stage.four .deck .stem-strip { display: none; }
+}
 
 /* Production Studio → Drum Transcriber */
 .drum-transcriber { grid-column: 1/-1; grid-row: 3/5; min-height: 0; display: flex; flex-direction: column; background: #080a10; color: #dfe6f0; overflow: hidden; --dt: #b48cff; font-size: 11px; }

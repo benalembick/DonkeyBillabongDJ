@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AudiusTab } from "../providers/audius/AudiusStore";
 import { audiusToTrackInfo } from "../providers/audius/audiusTracks";
-import { useApp, useEngineState } from "./context";
+import { useApp } from "./context";
+import { useWorkspaceDecks } from "./workspaceHooks";
+import { deckCssLetter } from "./deckTheme";
 import { useFrameStore } from "./hooks";
 
 const fmt = (ms: number) => {
@@ -21,7 +23,7 @@ export function useAudiusState() {
 export function AudiusPane() {
   const { audius, matching, engine, platform, browser, library } = useApp();
   const s = useAudiusState();
-  const decks = useEngineState().decks;
+  const decks = useWorkspaceDecks();
   const [q, setQ] = useState(s.query);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedRef = useRef<HTMLTableRowElement>(null);
@@ -143,7 +145,7 @@ export function AudiusPane() {
                         decks.map((d, deck) => (
                           <button
                             key={deck}
-                            className={`tiny ${deck === 0 ? "deck-a-btn" : "deck-b-btn"}`}
+                            className={`tiny deck-${deckCssLetter(deck)}-btn`}
                             disabled={d.playing}
                             onClick={(e) => {
                               e.stopPropagation();

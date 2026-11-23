@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { analyzeTrack } from "../src/analysis/analyzeTrack";
-import { allDeckCssVars, BLUE_AMBER, deckTheme, deckWavePalette, hexToPacked, installDeckThemeCss } from "../src/ui/deckTheme";
+import { allDeckCssVars, deckCssLetter, deckTheme, deckWavePalette, FOUR_DECK_THEME, hexToPacked, installDeckThemeCss } from "../src/ui/deckTheme";
 import { migratePrefs } from "../src/ui/layout";
 import { DEFAULT_WAVE_STYLE, drawColumn, NEUTRAL_EQ, tonalColor, tonalShares, WAVE_STYLES, waveData, type Column, type EqGains, type WaveData } from "../src/ui/waveStyle";
 
@@ -9,15 +9,19 @@ const hex = (c: number) => `#${c.toString(16).padStart(6, "0")}`.toUpperCase();
 const lum = (c: number) => 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
 
 describe("deck colour identity", () => {
-  it("deck A resolves to the blue palette, deck B to the amber palette", () => {
-    expect(deckTheme(0)).toMatchObject({ primary: "#0EA5E9", deep: "#1D4ED8", highlight: "#BAE6FD", background: "#071827", glow: "#0EA5E9" });
-    expect(deckTheme(0).waveform).toEqual({ low: "#1D4ED8", mid: "#0EA5E9", high: "#BAE6FD" });
-    expect(deckTheme(1)).toMatchObject({ primary: "#F59E0B", deep: "#B45309", highlight: "#FEF08A", background: "#211608", glow: "#F59E0B" });
-    expect(deckTheme(1).waveform).toEqual({ low: "#B45309", mid: "#F59E0B", high: "#FEF08A" });
+  it("decks A–D resolve to the specified blue, orange, green and purple", () => {
+    expect([0, 1, 2, 3].map((d) => deckTheme(d).primary)).toEqual(["#38A4FF", "#FF7956", "#48D69A", "#B38AFF"]);
+    expect(deckTheme(0)).toMatchObject({ deep: "#1E5FD0", highlight: "#BFE3FF", background: "#0A1828", glow: "#38A4FF" });
+    expect(deckTheme(0).waveform).toEqual({ low: "#1E5FD0", mid: "#38A4FF", high: "#BFE3FF" });
+    expect(deckTheme(1)).toMatchObject({ deep: "#C2412A", highlight: "#FFD3C4", background: "#24120D", glow: "#FF7956" });
+    expect(deckTheme(1).waveform).toEqual({ low: "#C2412A", mid: "#FF7956", high: "#FFD3C4" });
+    expect(deckTheme(2).waveform).toEqual({ low: "#1C8C5E", mid: "#48D69A", high: "#C6F5DE" });
+    expect(deckTheme(3).waveform).toEqual({ low: "#6B3FD1", mid: "#B38AFF", high: "#E4D6FF" });
+    expect([0, 1, 2, 3].map(deckCssLetter)).toEqual(["a", "b", "c", "d"]);
   });
 
   it("the waveform renderer's packed palette is the same definition as the theme", () => {
-    for (const deck of [0, 1]) {
+    for (const deck of [0, 1, 2, 3]) {
       const t = deckTheme(deck).waveform;
       expect(deckWavePalette(deck)).toEqual({ low: hexToPacked(t.low), mid: hexToPacked(t.mid), high: hexToPacked(t.high) });
     }
@@ -25,10 +29,12 @@ describe("deck colour identity", () => {
 
   it("CSS variables come from the same definitions", () => {
     const vars = allDeckCssVars();
-    expect(vars["--deck-a-primary"]).toBe("#0EA5E9");
-    expect(vars["--deck-a-low"]).toBe("#1D4ED8");
-    expect(vars["--deck-b-primary"]).toBe("#F59E0B");
-    expect(vars["--deck-b-high"]).toBe("#FEF08A");
+    expect(vars["--deck-a-primary"]).toBe("#38A4FF");
+    expect(vars["--deck-a-low"]).toBe("#1E5FD0");
+    expect(vars["--deck-b-primary"]).toBe("#FF7956");
+    expect(vars["--deck-b-high"]).toBe("#FFD3C4");
+    expect(vars["--deck-c-primary"]).toBe("#48D69A");
+    expect(vars["--deck-d-primary"]).toBe("#B38AFF");
     const set: Record<string, string> = {};
     installDeckThemeCss({ style: { setProperty: (k, v) => (set[k] = v) } });
     expect(set).toEqual(vars);
@@ -37,15 +43,16 @@ describe("deck colour identity", () => {
   it("the stylesheet only references deck variables the theme defines, and hardcodes no deck colour", () => {
     const css = readFileSync(new URL("../src/ui/styles.css", import.meta.url), "utf8");
     const defined = new Set(Object.keys(allDeckCssVars()));
-    const used = new Set([...css.matchAll(/var\((--deck-[ab]-[a-z]+)\)/g)].map((m) => m[1]));
-    for (const v of used) if (!["--deck-a-strong", "--deck-b-strong"].includes(v)) expect(defined, v).toContain(v);
+    const used = new Set([...css.matchAll(/var\((--deck-[a-d]-[a-z]+)\)/g)].map((m) => m[1]));
+    for (const v of used) if (!/^--deck-[a-d]-strong$/.test(v)) expect(defined, v).toContain(v);
+    expect(used).toContain("--deck-c-primary");
+    expect(used).toContain("--deck-d-ink");
     const root = css.slice(css.indexOf(":root"), css.indexOf("}", css.indexOf(":root")));
-    expect(root).toContain("--deck-a: var(--deck-a-primary)");
-    expect(root).toContain("--deck-b: var(--deck-b-primary)");
-    expect(root).not.toMatch(/--deck-[ab]: #/);
+    for (const l of ["a", "b", "c", "d"]) expect(root).toContain(`--deck-${l}: var(--deck-${l}-primary)`);
+    expect(root).not.toMatch(/--deck-[a-d]: #/);
   });
 
-  it("identity belongs to the deck: the same track data draws blue on A and amber on B, from one cached analysis", () => {
+  it("identity belongs to the deck: the same track data draws in each deck's colour, from one cached analysis", () => {
     const x = new Float32Array(44100);
     for (let i = 0; i < x.length; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * 1000 * i) / 44100);
     const analysis = analyzeTrack([x, x], 44100, 100);
@@ -57,14 +64,16 @@ describe("deck colour identity", () => {
       drawColumn({ bar: (_p, _f, len, rgb) => len > 0 && out.add(hex(rgb)) }, "tonal", col, wd, 0, 50, 50, false, NEUTRAL_EQ, deckWavePalette(deck));
       return [...out];
     };
-    const a = colours(0);
-    const b = colours(1);
+    const [a, b, c, d] = [0, 1, 2, 3].map(colours);
     expect(a.length).toBeGreaterThan(0);
-    // Blue deck: blue channel dominates; amber deck: red channel dominates.
-    for (const c of a) expect(parseInt(c.slice(5, 7), 16)).toBeGreaterThan(parseInt(c.slice(1, 3), 16));
-    for (const c of b) expect(parseInt(c.slice(1, 3), 16)).toBeGreaterThan(parseInt(c.slice(5, 7), 16));
-    expect(deckTheme(2)).toBe(deckTheme(0)); // any further deck index alternates A/B
-    expect(BLUE_AMBER).toHaveLength(2);
+    const ch = (hexc: string, i: number) => parseInt(hexc.slice(1 + i * 2, 3 + i * 2), 16);
+    // Blue deck: blue dominates red; orange: red dominates blue; green: green dominates red; purple: blue dominates green.
+    for (const x of a) expect(ch(x, 2)).toBeGreaterThan(ch(x, 0));
+    for (const x of b) expect(ch(x, 0)).toBeGreaterThan(ch(x, 2));
+    for (const x of c) expect(ch(x, 1)).toBeGreaterThan(ch(x, 0));
+    for (const x of d) expect(ch(x, 2)).toBeGreaterThan(ch(x, 1));
+    expect(deckTheme(4)).toBe(deckTheme(0)); // further indices wrap
+    expect(FOUR_DECK_THEME).toHaveLength(4);
   });
 });
 
@@ -87,8 +96,10 @@ describe("Dual-Deck Tonal waveform", () => {
   });
 
   it.each([
-    [0, "#1D4ED8", "#0EA5E9", "#BAE6FD"],
-    [1, "#B45309", "#F59E0B", "#FEF08A"],
+    [0, "#1E5FD0", "#38A4FF", "#BFE3FF"],
+    [1, "#C2412A", "#FF7956", "#FFD3C4"],
+    [2, "#1C8C5E", "#48D69A", "#C6F5DE"],
+    [3, "#6B3FD1", "#B38AFF", "#E4D6FF"],
   ])("deck %i: lows → %s, mids → %s, highs → %s", (deck, low, mid, high) => {
     expect([...coloursOf(draw(col(1, 1, 0, 0), deck))]).toEqual([low]);
     expect([...coloursOf(draw(col(1, 0, 1, 0), deck))]).toEqual([mid]);
@@ -147,8 +158,8 @@ describe("Dual-Deck Tonal waveform", () => {
   });
 
   it("tonalColor gives the composite colour for single-colour consumers", () => {
-    expect(tonalColor(1, 0, 0, deckWavePalette(1))).toBe("rgb(180,83,9)");
-    expect(tonalColor(0, 0, 1, deckWavePalette(0))).toBe("rgb(186,230,253)");
+    expect(tonalColor(1, 0, 0, deckWavePalette(1))).toBe("rgb(194,65,42)");
+    expect(tonalColor(0, 0, 1, deckWavePalette(0))).toBe("rgb(191,227,255)");
   });
 });
 
@@ -164,7 +175,7 @@ describe("EQ-reactive Dual-Deck Tonal", () => {
   };
   const lenOf = (bars: { len: number; rgb: number }[], rgb: number) => bars.filter((b) => b.rgb === rgb).reduce((s, b) => s + b.len, 0);
 
-  it.each([0, 1])("deck %i: cutting LOW removes the low colour, HIGH the high colour, MID shrinks the body", (deck) => {
+  it.each([0, 1, 2, 3])("deck %i: cutting LOW removes the low colour, HIGH the high colour, MID shrinks the body", (deck) => {
     const p = deckWavePalette(deck);
     const base = draw([1, 1, 1], deck);
     expect(lenOf(base, p.low)).toBeGreaterThan(0);

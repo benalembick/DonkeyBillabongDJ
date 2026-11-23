@@ -11,6 +11,13 @@ import { checkPlayable, frameAt, ratesFor, type PreparedTransition } from "../se
 import { EchoFx } from "../setstudio/echoFx";
 import { gridReliable } from "../preparation/beatGrid";
 
+/**
+ * Auto DJ works on decks A and B only (its "automation" decks — see DeckReservation in DJEngine).
+ * Decks C/D are manual: Auto DJ never loads, plays, syncs or EQs them, and their playback never
+ * blocks or confuses it. (The crossfader is shared: a C/D channel assigned to A or B follows it.)
+ */
+export const AUTO_DJ_DECKS = [0, 1] as const;
+
 /** ≈1%/sec at the engine's ~40ms tick rate — a 16% nudge takes about 16s, imperceptibly gradual. */
 const TEMPO_LEADIN_STEP = 0.0004;
 
@@ -131,8 +138,8 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
     return first ? [first, ...rest] : rest;
   }
   async start(playlistId: string, selectedRef?: string) {
-    if (this.o.engine.getState().decks.some((d) => d.playing)) {
-      this.set({ message: "Pause the decks before starting a new Auto DJ set." }); return;
+    if (this.o.engine.getState().decks.slice(0, AUTO_DJ_DECKS.length).some((d) => d.playing)) {
+      this.set({ message: "Pause the decks (A and B) before starting a new Auto DJ set." }); return;
     }
     const p = this.o.playlists.get(playlistId);
     if (!p?.refs.length) return;
@@ -186,7 +193,8 @@ export class AutoDJ extends Emitter<{ change: AutoDJState }> {
   resume() {
     if (this.state.status !== "PAUSED" || !this.state.current) return;
     const e = this.o.engine.getState();
-    const active = e.decks.map((d, i) => ({ d, i })).filter(({ d }) => d.playing && d.status === "ready");
+    // Only Auto DJ's own decks: a manually playing deck C/D is not "the playing deck" to continue from.
+    const active = e.decks.slice(0, AUTO_DJ_DECKS.length).map((d, i) => ({ d, i })).filter(({ d }) => d.playing && d.status === "ready");
     if (!active.length && !this.state.played.length && ["empty", "error"].includes(e.decks[this.state.deck].status)) {
       this.set({ status: "ACTIVE", message: "Retrying first track…" });
       void this.retryFirst(); return;

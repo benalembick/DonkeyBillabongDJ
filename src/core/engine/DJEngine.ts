@@ -170,6 +170,17 @@ export interface AutoEqState {
   highActive: boolean;
 }
 
+/** Which side of the crossfader a channel sits on ("thru" = not affected by the crossfader). */
+export type CrossfaderAssign = "left" | "right" | "thru";
+export const CROSSFADER_ASSIGNS: readonly CrossfaderAssign[] = ["left", "thru", "right"];
+
+/**
+ * Deck reservation: "automation" decks may be loaded and driven by unattended automation (Auto DJ);
+ * "manual" decks never are — Auto DJ can't load onto them, and only the DJ operates them.
+ * Default: decks A/B automation, decks C/D manual (docs/architecture/four-deck-performance-engine.md §16).
+ */
+export type DeckReservation = "automation" | "manual";
+
 export interface EngineState {
   decks: DeckState[];
   mixer: MixerState;
@@ -183,6 +194,8 @@ export interface EngineState {
    * deck's tempo fader or tempo-range button, re-armed on the deck's next track load.
    */
   tempoLeadInActive: boolean[];
+  /** Per deck: may unattended automation (Auto DJ) load and drive it? See DeckReservation. */
+  reservations: DeckReservation[];
 }
 
 /** Where hot cue pads get their data from: this app's own analysis, or the track's own embedded tag. */
@@ -195,8 +208,8 @@ export interface EngineSettings {
   crossfaderCurve: CrossfaderCurve;
   /** Refuse to load a new track into a deck that is currently playing. */
   lockPlayingDecks: boolean;
-  /** Which decks sit on the left/right side of the crossfader. */
-  crossfaderAssign: ("left" | "right" | "thru")[];
+  /** Which decks sit on the left/right side of the crossfader (A | THRU | B per channel). */
+  crossfaderAssign: CrossfaderAssign[];
   /** Effect assigned to FX1/FX2/FX3 of each unit (persisted). */
   fxAssign: FxType[][];
   /**
@@ -229,6 +242,27 @@ export function withCueSource(settings: EngineSettings, deck: number, source: Cu
   return next;
 }
 
+/**
+ * Settings saved by older versions → this version's per-deck arrays: cueSource saved as a bare string
+ * becomes one entry per deck, and per-deck arrays saved for two decks are padded to every deck with the
+ * defaults (crossfader: decks A/C left, B/D right). Invalid entries fall back to the default.
+ */
+export function normaliseEngineSettings(s: EngineSettings, deckCount: number): EngineSettings {
+  const n = Math.max(deckCount, DEFAULT_ENGINE_SETTINGS.crossfaderAssign.length);
+  const rawCue = s.cueSource as unknown;
+  const legacyCue: CueSource | null = Array.isArray(rawCue) ? null : rawCue === "embedded" ? "embedded" : "suggested";
+  const cues = Array.isArray(rawCue) ? (rawCue as unknown[]) : [];
+  const cueSource = Array.from({ length: n }, (_, i): CueSource => {
+    const v = legacyCue ?? cues[i];
+    return v === "embedded" || v === "suggested" ? v : (DEFAULT_ENGINE_SETTINGS.cueSource[i] ?? "suggested");
+  });
+  const xa = Array.isArray(s.crossfaderAssign) ? (s.crossfaderAssign as unknown[]) : [];
+  const crossfaderAssign = Array.from({ length: n }, (_, i): CrossfaderAssign =>
+    CROSSFADER_ASSIGNS.includes(xa[i] as CrossfaderAssign) ? (xa[i] as CrossfaderAssign) : (DEFAULT_ENGINE_SETTINGS.crossfaderAssign[i] ?? (i % 2 ? "right" : "left")),
+  );
+  return { ...s, cueSource, crossfaderAssign };
+}
+
 /** Browser/library port used by browser.* actions. Implemented by the library layer. */
 export interface BrowserPort {
   moveSelection(delta: number): void;
@@ -251,7 +285,9 @@ export interface PreparationPort {
 export type EngineEvent =
   | { type: "loadRequested"; deck: number; source: "manual" | "auto-dj" }
   | { type: "trackLoaded"; deck: number; track: TrackInfo; audioHandle: unknown; source: "manual" | "auto-dj" }
-  | { type: "trackUnloaded"; deck: number };
+  | { type: "trackUnloaded"; deck: number }
+  /** A setting changed from inside the engine (e.g. a crossfader assignment from a controller or key): persist it. */
+  | { type: "settingsChanged" };
 
 function initialDeck(index: number): DeckState {
   return {
@@ -409,11 +445,8 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.log = opts.log;
     this.deckCount = opts.deckCount ?? 2;
     this.settings = { ...DEFAULT_ENGINE_SETTINGS, ...opts.settings };
-    // Migrate settings persisted before cueSource became per-deck (a bare string, not an array).
-    if (!Array.isArray(this.settings.cueSource)) {
-      const legacy: CueSource = this.settings.cueSource === "embedded" ? "embedded" : "suggested";
-      this.settings.cueSource = DEFAULT_ENGINE_SETTINGS.cueSource.map(() => legacy);
-    }
+    // Older saved settings: cueSource as a bare string, per-deck arrays saved for two decks.
+    this.settings = normaliseEngineSettings(this.settings, this.deckCount);
     this.state = {
       decks: Array.from({ length: this.deckCount }, (_, i) => initialDeck(i)),
       mixer: {
@@ -437,6 +470,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       masterDeck: null,
       autoEq: Array.from({ length: this.deckCount }, initialAutoEq),
       tempoLeadInActive: Array.from({ length: this.deckCount }, () => true),
+      reservations: Array.from({ length: this.deckCount }, (_, i): DeckReservation => (i < 2 ? "automation" : "manual")),
     };
     this.loadTokens = new Array(this.deckCount).fill(0);
     this.preview = Array.from({ length: this.deckCount }, () => ({ origin: 0, latchPlay: false }));
@@ -499,6 +533,102 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.applyMixer();
     for (let d = 0; d < this.deckCount; d++) this.applyTempo(d, this.state.decks[d].tempo);
   }
+
+  // ───────────────────────────── four-deck mixer / ownership ─────────────────────────────
+
+  /** A | THRU | B for one channel. Persisted by the app via the "settingsChanged" event. */
+  setCrossfaderAssign(deck: number, assign: CrossfaderAssign): void {
+    if (!this.state.decks[deck] || !CROSSFADER_ASSIGNS.includes(assign) || this.settings.crossfaderAssign[deck] === assign) return;
+    const crossfaderAssign = this.settings.crossfaderAssign.slice();
+    crossfaderAssign[deck] = assign;
+    this.settings = { ...this.settings, crossfaderAssign };
+    this.applyMixer();
+    // Settings aren't part of EngineState: publish a fresh snapshot so views re-render.
+    this.state = { ...this.state };
+    this.emit("state", this.state);
+    this.emit("event", { type: "settingsChanged" });
+  }
+
+  getCrossfaderAssign(deck: number): CrossfaderAssign {
+    return this.settings.crossfaderAssign[deck] ?? "thru";
+  }
+
+  private cycleCrossfaderAssign(deck: number): void {
+    const order: CrossfaderAssign[] = ["left", "thru", "right"];
+    this.setCrossfaderAssign(deck, order[(order.indexOf(this.getCrossfaderAssign(deck)) + 1) % order.length]);
+  }
+
+  /**
+   * How a channel reaches the master right now: its crossfader side, the crossfader's gain on it, and its
+   * linear output gain (trim × fader × crossfader, 0 when muted). Pure state — used for ON AIR.
+   */
+  channelRouting(deck: number): { assign: CrossfaderAssign; crossfaderGain: number; outputGain: number } {
+    const mx = this.state.mixer;
+    const c = mx.channels[deck];
+    const [xl, xr] = crossfaderGains(mx.crossfader, this.settings.crossfaderCurve);
+    const assign = this.getCrossfaderAssign(deck);
+    const crossfaderGain = assign === "left" ? xl : assign === "right" ? xr : 1;
+    const outputGain = !c || c.mute ? 0 : faderToGain(c.volume) * crossfaderGain * dbToGain(gainKnobToDb(c.gain));
+    return { assign, crossfaderGain, outputGain };
+  }
+
+  /** Reserve a deck for unattended automation or for manual control only (see DeckReservation). */
+  setDeckReservation(deck: number, reservation: DeckReservation): void {
+    if (!this.state.decks[deck] || this.state.reservations[deck] === reservation) return;
+    const reservations = this.state.reservations.slice();
+    reservations[deck] = reservation;
+    this.state = { ...this.state, reservations };
+    this.emit("state", this.state);
+  }
+
+  /**
+   * The software value (0..1, the same scale a controller sends) behind an absolute action, or null when
+   * the action isn't an absolute control the engine stores. Used by controller soft takeover.
+   */
+  getActionValue(action: string): number | null {
+    const ch = /^mixer\.channel(\d+)\.(gain|eq\.high|eq\.mid|eq\.low|filter|volume)$/.exec(action);
+    if (ch) {
+      const c = this.state.mixer.channels[Number(ch[1]) - 1];
+      if (!c) return null;
+      const byKey: Record<string, number> = { gain: c.gain, "eq.high": c.eqHigh, "eq.mid": c.eqMid, "eq.low": c.eqLow, filter: c.filter, volume: c.volume };
+      return byKey[ch[2]];
+    }
+    const tempo = /^deck(\d+)\.tempo$/.exec(action);
+    if (tempo) {
+      const d = this.state.decks[Number(tempo[1]) - 1];
+      if (!d) return null;
+      const bipolar = this.settings.tempoDownIsFaster ? d.tempo : -d.tempo;
+      return clamp(bipolar / 2 + 0.5, 0, 1);
+    }
+    const stem = /^deck(\d+)\.stem\.(\w+)\.volume$/.exec(action);
+    if (stem) {
+      const d = this.state.decks[Number(stem[1]) - 1];
+      const k = STEM_NAMES.indexOf(stem[2] as StemName);
+      return d && k >= 0 ? d.stems.volume[k] : null;
+    }
+    const mx = this.state.mixer;
+    switch (action) {
+      case "mixer.crossfader": return mx.crossfader;
+      case "mixer.master.level": return mx.masterLevel;
+      case "mixer.headphone.mix": return mx.headMix;
+      case "mixer.headphone.level": return mx.headLevel;
+    }
+    const fx = /^fx\.unit(\d+)\.(knob|mix|knob\.shift|param|slot(\d)\.param)$/.exec(action);
+    if (fx) {
+      const u = this.state.fx[Number(fx[1]) - 1];
+      if (!u) return null;
+      if (fx[2] === "knob" || fx[2] === "mix") return u.mix;
+      if (fx[3]) return u.slots[Number(fx[3]) - 1]?.param ?? null;
+      return u.slots[0]?.param ?? null;
+    }
+    return null;
+  }
+
+  /** Track load timings (request → ready), newest last; for diagnostics. */
+  getLoadStats(): readonly { deck: number; ms: number; at: number; title: string }[] {
+    return this.loadStats;
+  }
+  private loadStats: { deck: number; ms: number; at: number; title: string }[] = [];
 
   // ───────────────────────────── STEMS ─────────────────────────────
 
@@ -609,6 +739,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
    */
   tick(): void {
     this.decayAutoEq();
+    this.handOverStoppedMaster();
     const m = this.state.masterDeck;
     if (m === null) return;
     for (let f = 0; f < this.deckCount; f++) {
@@ -642,17 +773,77 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     return best;
   }
 
-  /** Beat-phase difference follower − master in beats, in [-0.5, 0.5); null when phase can't be compared. */
+  /**
+   * Beat-phase difference follower − master in follower beats, wrapped to half a beat of the faster
+   * deck; null when phase can't be compared. Half/double-time pairs lock too: a double-time follower
+   * puts two beats on every master beat, a half-time follower's beats land on every other master beat.
+   * Phase always comes from each deck's own beat grid (a hand-corrected grid is what's used).
+   */
   phaseError(f: number, m: number): number | null {
     const fd = this.state.decks[f];
     const md = this.state.decks[m];
+    if (!fd || !md) return null;
     const fr = this.followRate(f, m);
-    if (!fd.beatGrid || !md.beatGrid || !fr || fr.multiple !== 1) return null;
+    if (!fd.beatGrid || !md.beatGrid || !fr) return null;
     if (!fd.playing || !md.playing || fd.scratching || md.scratching || fd.jogTouched || md.jogTouched) return null;
     const bf = (this.audio.getPosition(f) - fd.beatGrid.firstBeat) / (60 / fd.beatGrid.bpm);
     const bm = (this.audio.getPosition(m) - md.beatGrid.firstBeat) / (60 / md.beatGrid.bpm);
-    const e = bf - bm;
-    return e - Math.round(e);
+    const k = fr.multiple; // follower beats per master beat at the matched tempo (0.5, 1 or 2)
+    if (k >= 1) {
+      const e = bf - k * bm;
+      return e - Math.round(e);
+    }
+    const em = bf / k - bm; // in master beats
+    return (em - Math.round(em)) * k;
+  }
+
+  /** Follower beats per master beat at the matched tempo (1, or 0.5 / 2 for half/double time), or null. */
+  syncMultiple(f: number, m: number): number | null {
+    return this.followRate(f, m)?.multiple ?? null;
+  }
+
+  /**
+   * Master handover policy (docs/architecture/four-deck-performance-engine.md §11): while the master deck
+   * isn't playing (paused, ended, ejected, being reloaded) and another synced deck is, that deck becomes the
+   * master — an audible one first, then the lowest deck number. Its tempo is already matched, so nothing
+   * jumps. With no synced deck playing, the master stays where it is.
+   */
+  private handOverStoppedMaster(): void {
+    const m = this.state.masterDeck;
+    const md = m === null ? null : this.state.decks[m];
+    if (md && md.status === "ready" && md.playing) return;
+    const next = this.syncedSuccessor(m ?? -1);
+    if (next !== null) this.becomeMaster(next);
+  }
+
+  private syncedSuccessor(except: number): number | null {
+    let best: number | null = null;
+    let bestAudible = false;
+    for (let i = 0; i < this.deckCount; i++) {
+      const d = this.state.decks[i];
+      if (i === except || !d.sync || !d.playing || d.status !== "ready" || !this.baseBpm(i)) continue;
+      const audible = this.channelRouting(i).outputGain > 0.001;
+      if (best === null || (audible && !bestAudible)) {
+        best = i;
+        bestAudible = audible;
+      }
+    }
+    return best;
+  }
+
+  private becomeMaster(deck: number): void {
+    this.patchState({ masterDeck: deck });
+    // Drop whatever small phase correction the follower loop had applied: its matched rate is exact.
+    this.audio.setRate(deck, this.state.decks[deck].rate);
+    this.log.info("engine", `Deck ${deckLetter(deck)} is now the tempo master`);
+  }
+
+  /** Loading a new track onto the master deck must not retempo the synced decks: hand the master on first. */
+  private releaseMasterForLoad(deck: number): void {
+    if (this.state.masterDeck !== deck) return;
+    const next = this.syncedSuccessor(deck);
+    if (next !== null) this.becomeMaster(next);
+    else this.patchState({ masterDeck: null });
   }
 
   /** Training: while locked, SYNC can't be switched on (from any input) and is switched off now. */
@@ -1044,6 +1235,11 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
     this.emit("event", { type: "loadRequested", deck, source });
     const d = this.state.decks[deck];
     if (!d) return;
+    if (source === "auto-dj" && this.state.reservations[deck] === "manual") {
+      this.log.warn("engine", `Deck ${deckLetter(deck)} is reserved for manual control — Auto DJ can't load onto it.`);
+      return;
+    }
+    const requestedAt = performance.now();
     const policy = this.canLoad(track);
     if (!policy.ok) {
       this.log.warn("engine", `Can't load "${track.title}" onto a deck: ${policy.reason ?? "not permitted by its source"}`);
@@ -1080,6 +1276,7 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       const prepared = await this.preparation?.restore(track, bytes, decoded.duration, deck) ?? {};
       if (token !== this.loadTokens[deck]) return;
       track = prepared.track ?? track;
+      this.releaseMasterForLoad(deck);
       this.audio.setPlaying(deck, false);
       this.audio.loadDeck(deck, decoded);
       // A newly loaded track must never inherit the previous track's in-flight Auto EQ cut
@@ -1110,7 +1307,9 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       this.rolls[deck] = null;
       this.applyStems(deck);
       this.applyTempo(deck, this.state.decks[deck].tempo);
-      this.log.info("engine", `Loaded "${track.title}" into deck ${deckLetter(deck)} (${decoded.duration.toFixed(1)} s)`);
+      const ms = performance.now() - requestedAt;
+      this.loadStats = [...this.loadStats.slice(-39), { deck, ms, at: Date.now(), title: track.title }];
+      this.log.info("engine", `Loaded "${track.title}" into deck ${deckLetter(deck)} (${decoded.duration.toFixed(1)} s, ${Math.round(ms)} ms)`);
       this.emit("event", { type: "trackLoaded", deck, track, audioHandle: decoded.handle, source });
     } catch (err) {
       if (token !== this.loadTokens[deck]) return;
@@ -1184,6 +1383,10 @@ export class DJEngine extends Emitter<{ state: EngineState; event: EngineEvent }
       on(`${m}.volume`, (v) => this.patchChannel(i, { volume: v }));
       on(`${m}.cue`, pressed(() => this.patchChannel(i, { pfl: !this.state.mixer.channels[i].pfl })));
       on(`${m}.mute`, pressed(() => this.patchChannel(i, { mute: !this.state.mixer.channels[i].mute })));
+      on(`${m}.xfader.a`, pressed(() => this.setCrossfaderAssign(i, "left")));
+      on(`${m}.xfader.thru`, pressed(() => this.setCrossfaderAssign(i, "thru")));
+      on(`${m}.xfader.b`, pressed(() => this.setCrossfaderAssign(i, "right")));
+      on(`${m}.xfader.cycle`, pressed(() => this.cycleCrossfaderAssign(i)));
 
       on(`browser.load.deck${i + 1}`, pressed(() => {
         const t = this.browser.getSelected();

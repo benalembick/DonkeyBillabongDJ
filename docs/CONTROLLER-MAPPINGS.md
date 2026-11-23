@@ -68,6 +68,30 @@ Source: `src/controllers/profiles/pioneer-ddj-sb.ts`. Export it as JSON from Set
 - tempo slider direction;
 - whether the controller's 4 output channels are visible to Chromium.
 
+## Four decks: deck layers and soft takeover
+
+The DDJ-SB has two channels and no dedicated deck 3/4 buttons. In **4 DECK** mode each side switches between two decks:
+
+| Side | Decks |
+|---|---|
+| Left | A ↔ C |
+| Right | B ↔ D |
+
+Each side switches with SHIFT + KEY LOCK (printed **TEMPO RANGE**, note `0x60` on channel 1/2). This is the same message Mixxx's 4-deck DDJ-SB mapping uses (`deckToggleButton`). LED `0x60` lights while the side is on deck C/D. In 2 DECK mode the button stays TEMPO RANGE.
+
+- **Mappings describe hardware.** The left side's controls stay bound to `deck1.*` / `mixer.channel1.*`, the right side's to `deck2.*` / `mixer.channel2.*`. `src/controllers/layers.ts` rewrites them to the selected deck at run time, and rewrites LED feedback keys the same way.
+- **Globals are never routed:** crossfader, headphone mix, browse, the two FX units and the sampler.
+- **Pad banks are separate MIDI notes,** so layers and banks are independent.
+- **`fourDeckAction`:** an optional `InputBinding` field giving the action used in 4 DECK mode, when Settings → "SHIFT + KEY LOCK switches deck layers" is on.
+- **Layer actions:** `controller.layer.left.toggle`, `controller.layer.left.deck1`, `controller.layer.left.deck3` and the right-side equivalents. Map them from any controller, bind them to keys (defaults Ctrl+Shift+1 / Ctrl+Shift+2), or use the on-screen selectors in the four-deck bar.
+- **Held buttons:** a release goes to the deck its press went to.
+- **Soft takeover** (`src/controllers/softTakeover.ts`) applies to every absolute control: faders, knobs, the tempo slider, the crossfader and FX knobs.
+  - **When a control waits:** after a layer switch, after the value changed elsewhere (mouse, Auto DJ, Transition Lab…) and after a reconnect.
+  - **When it takes over:** within the pickup tolerance, or when it moves across the value.
+  - **Modes:** Pickup (default), Relative scaling, Off (Settings → Four decks).
+  - **On screen:** ghost needles and markers show where the hardware is.
+- The MIDI monitor shows the routed action when a layer changed it.
+
 ## Mixxx import (compatibility layer)
 
 Use Settings → Controllers → "Import Mixxx mapping (.xml)". The importer:

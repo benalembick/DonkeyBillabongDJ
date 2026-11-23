@@ -74,6 +74,8 @@ interface DeckJob {
   runSent: boolean;
   /** Cache miss in Pre-analyse mode: separation starts when STEMS is switched on. */
   awaitingUser: boolean;
+  /** Automatic separation held back while enough decks play (live playback first); starts when that ends or STEMS is switched on. */
+  deferredAuto?: boolean;
   regionsDone: number;
   regions: number;
   started: number;
@@ -131,6 +133,14 @@ export class StemService extends Emitter<Events> {
   private readonly audio: AudioEngine;
   private readonly log: EventLog;
   private readonly bridge: StemBridge | null;
+
+  /** Library pre-analysis and automatic deck separation wait while this returns a reason (live playback first). */
+  private deferWhile: () => string | null = () => null;
+  /** Automatic deck separations paused for live playback; they resume (from the partial cache) when it allows. */
+  private pausedForPlayback = new Map<number, { track: TrackInfo; source: "manual" | "auto-dj" }>();
+  setDeferral(fn: () => string | null): void {
+    this.deferWhile = fn;
+  }
 
   constructor(engine: DJEngine, audio: AudioEngine, log: EventLog, bridge: StemBridge | null) {
     super();
@@ -196,9 +206,16 @@ export class StemService extends Emitter<Events> {
         const j = this.deckJobs[i];
         if (d.stems.enabled && j?.awaitingUser) {
           j.awaitingUser = false;
+          j.deferredAuto = false;
+          void this.startRun(j);
+        } else if (j?.deferredAuto && !this.deferWhile()) {
+          // Fewer decks playing now: the held-back automatic separation goes ahead.
+          j.deferredAuto = false;
+          j.awaitingUser = false;
           void this.startRun(j);
         }
       });
+      this.yieldToPlayback(s.decks);
     });
     void this.refresh();
     void this.refreshIndex();
@@ -392,7 +409,8 @@ export class StemService extends Emitter<Events> {
           if (this.shouldAutoRun(job)) void this.startRun(job);
           else {
             job.awaitingUser = true;
-            this.engine.setStemStatus(job.deck, { status: "waiting", message: "Switch STEMS on to analyse this track" });
+            job.deferredAuto = this.autoHeldBack(job);
+            this.engine.setStemStatus(job.deck, { status: "waiting", message: job.deferredAuto ? `STEMS analysis waits while ${this.deferWhile()} — switch STEMS on to start it now` : "Switch STEMS on to analyse this track" });
           }
         } else {
           this.initDeck(job, m.total!, m.stride!, m.regions!);
@@ -404,6 +422,7 @@ export class StemService extends Emitter<Events> {
             if (this.shouldAutoRun(job)) void this.startRun(job); // continue where it stopped
             else {
               job.awaitingUser = true;
+              job.deferredAuto = this.autoHeldBack(job);
               this.engine.setStemStatus(job.deck, { status: "waiting", message: "Switch STEMS on to finish analysing this track" });
             }
           }
@@ -447,7 +466,43 @@ export class StemService extends Emitter<Events> {
     // this track — wait for the DJ to actually switch STEMS on for that deck instead.
     if (job.source === "auto-dj") return false;
     const mode = this.st.settings.mode;
-    return mode === "automatic" || mode === "realtime";
+    if (mode !== "automatic" && mode !== "realtime") return false;
+    // Live playback first: with several decks playing, separating a track nobody switched STEMS on for
+    // waits (it starts as soon as fewer decks play, or the moment STEMS is switched on for that deck).
+    return !this.deferWhile();
+  }
+
+  /**
+   * Live playback first: an automatic separation already running for a deck nobody switched STEMS on for
+   * pauses while enough decks play (the cancelled job keeps its finished regions in the cache), and
+   * resumes from there once fewer decks play or STEMS is switched on. Decks with STEMS on never pause.
+   */
+  private yieldToPlayback(decks: readonly { stems: { enabled: boolean }; track: TrackInfo | null; status: string }[]): void {
+    const reason = this.deferWhile();
+    if (reason) {
+      decks.forEach((d, i) => {
+        const j = this.deckJobs[i];
+        if (!j || !j.runSent || d.stems.enabled || !j.persist || (j.regions > 0 && j.regionsDone >= j.regions)) return;
+        this.pausedForPlayback.set(i, { track: j.track, source: j.source });
+        this.cancelDeck(i);
+        this.engine.setStemStatus(i, { status: "waiting", message: `STEMS analysis paused while ${reason} — switch STEMS on to continue now` });
+        this.log.info("stems", `Deck ${deckLetter(i)}: STEMS analysis paused while ${reason}`);
+      });
+    }
+    for (const [i, p] of [...this.pausedForPlayback]) {
+      const d = decks[i];
+      if (!d || d.status !== "ready" || d.track?.ref !== p.track.ref) { this.pausedForPlayback.delete(i); continue; }
+      if (reason && !d.stems.enabled) continue;
+      this.pausedForPlayback.delete(i);
+      const buf = this.loadedBuffers[i];
+      if (buf) void this.onDeckLoaded(i, p.track, buf, p.source);
+    }
+  }
+
+  /** Would this job run automatically if it weren't for the playback deferral? */
+  private autoHeldBack(job: DeckJob): boolean {
+    const mode = this.st.settings.mode;
+    return job.source !== "auto-dj" && (mode === "automatic" || mode === "realtime") && !!this.deferWhile();
   }
 
   private async onDeckLoaded(deck: number, track: TrackInfo, buffer: AudioBuffer, source: "manual" | "auto-dj" = "manual"): Promise<void> {
@@ -575,6 +630,9 @@ export class StemService extends Emitter<Events> {
     this.libRunning = true;
     try {
       while (this.libQueue.length && this.st.available) {
+        // Live playback first: library separation competes with deck separation for the same worker.
+        for (let reason = this.deferWhile(); reason; reason = this.deferWhile()) await new Promise((r) => setTimeout(r, 1000));
+        if (!this.libQueue.length || !this.st.available) break;
         const ref = this.libQueue.shift()!;
         this.patchStatus({ libraryQueue: this.libQueue.length + 1 });
         try {

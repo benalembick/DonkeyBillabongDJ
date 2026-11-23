@@ -23,6 +23,14 @@ import { WaveStylePicker } from "./WaveStylePicker";
 import { LightingWorkspace } from "./lighting/LightingWorkspace";
 import { ProductionStudioWorkspace } from "./ProductionStudioWorkspace";
 import { SetStudioWorkspace } from "./setstudio/SetStudioWorkspace";
+import { CompactDeck, DeckModeSwitch, FourDeckBar, MicroDeck, useWorkspace } from "./FourDeck";
+import { useMediaQuery } from "./workspaceHooks";
+import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
+import { keyBindingLabel } from "../input/keyboard";
+
+/** 4 DECK mode on a narrow or short window: decks A/B use the compact deck design so all four decks and channels fit. */
+const SMALL_FOUR_DECK = "(max-width: 1279px), (max-height: 819px)";
+import { deckLetter } from "../core/actions";
 
 /** Contains UI crashes to one panel; the engine/audio keep running regardless. */
 class Boundary extends Component<{ name: string; children: ReactNode }, { error: Error | null }> {
@@ -79,7 +87,7 @@ function AudioStatusBadge() {
   );
 }
 
-const TOOL_TABS = ["Controller events", "Controller test", "MIDI monitor", "Diagnostics", "Settings", "About"] as const;
+const TOOL_TABS = ["Controller events", "Controller test", "MIDI monitor", "Keyboard shortcuts", "Diagnostics", "Settings", "About"] as const;
 type ToolTab = (typeof TOOL_TABS)[number];
 
 /** Transient notices for warnings/errors (e.g. "deck is playing", "Spotify audio can't be mixed"). */
@@ -133,6 +141,8 @@ function LayoutSwitch() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { mode, zoomSeconds } = useLayout();
+  const app = useApp();
+  const ws = useWorkspace();
   const canSave = engine.decks.slice(0, 2).every((d) => d.status === "ready" && d.track);
   const saveManual = async () => {
     setSaving(true);
@@ -146,6 +156,7 @@ function LayoutSwitch() {
   useDismiss(open, useCallback(() => setOpen(false), []), menuRef);
   return (
     <div className="layout-actions">
+      <DeckModeSwitch />
       <div className="view-menu-wrap" ref={menuRef}>
         <button className={`view-menu-trigger ${open ? "active" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}><span>▣</span> VIEW</button>
         {open && <div className="view-popover" role="menu">
@@ -155,6 +166,12 @@ function LayoutSwitch() {
           </div>
           <b>WAVEFORM STYLE</b>
           <WaveStylePicker compact />
+          {ws.deckMode === 4 && <>
+            <b>4 DECK MIXER ORDER</b>
+            <div className="layout-switch" role="group" aria-label="Mixer channel order">
+              {(["3-1-2-4", "1-2-3-4"] as const).map((o) => <button key={o} className={ws.mixerOrder === o ? "active" : ""} title={o === "3-1-2-4" ? "C A | B D — channels follow the controller sides" : "A B | C D"} onClick={() => app.workspace.set({ mixerOrder: o })}>{o.split("-").map((n) => deckLetter(Number(n) - 1)).join(" ")}</button>)}
+            </div>
+          </>}
           <div className="view-zoom"><span>WAVEFORM ZOOM</span><button className="tiny" onClick={() => zoom(-1)} aria-label="Zoom in">＋</button><output>{zoomSeconds}s</output><button className="tiny" onClick={() => zoom(1)} aria-label="Zoom out">－</button></div>
         </div>}
       </div>
@@ -168,12 +185,13 @@ function LayoutSwitch() {
 
 const UTILITIES: { tool: ToolTab; icon: string; label: string; title: string; extra?: string }[] = [
   { tool: "Controller events", icon: "🎛", label: "Controller", title: "Controller events, test and MIDI monitor", extra: "open-tools" },
+  { tool: "Keyboard shortcuts", icon: "⌨", label: "Shortcuts", title: "View all active keyboard shortcuts" },
   { tool: "Diagnostics", icon: "◫", label: "Diagnostics", title: "Audio, engine and performance diagnostics" },
   { tool: "Settings", icon: "⚙", label: "Settings", title: "Audio output, library and app settings" },
   { tool: "About", icon: "ⓘ", label: "About", title: "Version, updates and features" },
 ];
 
-/** Controller / Diagnostics / Settings / About behind one icon at the far right of the top bar. */
+/** Shortcuts, Controller, Diagnostics, Settings and About behind one icon at the far right of the top bar. */
 function UtilityMenu({ onOpen }: { onOpen: (t: ToolTab) => void }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ top: 48, right: 10 });
@@ -187,7 +205,7 @@ function UtilityMenu({ onOpen }: { onOpen: (t: ToolTab) => void }) {
   };
   return (
     <div className="utility-menu-wrap" ref={ref}>
-      <button className={`utility-menu-trigger${open ? " active" : ""}`} aria-haspopup="menu" aria-expanded={open} aria-label="Tools: Controller, Diagnostics, Settings, About" title="Controller · Diagnostics · Settings · About" onClick={toggle}>
+      <button className={`utility-menu-trigger${open ? " active" : ""}`} aria-haspopup="menu" aria-expanded={open} aria-label="Tools: Shortcuts, Controller, Diagnostics, Settings, About" title="Shortcuts · Controller · Diagnostics · Settings · About" onClick={toggle}>
         <ToolsIcon />
       </button>
       {/* Always mounted (just hidden) so smoke tests can still click .open-tools / the last utility-button directly. */}
@@ -268,6 +286,7 @@ function ToolsOverlay({ tab, setTab, onClose }: { tab: ToolTab; setTab: (t: Tool
           {tab === "Controller events" && <LiveEvents />}
           {tab === "Controller test" && <ControllerTest />}
           {tab === "MIDI monitor" && <MidiMonitor />}
+          {tab === "Keyboard shortcuts" && <KeyboardShortcutsPanel />}
           {tab === "Diagnostics" && <Diagnostics />}
           {tab === "Settings" && <Settings />}
           {tab === "About" && <About />}
@@ -280,10 +299,12 @@ function ToolsOverlay({ tab, setTab, onClose }: { tab: ToolTab; setTab: (t: Tool
 /** Drag handle between the performance area and the library (height saved per layout). */
 function Splitter({ mode, maximized, onToggleMaximize }: { mode: LayoutMode; maximized: boolean; onToggleMaximize: () => void }) {
   const start = useRef<{ y: number; h: number } | null>(null);
+  const shortcut = useApp().keyboard.bindingFor("workspace.bottomPanel.toggle");
+  const shortcutLabel = shortcut ? keyBindingLabel(shortcut) : null;
   return (
     <div
       className={`splitter${maximized ? " maximized" : ""}`}
-      title={maximized ? "Library focus view is open (double-click to restore)" : "Drag to resize the library (double-click to expand)"}
+      title={maximized ? `Bottom panel is expanded (double-click${shortcutLabel ? ` or ${shortcutLabel}` : ""} to restore)` : `Drag to resize the bottom panel (double-click${shortcutLabel ? ` or ${shortcutLabel}` : ""} to expand)`}
       onPointerDown={(e) => {
         if (maximized || e.target !== e.currentTarget) return;
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -299,36 +320,67 @@ function Splitter({ mode, maximized, onToggleMaximize }: { mode: LayoutMode; max
       onDoubleClick={(e) => { if (e.target === e.currentTarget) onToggleMaximize(); }}
     >
       {/* A slim pill centred on the line (the row stays 6 px): the obvious way to give the track list the screen. */}
-      <button className="panel-maximize" aria-label={maximized ? "Show the decks" : "Expand the track list"} aria-pressed={maximized} title={maximized ? "Show the decks again (Esc, or double-click the bar)" : "Give the track list the full screen (or double-click the bar)"} onPointerDown={(e) => e.stopPropagation()} onClick={onToggleMaximize}>
+      <button className="panel-maximize" aria-label={maximized ? "Show the decks" : "Expand the bottom panel"} aria-pressed={maximized} title={maximized ? `Show the decks again (Esc, double-click${shortcutLabel ? `, or ${shortcutLabel}` : ""})` : `Expand the bottom panel (double-click${shortcutLabel ? ` or ${shortcutLabel}` : ""})`} onPointerDown={(e) => e.stopPropagation()} onClick={onToggleMaximize}>
         <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{maximized ? <path d="m4 4 4 4 4-4M4 9l4 4 4-4" /> : <path d="m4 12 4-4 4 4M4 7l4-4 4 4" />}</svg>
         <span>{maximized ? "SHOW DECKS" : "EXPAND"}</span>
       </button>
-      <span className="splitter-hint" aria-hidden="true">{maximized ? "Esc or double-click to show the decks" : "Drag to resize · double-click to expand"}</span>
+      <span className="splitter-hint" aria-hidden="true">{maximized ? `Esc${shortcutLabel ? ` or ${shortcutLabel}` : ""} to show decks` : `Drag to resize · double-click${shortcutLabel ? ` · ${shortcutLabel}` : ""} to expand`}</span>
+    </div>
+  );
+}
+
+/**
+ * One side of the deck area: the principal deck (A left, B right) and its controller-side partner
+ * (C left, D right). 4 DECK: the partner in its chosen density. 2 DECK: the partner is hidden — unless it
+ * is playing, when a slim indicator keeps it visible and controllable (never silently hidden).
+ */
+function DeckColumn({ side, variant: preferred }: { side: 0 | 1; variant: "full" | "compact" }) {
+  const ws = useWorkspace();
+  const s = useEngineState();
+  const four = ws.deckMode === 4;
+  const small = useMediaQuery(SMALL_FOUR_DECK);
+  const variant = four && small ? "compact" : preferred;
+  const partner = side + 2;
+  const p = s.decks[partner];
+  const density = ws.density[side];
+  return (
+    <div className={`deck-col${four ? ` four partner-${density}` : ""}`}>
+      <Boundary name={`Deck ${deckLetter(side)}`}><Deck deck={side} variant={variant} fourDeck={four} /></Boundary>
+      {four && p && (
+        <Boundary name={`Deck ${deckLetter(partner)}`}>
+          {density === "full" ? <Deck deck={partner} variant={variant} fourDeck /> : density === "compact" ? <CompactDeck deck={partner} /> : <MicroDeck deck={partner} />}
+        </Boundary>
+      )}
+      {!four && p?.playing && <Boundary name={`Deck ${deckLetter(partner)}`}><MicroDeck deck={partner} indicator /></Boundary>}
     </div>
   );
 }
 
 function Stage({ mode }: { mode: LayoutMode }) {
+  const ws = useWorkspace();
+  const four = ws.deckMode === 4;
   if (mode === "vertical") {
     return (
-      <main className="stage vertical">
-        <Boundary name="Deck A"><Deck deck={0} /></Boundary>
+      <main className={`stage vertical${four ? " four" : ""}`}>
+        {four && <Boundary name="Four-deck bar"><FourDeckBar /></Boundary>}
+        <DeckColumn side={0} variant="full" />
         <div className="center-col">
           <Boundary name="Waveforms"><WaveformStack orientation="vertical" /></Boundary>
           <Boundary name="Mixer"><Mixer dense /></Boundary>
         </div>
-        <Boundary name="Deck B"><Deck deck={1} /></Boundary>
+        <DeckColumn side={1} variant="full" />
       </main>
     );
   }
   const compact = mode === "classic";
   return (
-    <main className={`stage ${mode}`}>
+    <main className={`stage ${mode}${four ? " four" : ""}`}>
       <Boundary name="Waveforms"><WaveformStack orientation="horizontal" /></Boundary>
-      <div className="deck-row-3">
-        <Boundary name="Deck A"><Deck deck={0} variant={compact ? "compact" : "full"} /></Boundary>
+      {four && <Boundary name="Four-deck bar"><FourDeckBar /></Boundary>}
+      <div className={`deck-row-3${four ? " four" : ""}`}>
+        <DeckColumn side={0} variant={compact ? "compact" : "full"} />
         <Boundary name="Mixer"><Mixer dense={compact} /></Boundary>
-        <Boundary name="Deck B"><Deck deck={1} variant={compact ? "compact" : "full"} /></Boundary>
+        <DeckColumn side={1} variant={compact ? "compact" : "full"} />
       </div>
     </main>
   );
@@ -337,6 +389,11 @@ function Stage({ mode }: { mode: LayoutMode }) {
 function Shell() {
   const [tool, setTool] = useState<ToolTab | null>(null);
   const [lowerMaximized, setLowerMaximized] = useState(false);
+  useEffect(() => {
+    const toggle = () => setLowerMaximized((value) => !value);
+    window.addEventListener("dbdj:toggle-bottom-panel", toggle);
+    return () => window.removeEventListener("dbdj:toggle-bottom-panel", toggle);
+  }, []);
   // Other parts of the UI (About page, Practice home) can open an area: dispatch "dbdj:navigate".
   useEffect(() => {
     const go = (e: Event) => {

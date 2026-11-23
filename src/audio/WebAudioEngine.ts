@@ -4,8 +4,12 @@
  * Graph per deck:
  *   DeckWorklet → trim → EQ low/mid/high → HPF → LPF ─┬─→ fader/xfader gain → meter → master bus
  *                                                     └─→ PFL send → cue bus
- * Master bus → master gain → [stereo: destination 1/2]
- *                            [quad:   destination 1/2, headphone mix → destination 3/4]
+ * Master bus → master gain → clip guard → [stereo: destination 1/2]
+ *                                         [quad:   destination 1/2]
+ *               master gain → headphone mix (with the cue bus) → [quad: destination 3/4]
+ *
+ * Any number of decks (four in the app): each has its own chain; channels sum on the master bus with no
+ * automatic gain changes. The clip guard (clipGuard.ts) is linear below -1 dBFS and soft-limits above.
  */
 import deckProcessorUrl from "./deck-processor.ts?worker&url";
 import type {
@@ -23,6 +27,28 @@ import { DEFAULT_AUDIO_CONFIG } from "../core/engine/types";
 import { FxSlot, INSERT_TYPES } from "./fx";
 import { aiffToWav, isAiff } from "./aiff";
 import { EQ_HIGH_HZ, EQ_LOW_HZ, EQ_MID_HZ } from "../core/engine/mixerMath";
+import { CLIP_KNEE, CLIP_RANGE, clipGuardCurve } from "./clipGuard";
+
+const CLIP_CURVE = clipGuardCurve();
+
+/** Runtime audio health for diagnostics. Fields are null when this runtime doesn't expose them. */
+export interface AudioPerformance {
+  /** Chromium AudioContext.renderCapacity (render thread load), when available. */
+  renderCapacity: { averageLoad: number; peakLoad: number; underrunRatio: number } | null;
+  /** Chromium AudioContext.playbackStats (glitches reported by the audio service), when available. */
+  playbackStats: { underrunEvents: number; underrunDurationMs: number; totalDurationS: number } | null;
+  /**
+   * Estimate: windows in which the audio clock advanced 30 ms+ less than the wall clock — the renderer
+   * starved (an underrun / dropout). Present in every runtime.
+   */
+  clockStalls: number;
+  clockStallMs: number;
+  /** Seconds the stall check has been running. */
+  monitoredS: number;
+  /** Clip guard on, and how many times the master peak entered it (rising edges seen by the meters). */
+  clipGuard: boolean;
+  clipGuardEpisodes: number;
+}
 
 const PARAM_SMOOTH_S = 0.008;
 
@@ -86,6 +112,19 @@ export class WebAudioEngine implements AudioEngine {
   private meterBuf = new Float32Array(1024);
   private lastError: string | undefined;
   private starting: Promise<void> | null = null;
+  private clipShaper: WaveShaperNode | null = null;
+  private clipGuardOn = true;
+  private perf = {
+    timer: null as ReturnType<typeof setInterval> | null,
+    lastWall: 0,
+    lastAudio: 0,
+    stalls: 0,
+    stallMs: 0,
+    since: 0,
+    capacity: null as AudioPerformance["renderCapacity"],
+    clipEpisodes: 0,
+    inClip: false,
+  };
 
   constructor(deckCount = 2, config: AudioConfig = DEFAULT_AUDIO_CONFIG) {
     this.deckCount = deckCount;
@@ -191,6 +230,7 @@ export class WebAudioEngine implements AudioEngine {
       await this.applySink(ctx);
       await ctx.audioWorklet.addModule(deckProcessorUrl);
       this.buildGraph(ctx);
+      this.startPerf(ctx);
       await ctx.resume().catch(() => undefined); // may stay suspended in a browser until a user gesture
       this.lastError = undefined;
     } catch (err) {
@@ -228,6 +268,8 @@ export class WebAudioEngine implements AudioEngine {
     }
     this.decks = [];
     this.ctx = null;
+    if (this.perf.timer) clearInterval(this.perf.timer);
+    this.perf.timer = null;
     await ctx.close().catch(() => undefined);
   }
 
@@ -247,6 +289,16 @@ export class WebAudioEngine implements AudioEngine {
     this.masterMeter.fftSize = 1024;
     masterBus.connect(this.masterGain);
     this.masterGain.connect(this.masterMeter);
+    // Clip guard on the speaker output (the meter above reads the unprotected peak).
+    const guardIn = ctx.createGain();
+    guardIn.gain.value = 1 / CLIP_RANGE;
+    const shaper = ctx.createWaveShaper();
+    shaper.oversample = "none"; // no added latency
+    shaper.curve = this.clipGuardOn ? CLIP_CURVE : null;
+    const guardOut = ctx.createGain();
+    guardOut.gain.value = CLIP_RANGE;
+    this.masterGain.connect(guardIn).connect(shaper).connect(guardOut);
+    this.clipShaper = shaper;
 
     if (quad) {
       const dest = ctx.destination;
@@ -255,7 +307,7 @@ export class WebAudioEngine implements AudioEngine {
       dest.channelInterpretation = "discrete";
       const merger = ctx.createChannelMerger(4);
       const mSplit = ctx.createChannelSplitter(2);
-      this.masterGain.connect(mSplit);
+      guardOut.connect(mSplit);
       mSplit.connect(merger, 0, 0);
       mSplit.connect(merger, 1, 1);
 
@@ -273,7 +325,7 @@ export class WebAudioEngine implements AudioEngine {
       merger.connect(dest);
     } else {
       this.headCue = this.headMaster = this.headLevel = null;
-      this.masterGain.connect(ctx.destination);
+      guardOut.connect(ctx.destination);
     }
 
     this.decks = [];
@@ -707,7 +759,18 @@ export class WebAudioEngine implements AudioEngine {
     return a;
   }
 
+  private levelsCache: { at: number; value: { channels: number[]; master: number } } | null = null;
+
+  /** Peak levels; cached for a few ms so many meters/badges in one frame cost one analyser read each. */
   getLevels(): { channels: number[]; master: number } {
+    const now = performance.now();
+    if (this.levelsCache && now - this.levelsCache.at < 8) return this.levelsCache.value;
+    const value = this.readLevels();
+    this.levelsCache = { at: now, value };
+    return value;
+  }
+
+  private readLevels(): { channels: number[]; master: number } {
     const peak = (a: AnalyserNode | null | undefined): number => {
       if (!a) return 0;
       const buf = this.meterBuf.length === a.fftSize ? this.meterBuf : (this.meterBuf = new Float32Array(a.fftSize));
@@ -719,6 +782,70 @@ export class WebAudioEngine implements AudioEngine {
       }
       return p;
     };
-    return { channels: this.decks.map((g) => peak(g.meter)), master: peak(this.masterMeter) };
+    const master = peak(this.masterMeter);
+    const inClip = master > CLIP_KNEE;
+    if (inClip && !this.perf.inClip) this.perf.clipEpisodes++;
+    this.perf.inClip = inClip;
+    return { channels: this.decks.map((g) => peak(g.meter)), master };
+  }
+
+  // ─────────────────────────── protection & diagnostics ───────────────────────────
+
+  /** Master clip protection on/off (on by default; off = the output hard-clips like before). */
+  setClipGuard(on: boolean): void {
+    this.clipGuardOn = on;
+    if (this.clipShaper) this.clipShaper.curve = on ? CLIP_CURVE : null;
+  }
+
+  getPerformance(): AudioPerformance {
+    const ctx = this.ctx as (AudioContext & { playbackStats?: { underrunEvents?: number; underrunDuration?: number; totalDuration?: number } }) | null;
+    const ps = ctx?.playbackStats;
+    return {
+      renderCapacity: this.perf.capacity,
+      playbackStats: ps && typeof ps.underrunEvents === "number"
+        ? { underrunEvents: ps.underrunEvents, underrunDurationMs: (ps.underrunDuration ?? 0) * 1000, totalDurationS: ps.totalDuration ?? 0 }
+        : null,
+      clockStalls: this.perf.stalls,
+      clockStallMs: Math.round(this.perf.stallMs),
+      monitoredS: this.perf.since ? Math.round((performance.now() - this.perf.since) / 1000) : 0,
+      clipGuard: this.clipGuardOn,
+      clipGuardEpisodes: this.perf.clipEpisodes,
+    };
+  }
+
+  private startPerf(ctx: AudioContext): void {
+    type Capacity = EventTarget & { start?: (o: { updateInterval: number }) => void };
+    const rc = (ctx as AudioContext & { renderCapacity?: Capacity }).renderCapacity;
+    if (rc && typeof rc.start === "function") {
+      try {
+        rc.addEventListener("update", (e) => {
+          const u = e as Event & { averageLoad?: number; peakLoad?: number; underrunRatio?: number };
+          this.perf.capacity = { averageLoad: u.averageLoad ?? 0, peakLoad: u.peakLoad ?? 0, underrunRatio: u.underrunRatio ?? 0 };
+        });
+        rc.start({ updateInterval: 1 });
+      } catch {
+        /* not available in this runtime */
+      }
+    }
+    if (this.perf.timer) clearInterval(this.perf.timer);
+    this.perf.lastWall = 0;
+    this.perf.since = this.perf.since || performance.now();
+    this.perf.timer = setInterval(() => {
+      if (this.ctx !== ctx) return;
+      const wall = performance.now() / 1000;
+      const audio = ctx.currentTime;
+      if (ctx.state === "running" && this.perf.lastWall) {
+        // The audio clock counts rendered frames; if rendering starves, it falls behind the wall clock.
+        const lag = wall - this.perf.lastWall - (audio - this.perf.lastAudio);
+        if (lag > 0.03) {
+          this.perf.stalls++;
+          this.perf.stallMs += lag * 1000;
+        }
+      }
+      if (ctx.state === "running") {
+        this.perf.lastWall = wall;
+        this.perf.lastAudio = audio;
+      } else this.perf.lastWall = 0;
+    }, 2000);
   }
 }

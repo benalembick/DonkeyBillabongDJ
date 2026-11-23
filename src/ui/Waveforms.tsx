@@ -23,6 +23,10 @@ import type { StemEnvelopes } from "../stems/StemService";
 import { transitionRegion } from "../autodj/transition";
 import { useGridEditorDeck } from "./gridEditorStore";
 import { PHRASE_BARS, phraseOffsetBars } from "../preparation/beatGrid";
+import { useEngineState } from "./context";
+import { deckCssLetter } from "./deckTheme";
+import { useWorkspace } from "./workspaceHooks";
+import { workspaceDecks } from "../workspace/WorkspaceStore";
 
 
 /** Draw-time stats for diagnostics (ms per waveform frame). */
@@ -525,20 +529,63 @@ export function OverviewWaveform({ deck }: { deck: number }) {
   );
 }
 
-/** Two decks' scrolling waveforms, aligned on the same playhead (for beat-matching by eye). */
+/**
+ * The workspace's decks' scrolling waveforms, aligned on the same playhead (for beat-matching by eye):
+ * A/B in 2 DECK mode, A–D stacked in 4 DECK mode. Every lane draws its deck at that deck's real tempo
+ * (the same listening-time scale for all), so synced decks line up and unsynced decks visibly don't.
+ * In 4 DECK mode the lane label collapses/expands the lane; empty C/D lanes stay slim until loaded.
+ */
 export function WaveformStack({ orientation }: { orientation: "horizontal" | "vertical" }) {
-  const labels = [0, 1];
+  const ws = useWorkspace();
+  const s = useEngineState();
+  const { workspace } = useApp();
+  const decks = workspaceDecks(ws);
+  const four = decks.length > 2;
+  const slim = (deck: number) => four && (ws.laneCollapsed[deck] || (deck >= 2 && s.decks[deck]?.status === "empty"));
+  const tracks = decks.map((deck) => (slim(deck) ? "18px" : "minmax(0, 1fr)")).join(" ");
   return (
-    <div className={`wave-stack ${orientation}`}>
-      {labels.map((deck) => (
-        <div key={deck} className={`wave-lane deck-${deckLetter(deck).toLowerCase()}`}>
-          <span className="wave-label">{deckLetter(deck)}</span>
-          <WaveModeToggle />
-          <ScrollingWaveform deck={deck} orientation={orientation} />
-          <BarCounter deck={deck} />
+    <div className={`wave-stack ${orientation}${four ? " four" : ""}`} style={four ? (orientation === "horizontal" ? { gridTemplateRows: tracks } : { gridTemplateColumns: tracks }) : undefined}>
+      {decks.map((deck) => (
+        <div key={deck} className={`wave-lane deck-${deckCssLetter(deck)}${slim(deck) ? " collapsed" : ""}`}>
+          {four ? (
+            <button
+              className="wave-label"
+              aria-expanded={!slim(deck)}
+              onClick={() => workspace.setLaneCollapsed(deck, !ws.laneCollapsed[deck])}
+              title={ws.laneCollapsed[deck] ? `Show deck ${deckLetter(deck)}'s waveform lane` : `Collapse deck ${deckLetter(deck)}'s waveform lane`}
+            >
+              {deckLetter(deck)}
+            </button>
+          ) : (
+            <span className="wave-label">{deckLetter(deck)}</span>
+          )}
+          {slim(deck) ? (
+            <span className="lane-slim-title">{s.decks[deck]?.track?.title ?? (s.decks[deck]?.status === "empty" ? "empty" : "")}</span>
+          ) : (
+            <>
+              {four && <LaneSyncTag deck={deck} />}
+              {/* One STD/STEM switch is enough (it's global); with four slim lanes only the first carries it. */}
+              {(!four || deck === decks.find((d) => !slim(d))) && <WaveModeToggle />}
+              <ScrollingWaveform deck={deck} orientation={orientation} />
+              <BarCounter deck={deck} />
+            </>
+          )}
         </div>
       ))}
     </div>
+  );
+}
+
+/** MASTER / SYNC / FREE — whether a lane's beats are locked to the master or running on their own. */
+function LaneSyncTag({ deck }: { deck: number }) {
+  const s = useEngineState();
+  const d = s.decks[deck];
+  if (!d || d.status !== "ready") return null;
+  const tag = s.masterDeck === deck ? "MASTER" : d.sync ? "SYNC" : "FREE";
+  return (
+    <span className={`lane-sync ${tag.toLowerCase()}`} title={tag === "FREE" ? "Not synced: this lane shows the deck's own tempo and phase" : tag === "SYNC" ? "Synced to the master: tempo and beat phase locked" : "Tempo master"}>
+      {tag}
+    </span>
   );
 }
 

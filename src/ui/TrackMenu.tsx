@@ -8,6 +8,7 @@ import { PlaylistActions } from "./PlaylistPanel";
 import { useMenuPosition } from "./useMenuPosition";
 import { openStudio } from "./setstudio/nav";
 import { fixGridFor } from "./gridEditorStore";
+import { useWorkspace } from "./workspaceHooks";
 
 export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }: {
   x: number;
@@ -23,6 +24,7 @@ export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }:
   const app = useApp(), { engine, stems, platform, analysis, library, production, log } = app;
   const libraryState = useLibraryState();
   const s = useEngineState();
+  const ws = useWorkspace();
   const stemStatus = useStemStatus();
   useEffect(() => {
     const close = (e?: Event) => { if (e?.target instanceof Element && e.target.closest(".modal-backdrop")) return; onClose(); };
@@ -50,11 +52,19 @@ export function TrackMenu({ x, y, track, refs, cached, onInfo, onClose, extra }:
   const { ref: menuRef, style: menuStyle } = useMenuPosition(x, y);
   return (
     <div ref={menuRef} className="ctx-menu" style={menuStyle} onPointerDown={(e) => e.stopPropagation()}>
-      {s.decks.map((d, i) => (
-        <button key={i} disabled={d.playing} onClick={act(() => void engine.loadTrack(i, track))}>
-          Load to Deck {String.fromCharCode(65 + i)}
+      {s.decks.slice(0, ws.deckMode).map((d, i) => (
+        <button key={i} className={`ctx-load deck-scope-${"abcd"[i]}`} disabled={d.playing} title={d.playing ? `Deck ${String.fromCharCode(65 + i)} is playing — pause it first` : undefined} onClick={act(() => void engine.loadTrack(i, track))}>
+          Load to Deck {String.fromCharCode(65 + i)}{d.track?.ref === track.ref ? " ●" : ""}
         </button>
       ))}
+      {(() => {
+        const f = ws.focusedDeck, d = s.decks[f];
+        return d && f < ws.deckMode ? (
+          <button disabled={d.playing} title="The deck with keyboard focus (click a deck, or Alt+1…4). Shortcut: Shift+L" onClick={act(() => void engine.loadTrack(f, track))}>
+            Load to focused deck ({String.fromCharCode(65 + f)})
+          </button>
+        ) : null;
+      })()}
       <hr />
       <PlaylistActions refs={refs} onDone={onClose} />
       <TrackDiscoveryActions compact track={track} tracks={libraryState.tracks} />

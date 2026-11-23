@@ -5,6 +5,12 @@ import { dbToEqKnob, describeEqKnob, describeFaderKnob, describeFilterKnob, desc
 import { useApp, useEngineState, useSend } from "./context";
 import { useAnimationFrame } from "./hooks";
 import { clampRaw, dragDelta, FINE_FACTOR, KEY_STEP, rawToValue, stepValue, valueToRaw, wheelDelta } from "./knobMath";
+import { CROSSFADER_ASSIGNS, type CrossfaderAssign } from "../core/engine/DJEngine";
+import type { Pickup } from "../controllers/softTakeover";
+import { mixerLayout } from "../workspace/WorkspaceStore";
+import { deckCssLetter } from "./deckTheme";
+import { useLayerState, usePickups, useWorkspace } from "./FourDeck";
+import { useAutoDJ } from "./PlaylistPanel";
 
 /** How long the live readout stays up after the last turn (a learning aid, not a permanent display). */
 const READOUT_LINGER_MS = 1200;
@@ -34,6 +40,8 @@ export function Knob(props: {
   effectiveValue?: number;
   /** True while something other than the user is actively driving `effectiveValue` (e.g. Auto EQ). */
   auto?: boolean;
+  /** Soft takeover: the hardware knob is elsewhere and waiting to pick up — drawn as a ghost needle + arrow. */
+  pickup?: Pickup;
 }) {
   const send = useSend();
   const size = props.size ?? 30;
@@ -115,7 +123,7 @@ export function Knob(props: {
   };
 
   return (
-    <div className={`knob ${props.kill ? "killed" : ""} ${props.auto ? "auto-driven" : ""}`} data-train={props.train}>
+    <div className={`knob ${props.kill ? "killed" : ""} ${props.auto ? "auto-driven" : ""} ${props.pickup ? "pickup" : ""}`} data-train={props.train}>
       <div
         ref={dial}
         className="knob-dial"
@@ -137,7 +145,9 @@ export function Knob(props: {
         <svg viewBox="0 0 40 40">
           <circle cx="20" cy="20" r="17" className="knob-track" />
           <path d={arcPath(bipolar ? 0.5 : 0, display)} className="knob-arc" />
+          {props.pickup && <line x1="20" y1="2" x2="20" y2="9" className="knob-ghost" transform={`rotate(${(props.pickup.hardware - 0.5) * 270} 20 20)`} />}
         </svg>
+        {props.pickup && <span className="knob-pickup" title={`Hardware knob at ${Math.round(props.pickup.hardware * 100)}% — turn it ${props.pickup.direction > 0 ? "right" : "left"} to pick up`}>{props.pickup.direction > 0 ? "↻" : "↺"}</span>}
         {props.describe && showReadout && <div className="knob-readout" role="status">{props.describe(display)}</div>}
       </div>
       <span className="knob-label">
@@ -199,37 +209,92 @@ function Meter({ index }: { index: number | "master" }) {
   );
 }
 
+const XF_LABEL: Record<CrossfaderAssign, string> = { left: "A", thru: "THRU", right: "B" };
+const XF_ACTION: Record<CrossfaderAssign, string> = { left: "a", thru: "thru", right: "b" };
+
+/** A | THRU | B: which side of the crossfader this channel is on (THRU = unaffected by it). */
+function CrossfaderAssignSwitch({ deck }: { deck: number }) {
+  const { engine } = useApp();
+  useEngineState();
+  const send = useSend();
+  const cur = engine.getCrossfaderAssign(deck);
+  return (
+    <div className="xf-assign" role="radiogroup" aria-label={`Channel ${deckLetter(deck)} crossfader assignment`}>
+      {CROSSFADER_ASSIGNS.map((a) => (
+        <button
+          key={a}
+          role="radio"
+          aria-checked={cur === a}
+          className={cur === a ? "lit" : ""}
+          onClick={() => send(`mixer.channel${deck + 1}.xfader.${XF_ACTION[a]}`)}
+          title={a === "thru" ? "THRU: the crossfader doesn't affect this channel (channel fader and master still do)" : `Crossfader side ${XF_LABEL[a]}`}
+        >
+          {XF_LABEL[a]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Where the hardware fader physically is while it waits for soft-takeover pickup. */
+function FaderGhost({ pickup }: { pickup: Pickup | undefined }) {
+  if (!pickup) return null;
+  return (
+    <span className={`fader-ghost ${pickup.direction > 0 ? "up" : "down"}`} style={{ bottom: `${pickup.hardware * 100}%` }} title={`Hardware fader at ${Math.round(pickup.hardware * 100)}% — move it ${pickup.direction > 0 ? "up" : "down"} to pick up`}>
+      {pickup.direction > 0 ? "▲" : "▼"}
+    </span>
+  );
+}
+
 export function Mixer({ dense }: { dense?: boolean }) {
   const state = useEngineState();
-  const { audio } = useApp();
+  const { audio, engine } = useApp();
+  const ws = useWorkspace();
+  const layers = useLayerState();
+  const pickups = usePickups();
+  const auto = useAutoDJ();
   const send = useSend();
   const mx = state.mixer;
   const quad = audio.getStatus().routing === "quad";
-  const k = dense ? 22 : 26;
+  const four = ws.deckMode === 4;
+  const k = dense || four ? 22 : 26;
+  const { left, right } = mixerLayout(ws);
+  const pickupFor = (target: string) => pickups.find((p) => p.target === target);
 
   const strip = (i: number) => {
     const c = mx.channels[i];
+    if (!c) return null;
     const a = state.autoEq[i];
     const autoEqActive = a.lowDb !== 0 || a.midDb !== 0 || a.highDb !== 0;
     const hi = eqKnobView(c.eqHigh, c.killHigh, a.highDb);
     const mid = eqKnobView(c.eqMid, c.killMid, a.midDb);
     const low = eqKnobView(c.eqLow, c.killLow, a.lowDb);
     const m = `mixer.channel${i + 1}`;
+    const assign = engine.getCrossfaderAssign(i);
+    const defaultAssign = assign === (i % 2 === 0 ? "left" : "right");
+    const side = layers.enabled ? (layers.left === i ? "left" : layers.right === i ? "right" : null) : null;
+    // Auto DJ drives the shared crossfader; a manual deck C/D on side A/B follows it.
+    const followsAutoDj = i >= 2 && auto.status !== "OFF" && assign !== "thru";
     return (
-      <div key={i} className={`strip channel-${deckLetter(i).toLowerCase()}`}>
-        <div className="strip-name">{deckLetter(i)}{autoEqActive && <span className="auto-eq-badge" title="Auto EQ is temporarily cutting this deck's EQ for the transition — move a knob to take a band back">AUTO EQ</span>}</div>
+      <div key={i} className={`strip channel-${deckCssLetter(i)}${side ? ` hw-focus hw-${side}` : ""}`}>
+        <div className="strip-name">
+          {deckLetter(i)}
+          {side && <span className="strip-hw" title={`${side === "left" ? "Left" : "Right"} controller side`}>{side === "left" ? "◀" : "▶"}</span>}
+          {autoEqActive && <span className="auto-eq-badge" title="Auto EQ is temporarily cutting this deck's EQ for the transition — move a knob to take a band back">AUTO EQ</span>}
+          {followsAutoDj && <span className="auto-eq-badge xf-warn" title={`Auto DJ is moving the crossfader and this channel is on side ${XF_LABEL[assign]}, so it follows. Set THRU to keep deck ${deckLetter(i)} independent of Auto DJ.`}>XF ⚠</span>}
+        </div>
         <div className="strip-knobs">
-          <Knob size={k} label="TRIM" value={c.gain} action={`${m}.gain`} bipolar describe={describeGainKnob} />
-          <Knob size={k} label="HI" value={c.eqHigh} effectiveValue={hi.effectiveValue} auto={hi.auto} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar describe={hi.describe} />
-          <Knob size={k} label="MID" value={c.eqMid} effectiveValue={mid.effectiveValue} auto={mid.auto} action={`${m}.eq.mid`} train={`eq-mid-${deckLetter(i)}`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar describe={mid.describe} />
-          <Knob size={k} label="LOW" value={c.eqLow} effectiveValue={low.effectiveValue} auto={low.auto} action={`${m}.eq.low`} train={`eq-low-${deckLetter(i)}`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar describe={low.describe} />
-          <Knob size={k} label="FILTER" value={c.filter} action={`${m}.filter`} train={`filter-${deckLetter(i)}`} bipolar describe={describeFilterKnob} />
+          <Knob size={k} label="TRIM" value={c.gain} action={`${m}.gain`} bipolar describe={describeGainKnob} pickup={pickupFor(`${m}.gain`)} />
+          <Knob size={k} label="HI" value={c.eqHigh} effectiveValue={hi.effectiveValue} auto={hi.auto} action={`${m}.eq.high`} train={`eq-high-${deckLetter(i)}`} kill={c.killHigh} killAction={`${m}.eq.high.kill`} bipolar describe={hi.describe} pickup={pickupFor(`${m}.eq.high`)} />
+          <Knob size={k} label="MID" value={c.eqMid} effectiveValue={mid.effectiveValue} auto={mid.auto} action={`${m}.eq.mid`} train={`eq-mid-${deckLetter(i)}`} kill={c.killMid} killAction={`${m}.eq.mid.kill`} bipolar describe={mid.describe} pickup={pickupFor(`${m}.eq.mid`)} />
+          <Knob size={k} label="LOW" value={c.eqLow} effectiveValue={low.effectiveValue} auto={low.auto} action={`${m}.eq.low`} train={`eq-low-${deckLetter(i)}`} kill={c.killLow} killAction={`${m}.eq.low.kill`} bipolar describe={low.describe} pickup={pickupFor(`${m}.eq.low`)} />
+          <Knob size={k} label="FILTER" value={c.filter} action={`${m}.filter`} train={`filter-${deckLetter(i)}`} bipolar describe={describeFilterKnob} pickup={pickupFor(`${m}.filter`)} />
         </div>
         <div className="strip-fader">
         <button
           className={`cue-btn ${c.pfl ? "lit" : ""}`}
           onClick={() => send(`${m}.cue`)}
-          title={quad ? "Headphone cue" : "Headphone cue needs a 4-output device (Settings → Audio → routing)"}
+          title={quad ? "Headphone cue (PFL) — any number of channels; never changes the master" : "Headphone cue needs a 4-output device (Settings → Audio → routing)"}
         >
           CUE
         </button>
@@ -245,21 +310,23 @@ export function Mixer({ dense }: { dense?: boolean }) {
             aria-label={`Channel ${deckLetter(i)} volume`}
             onChange={(e) => send(`${m}.volume`, Number(e.target.value))}
           />
+          <FaderGhost pickup={pickupFor(`${m}.volume`)} />
         </div>
         </div>
+        {(four || !defaultAssign) && <CrossfaderAssignSwitch deck={i} />}
       </div>
     );
   };
 
   return (
-    <section className={`mixer ${dense ? "dense" : ""}`}>
+    <section className={`mixer ${dense ? "dense" : ""}${four ? " four" : ""}`}>
       <div className="mixer-strips">
-        {strip(0)}
+        {left.map(strip)}
         <div className="strip master">
           <div className="strip-name">MASTER</div>
           <div className="strip-knobs">
             <Knob size={k} label="LEVEL" value={mx.masterLevel} action="mixer.master.level" bipolar={false} describe={describeFaderKnob} />
-            <Knob size={k} label="HP MIX" value={mx.headMix} action="mixer.headphone.mix" bipolar={false} describe={describeHeadMixKnob} />
+            <Knob size={k} label="HP MIX" value={mx.headMix} action="mixer.headphone.mix" bipolar={false} describe={describeHeadMixKnob} pickup={pickupFor("mixer.headphone.mix")} />
             <Knob size={k} label="HP LVL" value={mx.headLevel} action="mixer.headphone.level" bipolar={false} describe={describeFaderKnob} />
           </div>
           <div className="strip-fader">
@@ -268,7 +335,7 @@ export function Mixer({ dense }: { dense?: boolean }) {
             </div>
           </div>
         </div>
-        {strip(1)}
+        {right.map(strip)}
       </div>
       <div className="crossfader" data-train="crossfader">
         <span className="xf-end deck-scope-a">A</span>
@@ -283,7 +350,14 @@ export function Mixer({ dense }: { dense?: boolean }) {
           onDoubleClick={() => send("mixer.crossfader", 0.5)}
         />
         <span className="xf-end deck-scope-b">B</span>
+        <FaderGhostX pickup={pickupFor("mixer.crossfader")} />
       </div>
     </section>
   );
 }
+
+function FaderGhostX({ pickup }: { pickup: Pickup | undefined }) {
+  if (!pickup) return null;
+  return <span className="xf-ghost" style={{ left: `calc(26px + (100% - 52px) * ${pickup.hardware})` }} title={`Hardware crossfader at ${Math.round(pickup.hardware * 100)}% — move it ${pickup.direction > 0 ? "right" : "left"} to pick up`}>{pickup.direction > 0 ? "▶" : "◀"}</span>;
+}
+

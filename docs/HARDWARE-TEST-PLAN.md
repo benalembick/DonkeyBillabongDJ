@@ -71,6 +71,30 @@ Pause Deck A, press **reset** next to JOG TICKS, and turn the platter exactly **
 1. While Deck A plays, **unplug the DDJ-SB**. Audio must continue, and the top bar shows `Pioneer DDJ-SB disconnected — playback continues`.
 2. Plug it back in: it reconnects automatically, and PLAY works again.
 
+## G. Four decks (deck layers and soft takeover)
+
+Not yet verified on hardware. The layer button and LED follow Mixxx's 4-deck DDJ-SB script, and have only been checked by simulating its MIDI through the app.
+
+1. Load a track on each of decks A–D. Click **4 DECK** in the toolbar, or press Ctrl+Shift+D.
+2. Press **SHIFT + KEY LOCK** (printed TEMPO RANGE) on the left side.
+   - **Expected:** the four-deck bar shows `LEFT CONTROLLER: DECK C`, deck C gets a green outline and a "◀ LEFT CONTROLLER" tag, and the SHIFT+KEY LOCK LED (0x60) lights.
+   - Press it again to return to deck A, and the LED goes out.
+   - Repeat on the right side for B/D.
+   - Report whether the LED lights with or without SHIFT held.
+3. With the left side on deck C, check that each of these drives deck C and none of them drives deck A: PLAY, CUE, SYNC, jog (nudge, scratch, search), tempo slider, channel fader, EQ, FILTER, SHIFT+FILTER (gain), HP CUE, pads in all four modes, and LOAD A.
+4. Pad LEDs, PLAY/CUE/SYNC LEDs and the HP CUE LED should show deck C's state, and switch back to deck A's when you toggle.
+5. **Soft takeover**:
+   1. Set deck A's fader to about 80% with the hardware.
+   2. On screen, set deck C's channel fader to about 20%.
+   3. Toggle the left side to deck C and move the hardware fader slowly.
+   4. **Expected:** deck C stays at 20% (the screen shows ▼ 20% guidance) until the fader reaches 20%, then follows smoothly.
+   5. Repeat with an EQ knob and the tempo slider.
+   6. Report how the pickup feels; the tolerance is in Settings → Four decks.
+6. Hold CUE on deck A, toggle the layer with your other hand, then release CUE. Deck A must stop previewing, and deck C must be unaffected.
+7. Hot cue banks: switch between pads 1–4 and 5–8 on deck C. The layer must not change.
+8. Press **2 DECK**. The sides return to A/B, SHIFT + KEY LOCK is tempo range again, and a deck C that is still playing shows a dashed "PLAYING" row.
+9. Unplug and replug the DDJ-SB while four decks play. Playback must continue, and after reconnection every fader and knob waits for pickup (no jumps).
+
 ## Reporting
 
 - **Controller test** tab: operate every control, mark ✓ or ✗, add a note for failures, and use **Copy test report** to paste a Markdown table into an issue.

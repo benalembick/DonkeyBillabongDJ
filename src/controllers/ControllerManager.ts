@@ -10,12 +10,16 @@ import { Emitter } from "../core/events";
 import type { EventLog } from "../core/log";
 import { parseMidi, type MidiMessage } from "./midi/message";
 import { MappingRuntime, type Translation } from "./mapping/MappingRuntime";
-import type { ControllerMapping } from "./mapping/schema";
+import type { ControllerMapping, InputBinding } from "./mapping/schema";
+import { actionCatalog } from "../core/actions";
+import { DeckLayers, type ControllerSide } from "./layers";
+import { SoftTakeover } from "./softTakeover";
 
 export interface MonitorEntry {
   id: number;
   message: MidiMessage;
-  translations: Translation[];
+  /** `action` is the mapping's action; `routed` (when different) is where the deck layer sent it. */
+  translations: (Translation & { routed?: string })[];
   /** Name of the mapping that handled it, if any. */
   mapping?: string;
 }
@@ -59,19 +63,94 @@ export class ControllerManager extends Emitter<{
   private rescanTimer: ReturnType<typeof setTimeout> | null = null;
   private ledPending = false;
   private simRuntimes = new Map<string, MappingRuntime>();
+  /** Button presses in flight: physical control → the deck action the press went to (its release goes there too). */
+  private held = new Map<string, string>();
+  /** Where each binding's last message actually went (for the MIDI monitor). */
+  private lastRouted = new WeakMap<InputBinding, string>();
 
   private readonly bus: CommandBus;
   private readonly feedback: FeedbackSource;
   private readonly log: EventLog;
+  /** Deck layers (left side A/C, right side B/D). Fixed at A/B outside four-deck mode. */
+  readonly layers: DeckLayers;
+  /** Soft takeover for absolute controls (faders, knobs, tempo). */
+  readonly takeover: SoftTakeover | null;
 
-  constructor(opts: { bus: CommandBus; feedback: FeedbackSource; log: EventLog; mappings: ControllerMapping[] }) {
+  constructor(opts: { bus: CommandBus; feedback: FeedbackSource; log: EventLog; mappings: ControllerMapping[]; layers?: DeckLayers; takeover?: SoftTakeover }) {
     super();
     this.bus = opts.bus;
     this.feedback = opts.feedback;
     this.log = opts.log;
     this.mappings = opts.mappings;
+    this.layers = opts.layers ?? new DeckLayers();
+    this.takeover = opts.takeover ?? null;
     // LED feedback: coalesce engine state changes to one refresh per animation frame.
     this.feedback.on("state", () => this.scheduleLedRefresh());
+    let last = this.layers.getState();
+    this.layers.on("change", (s) => {
+      // The side's controls now drive another deck: both decks' absolute controls wait for pickup.
+      const moved = (["left", "right"] as ControllerSide[]).filter((side) => s[side] !== last[side]);
+      const decks = new Set(moved.flatMap((side) => [last[side], s[side]]));
+      if (decks.size) this.takeover?.requirePickup((t) => [...decks].some((d) => t.startsWith(`deck${d + 1}.`) || t.startsWith(`mixer.channel${d + 1}.`)));
+      if (moved.length) this.log.info("controllers", moved.map((side) => `${side === "left" ? "Left" : "Right"} controller side → deck ${String.fromCharCode(65 + s[side])}`).join(" · "));
+      last = s;
+      this.scheduleLedRefresh();
+    });
+  }
+
+  /** LED feedback key as the hardware sees it → value (deck keys follow the side's selected deck). */
+  feedbackValue(key: string): number {
+    return this.layers.feedback(key) ?? this.feedback.getFeedback(this.layers.routeFeedback(key));
+  }
+
+  /**
+   * Every mapped input goes through here: deck layer routing, then soft takeover for absolute controls,
+   * then the command bus. `physical` identifies the control on its device (layer-independent).
+   */
+  private dispatchMapped(physical: string, binding: InputBinding, value: number): void {
+    const isButton = actionCatalog().get(binding.action)?.valueType === "button";
+    let target = this.layers.resolve(binding);
+    if (isButton) {
+      // A release goes wherever its press went, even if the layer changed in between (no stuck CUE/jog touch).
+      const key = `${physical}|${binding.modifier ?? ""}`;
+      if (value > 0) this.held.set(key, target);
+      else {
+        target = this.held.get(key) ?? target;
+        this.held.delete(key);
+      }
+    }
+    this.lastRouted.set(binding, target);
+    const meta = actionCatalog().get(target);
+    const relative = binding.encoding === "relative-offset64" || binding.encoding === "relative-twos-complement" || binding.encoding === "relative-signed-bit";
+    if (this.takeover && meta?.valueType === "absolute" && !relative && binding.encoding !== "button") {
+      const v = this.takeover.process(target, physical, value);
+      if (v === null) return;
+      this.bus.dispatch({ action: target, value: v, source: "midi" });
+      this.takeover.commit(target);
+      return;
+    }
+    this.bus.dispatch({ action: target, value, source: "midi" });
+  }
+
+  /** Engine actions this mapping's absolute controls drive right now (for soft takeover priming). */
+  private absoluteTargets(mapping: ControllerMapping): string[] {
+    return mapping.inputs.filter((b) => actionCatalog().get(b.action)?.valueType === "absolute").map((b) => this.layers.resolve(b));
+  }
+
+  private makeRuntime(mapping: ControllerMapping, portKey: string, send: (bytes: number[]) => void): MappingRuntime {
+    return new MappingRuntime(
+      mapping,
+      (_action, value, binding) => this.dispatchMapped(`${portKey}|${binding.control}`, binding, value),
+      send,
+      (key) => this.feedbackValue(key),
+    );
+  }
+
+  private withRouting(translations: Translation[]): (Translation & { routed?: string })[] {
+    return translations.map((t) => {
+      const routed = this.lastRouted.get(t.binding) ?? this.layers.resolve(t.binding);
+      return routed === t.action ? t : { ...t, routed };
+    });
   }
 
   async init(): Promise<void> {
@@ -147,12 +226,13 @@ export class ControllerManager extends Emitter<{
     if (!mapping) throw new Error(`No mapping ${mappingId}`);
     let rt = this.simRuntimes.get(mappingId);
     if (!rt) {
-      rt = new MappingRuntime(mapping, (action, value) => this.bus.dispatch({ action, value, source: "midi" }), () => undefined, (k) => this.feedback.getFeedback(k));
+      rt = this.makeRuntime(mapping, `simulator:${mappingId}`, () => undefined);
       this.simRuntimes.set(mappingId, rt);
+      this.takeover?.prime(this.absoluteTargets(mapping));
     }
     const msg = parseMidi(bytes, "simulator", `${mapping.name} (simulated)`, performance.now());
     const translations = rt.handle(msg);
-    this.emit("monitor", { id: this.monitorId++, message: msg, translations, mapping: mapping.name });
+    this.emit("monitor", { id: this.monitorId++, message: msg, translations: this.withRouting(translations), mapping: mapping.name });
     return translations;
   }
 
@@ -237,14 +317,7 @@ export class ControllerManager extends Emitter<{
     const mapping = this.findMapping(portName);
     const output = this.findOutput(portName);
     let runtime: MappingRuntime | null = null;
-    if (mapping) {
-      runtime = new MappingRuntime(
-        mapping,
-        (action, value) => this.bus.dispatch({ action, value, source: "midi" }),
-        (bytes) => this.sendTo(output, bytes),
-        (key) => this.feedback.getFeedback(key),
-      );
-    }
+    if (mapping) runtime = this.makeRuntime(mapping, `port:${portName}`, (bytes) => this.sendTo(output, bytes));
     const a: Attached = { input, output, runtime };
     this.attached.set(input.id, a);
     input.onmidimessage = (e: MIDIMessageEvent) => this.onMessage(a, e);
@@ -258,6 +331,11 @@ export class ControllerManager extends Emitter<{
       hasOutput: !!output,
     });
     const label = mapping?.name ?? portName;
+    // Soft takeover: on first connection the hardware drives values from where they are now; after a
+    // reconnect nothing is trusted (the controls may have moved while unplugged) — every one waits for pickup.
+    if (mapping && wasKnown && !wasKnown.connected) this.takeover?.reset(`port:${portName}|`);
+    else if (mapping) this.takeover?.prime(this.absoluteTargets(mapping));
+    for (const k of [...this.held.keys()]) if (k.startsWith(`port:${portName}|`)) this.held.delete(k);
     if (wasKnown && !wasKnown.connected) this.log.info("controllers", `${label} reconnected`);
     else this.log.info("controllers", `${label} connected${mapping ? ` (mapping: ${mapping.name})` : " (no mapping — monitor only)"}`);
     if (mapping && !output) this.log.warn("controllers", `${label}: no MIDI output port found, LEDs disabled`);
@@ -295,7 +373,7 @@ export class ControllerManager extends Emitter<{
     } catch (err) {
       this.log.error("controllers", `Mapping error: ${String(err)}`);
     }
-    this.emit("monitor", { id: this.monitorId++, message: msg, translations, mapping: a.runtime?.mapping.name });
+    this.emit("monitor", { id: this.monitorId++, message: msg, translations: this.withRouting(translations), mapping: a.runtime?.mapping.name });
   }
 
   private scheduleLedRefresh(): void {

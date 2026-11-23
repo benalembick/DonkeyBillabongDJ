@@ -32,7 +32,7 @@ export interface IntelJobState {
 }
 
 interface AnalysisPort {
-  analyseTracks(tracks: TrackInfo[], force?: boolean): Promise<void>;
+  analyseTracks(tracks: TrackInfo[], force?: boolean, resuggest?: boolean, background?: boolean): Promise<void>;
   cancelBatch(): void;
   getState(): AnalysisProgress;
   on(event: "change", cb: (s: AnalysisProgress) => void): () => void;
@@ -116,7 +116,7 @@ export class LibraryIntelligence extends Emitter<{ change: IntelJobState }> {
         await this.waitForAnalysisIdle();
         need.forEach((t) => this.item(t.ref, { status: "analysing" }));
         const off = this.o.analysis.on("change", (s) => { if (s.current) this.set({ current: `Analysing audio: ${s.current} (${s.done}/${s.total})` }); });
-        try { await this.o.analysis.analyseTracks(need, force); } finally { off(); }
+        try { await this.o.analysis.analyseTracks(need, force, false, true); } finally { off(); }
         const s = this.o.analysis.getState();
         for (const t of need) {
           if (this.o.preparation.forRef(t.ref)?.analysisVersion != null) continue;

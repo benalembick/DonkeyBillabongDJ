@@ -32,6 +32,19 @@ export function keyBindingLabel(binding: KeyBinding): string {
   return [...(binding.ctrl ? ["Ctrl/Cmd"] : []), ...(binding.alt ? ["Alt"] : []), ...(binding.shift ? ["Shift"] : []), key].join("+");
 }
 
+/** Rebindable workspace shortcuts. Ctrl means Ctrl on Windows and Cmd on macOS. */
+export const WORKSPACE_KEYS: KeyBinding[] = [
+  { code: "ArrowUp", ctrl: true, shift: true, action: "workspace.bottomPanel.toggle" },
+  { code: "KeyD", ctrl: true, shift: true, action: "workspace.deckMode.toggle" },
+  { code: "Digit1", ctrl: true, shift: true, action: "controller.layer.left.toggle" },
+  { code: "Digit2", ctrl: true, shift: true, action: "controller.layer.right.toggle" },
+  { code: "Digit1", alt: true, action: "workspace.focus.deck1" },
+  { code: "Digit2", alt: true, action: "workspace.focus.deck2" },
+  { code: "Digit3", alt: true, action: "workspace.focus.deck3" },
+  { code: "Digit4", alt: true, action: "workspace.focus.deck4" },
+  { code: "KeyL", shift: true, action: "browser.load.focused" },
+];
+
 export const DEFAULT_KEYMAP: KeyBinding[] = [
   { code: "Space", action: "deck1.play" },
   { code: "Space", shift: true, action: "deck2.play" },
@@ -56,7 +69,22 @@ export const DEFAULT_KEYMAP: KeyBinding[] = [
   // STEMS: Q/W/E/R = deck A vocals/drums/bass/instruments mute, U/I/O/P = deck B; Shift = solo.
   ...stemKeys(1, ["KeyQ", "KeyW", "KeyE", "KeyR"]),
   ...stemKeys(2, ["KeyU", "KeyI", "KeyO", "KeyP"]),
+  // Workspace controls (rebindable in Settings): bottom panel, deck mode, controller sides and deck focus.
+  ...WORKSPACE_KEYS,
 ];
+
+/** Actions whose shortcut can be changed in Settings (one binding each). */
+export const REBINDABLE_ACTIONS = WORKSPACE_KEYS.map((k) => k.action);
+
+/** Saved per-action shortcut overrides (null = no shortcut) applied over the defaults. */
+export type KeymapOverrides = Record<string, Omit<KeyBinding, "action"> | null>;
+
+export function applyKeymapOverrides(base: KeyBinding[], overrides: KeymapOverrides): KeyBinding[] {
+  const out = base.filter((b) => !(b.action in overrides));
+  for (const [action, b] of Object.entries(overrides)) if (b && typeof b.code === "string") out.push({ ...b, action });
+  // A key taken by a rebound action no longer triggers anything else.
+  return out.filter((b, i) => !out.some((o, j) => j > i && o.code === b.code && !!o.shift === !!b.shift && !!o.ctrl === !!b.ctrl && !!o.alt === !!b.alt && o.action in overrides));
+}
 
 function stemKeys(deck: number, codes: string[]): KeyBinding[] {
   const stems = ["vocals", "drums", "bass", "instruments"];
@@ -94,6 +122,11 @@ export class KeyboardShortcuts {
 
   setKeymap(keymap: KeyBinding[]): void {
     this.keymap = keymap;
+  }
+
+  /** The binding that triggers `action`, if any. */
+  bindingFor(action: string): KeyBinding | undefined {
+    return this.keymap.find((k) => k.action === action);
   }
 
   getKeymap(): KeyBinding[] {

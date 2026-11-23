@@ -7,7 +7,7 @@ import type { PreparationStore } from "../preparation/PreparationStore";
 import { GRID_CONFIDENT } from "../preparation/beatGrid";
 
 export type Overview = TrackAnalysis;
-export interface AnalysisProgress { busy: boolean; done: number; total: number; current: string; errors: string[]; skipped: string[]; cacheHits: number; runs: number }
+export interface AnalysisProgress { busy: boolean; done: number; total: number; current: string; errors: string[]; skipped: string[]; cacheHits: number; runs: number; /** Background batch waiting (e.g. "3 decks playing"), null when not deferred. */ deferred?: string | null }
 interface Options {
   preparation: PreparationStore; audio: AudioEngine; readAudio: (ref: string) => Promise<ArrayBuffer>;
   /** Problems the user should see (shown as a notification). */
@@ -18,6 +18,11 @@ interface Options {
   probeDuration?: (ref: string) => Promise<number | null>;
   /** Where the crash guard is kept (localStorage by default; absent in tests). */
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+  /**
+   * Background (library) batches wait between tracks while this returns a reason — live playback first.
+   * Deck loads are never deferred.
+   */
+  deferWhile?: () => string | null;
 }
 
 /**
@@ -235,6 +240,20 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     onStage("done");
   }
   /** Add import work without blocking the caller; one sequential batch protects playback responsiveness. */
+  /** Holds a background batch between tracks while live playback needs the machine (see Options.deferWhile). */
+  private async waitWhileDeferred(): Promise<void> {
+    let reason = this.options?.deferWhile?.() ?? null;
+    if (!reason) return;
+    this.options?.onInfo?.(`Background analysis paused: ${reason}`);
+    while (reason && !this.cancelled) {
+      if (this.state.deferred !== reason) this.set({ deferred: reason });
+      await new Promise((r) => setTimeout(r, 1000));
+      reason = this.options?.deferWhile?.() ?? null;
+    }
+    this.set({ deferred: null });
+    this.options?.onInfo?.("Background analysis resumed");
+  }
+
   queueTracks(tracks: TrackInfo[]): void {
     for (const track of tracks) if (track.source === "local" && !track.unavailableReason) this.queued.set(track.ref, track);
     if (!this.state.busy) queueMicrotask(() => void this.drainQueue());
@@ -242,10 +261,14 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
   private async drainQueue(): Promise<void> {
     if (this.state.busy || !this.queued.size) return;
     const tracks = [...this.queued.values()]; this.queued.clear();
-    await this.analyseTracks(tracks);
+    await this.analyseTracks(tracks, false, false, true);
     if (this.queued.size) void this.drainQueue();
   }
-  async analyseTracks(tracks: TrackInfo[], force = false, resuggest = false): Promise<void> {
+  /**
+   * `background`: the automatic queue and bulk library jobs — these wait while enough decks play
+   * (Options.deferWhile). An explicit "Analyse/Reanalyse selected" runs straight away.
+   */
+  async analyseTracks(tracks: TrackInfo[], force = false, resuggest = false, background = false): Promise<void> {
     if (!this.options || this.state.busy) return;
     const list = [...new Map(tracks.filter((t) => t.source === "local").map((t) => [t.ref, t])).values()];
     this.cancelled = false;
@@ -253,6 +276,8 @@ export class AnalysisService extends Emitter<{ overview: { deck: number; overvie
     const name = (t: TrackInfo) => (t.artist ? `${t.artist} – ${t.title}` : t.title);
     try {
       for (const track of list) {
+        if (this.cancelled) break;
+        if (background) await this.waitWhileDeferred();
         if (this.cancelled) break;
         this.set({ current: track.title });
         // Explicit "Analyse"/"Reanalyse" (force) retries a track that crashed the app before.

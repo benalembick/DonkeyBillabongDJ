@@ -1,13 +1,24 @@
 import type { AudioEngine, AudioEngineEvent, AudioStatus, ChannelDsp, DecodedAudio, FxDsp, MasterDsp } from "../src/core/engine/types";
 
-/** In-memory AudioEngine that records calls and simulates a playhead. */
+/** In-memory AudioEngine that records calls and simulates a playhead. `deckCount` decks (default 2). */
 export class FakeAudioEngine implements AudioEngine {
-  readonly deckCount = 2;
+  readonly deckCount: number;
   calls: { fn: string; deck?: number; args: unknown[] }[] = [];
-  positions = [0, 0];
-  playing = [false, false];
-  rates = [1, 1];
-  scratching = [false, false];
+  positions: number[];
+  playing: boolean[];
+  rates: number[];
+  scratching: boolean[];
+  constructor(deckCount = 2) {
+    this.deckCount = deckCount;
+    const n = <T>(v: T) => Array.from({ length: deckCount }, () => v);
+    this.positions = n(0);
+    this.playing = n(false);
+    this.rates = n(1);
+    this.scratching = n(false);
+    this.keylock = n(false);
+    this.stems = Array.from({ length: deckCount }, () => ({ regions: [] }));
+    this.loops = n(null);
+  }
   channels: ChannelDsp[] = [];
   master: MasterDsp | null = null;
   private listeners = new Set<(e: AudioEngineEvent) => void>();
@@ -41,7 +52,7 @@ export class FakeAudioEngine implements AudioEngine {
     this.positions[deck] = seconds;
     this.rec("seek", deck, seconds);
   }
-  keylock = [false, false];
+  keylock: boolean[];
   setKeylock(deck: number, on: boolean) {
     this.keylock[deck] = on;
     this.rec("setKeylock", deck, on);
@@ -70,7 +81,7 @@ export class FakeAudioEngine implements AudioEngine {
   setFx(unit: number, dsp: FxDsp) {
     this.fx[unit] = dsp;
   }
-  stems: { init?: unknown; regions: number[]; mix?: { enabled: boolean; gains: number[] } }[] = [{ regions: [] }, { regions: [] }];
+  stems: { init?: unknown; regions: number[]; mix?: { enabled: boolean; gains: number[] } }[];
   stemsInit(deck: number, info: unknown) {
     this.stems[deck] = { init: info, regions: [] };
   }
@@ -86,7 +97,7 @@ export class FakeAudioEngine implements AudioEngine {
   stemsReadyAtPlayhead() {
     return false;
   }
-  loops: ({ start: number; end: number } | null)[] = [null, null];
+  loops: ({ start: number; end: number } | null)[];
   setLoop(deck: number, loop: { start: number; end: number } | null) {
     this.loops[deck] = loop;
     this.rec("setLoop", deck, loop);
@@ -95,7 +106,7 @@ export class FakeAudioEngine implements AudioEngine {
     return this.positions[deck];
   }
   getLevels() {
-    return { channels: [0, 0], master: 0 };
+    return { channels: this.positions.map(() => 0), master: 0 };
   }
   on(l: (e: AudioEngineEvent) => void) {
     this.listeners.add(l);

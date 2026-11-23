@@ -1,9 +1,9 @@
 {
   "name": "donkey-billabong-dj",
   "productName": "Donkey Billabong DJ",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "private": true,
-  "description": "Cross-platform two-deck DJ application with first-class hardware controller support.",
+  "description": "Cross-platform two- and four-deck DJ application with first-class hardware controller support.",
   "author": "Ben Alembick",
   "license": "UNLICENSED",
   "type": "module",

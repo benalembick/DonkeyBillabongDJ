@@ -8,7 +8,9 @@ import { PERMISSION_REMINDER } from "../acquire/providers";
 import { counts, type ProviderView, type SpotifyLocalState } from "../acquire/SpotifyLocalService";
 import { parseSpotifyRef } from "../acquire/spotifyRef";
 import { PLAYABLE_STATES, STATE_ICON, STATE_LABEL, type AudioQuality, type ImportJob, type PlaylistEntry, type ReviewCandidate } from "../acquire/types";
-import { useApp, useEngineState } from "./context";
+import { useApp } from "./context";
+import { useWorkspaceDecks } from "./workspaceHooks";
+import { deckCssLetter } from "./deckTheme";
 import { useFrameStore } from "./hooks";
 
 export function useSpotifyLocal(): SpotifyLocalState {
@@ -358,7 +360,7 @@ function JobView({ job, s, onOpenPlaylist }: { job: ImportJob; s: SpotifyLocalSt
 
 function EntryRow({ job, e, open, onToggle }: { job: ImportJob; e: PlaylistEntry; open: boolean; onToggle: () => void }) {
   const { spotifyLocal } = useApp();
-  const decks = useEngineState().decks;
+  const decks = useWorkspaceDecks();
   const playable = PLAYABLE_STATES.has(e.state);
   const canRetry = ["failed", "cancelled", "awaiting-file", "needs-review"].includes(e.state) && e.kind !== "episode" && !!e.source.title;
   return (
@@ -415,8 +417,8 @@ function EntryRow({ job, e, open, onToggle }: { job: ImportJob; e: PlaylistEntry
           )}
           {playable &&
             decks.map((d, deck) => (
-              <button key={deck} className={`tiny ${deck === 0 ? "deck-a-btn" : "deck-b-btn"}`} disabled={d.playing} title={d.playing ? "Deck is playing" : `Load Deck ${deck ? "B" : "A"}`} onClick={() => spotifyLocal.loadDeck(job.id, e.key, deck)}>
-                → {deck ? "B" : "A"}
+              <button key={deck} className={`tiny deck-${deckCssLetter(deck)}-btn`} disabled={d.playing} title={d.playing ? "Deck is playing" : `Load Deck ${String.fromCharCode(65 + deck)}`} onClick={() => spotifyLocal.loadDeck(job.id, e.key, deck)}>
+                → {String.fromCharCode(65 + deck)}
               </button>
             ))}
           {playable && (

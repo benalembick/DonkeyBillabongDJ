@@ -1,5 +1,7 @@
 # Deck colour identity and Dual-Deck Tonal waveforms
 
+> **Update (four decks, 2026-11-22):** the identity now covers four decks: A blue `#38A4FF`, B orange `#FF7956`, C green `#48D69A` and D purple `#B38AFF`. Decks A and B moved from the earlier `#0EA5E9` / `#F59E0B` to the values in the four-deck specification. Each deck's deep, highlight and waveform ramp derive from its primary, and each deck badge has its own shape. The structure below is unchanged. `deckTheme(deck)` now returns one theme per deck, with indices above 3 wrapping, and the deck scopes exist for `a`–`d`. See [architecture/four-deck-performance-engine.md](architecture/four-deck-performance-engine.md) §7. The tables below show the original two-deck values.
+
 Deck A is **electric blue** and deck B is **warm amber**, everywhere a control or display belongs to one deck. The waveforms use the same identity: by default each deck is drawn in a three-band tonal ramp of its own colour, built from the real low/mid/high analysis.
 
 Colours follow the **deck**, not the track. A track on deck A is blue; the same track on deck B is amber, drawn from the same cached analysis without re-analysis. When Auto DJ alternates decks, crossfades or runs Auto EQ, deck A stays blue and deck B amber. Colours never swap to follow whichever deck is louder.

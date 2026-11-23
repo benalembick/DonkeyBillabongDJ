@@ -11,6 +11,7 @@ import { useAudiusState } from "./AudiusPane";
 import { AUDIUS_APP_NAME } from "../providers/audius/AudiusClient";
 import { StemDiagnostics, StemSettings } from "./StemSettings";
 import { WaveformSettings } from "./WaveStylePicker";
+import { FourDeckDiagnostics, FourDeckSettings } from "./FourDeckSettings";
 
 const audiusAppName = () => AUDIUS_APP_NAME;
 import type { SourceId } from "../matching/sources";
@@ -139,6 +140,7 @@ export function Diagnostics() {
           <dd>{mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(0)} MB` : "n/a"}</dd>
         </dl>
       </div>
+      <FourDeckDiagnostics />
       <StemDiagnostics />
       <AudiusDiagnostics />
       <SmartMatchDiagnostics />
@@ -336,7 +338,7 @@ function HotCueSettings() {
       "Hot cues you've placed or edited by hand are kept — only this app's auto-suggested ones are replaced.",
     );
     if (!ok) return;
-    void analysis.analyseTracks(tracks, true, true);
+    void analysis.analyseTracks(tracks, true, true, true);
   };
   return (
     <fieldset>
@@ -538,6 +540,7 @@ export function Settings() {
         </div>
       </fieldset>
 
+      <FourDeckSettings />
       <HotCueSettings />
       <StreamingSettings />
       <WaveformSettings />

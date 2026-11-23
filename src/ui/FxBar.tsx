@@ -9,6 +9,7 @@ import { FX_BEATS, FX_TARGETS, FX_TYPES } from "../core/engine/DJEngine";
 import type { FxType } from "../core/engine/types";
 import { useApp, useEngineState, useSend } from "./context";
 import { Knob } from "./Mixer";
+import { useWorkspace } from "./workspaceHooks";
 
 export const FX_NAMES: Record<FxType, string> = {
   echo: "ECHO",
@@ -65,6 +66,7 @@ export function FxSummary({ expanded, onToggle }: { expanded: boolean; onToggle:
 
 export function FxBar() {
   const s = useEngineState();
+  const { deckMode } = useWorkspace();
   const { engine } = useApp();
   const send = useSend();
   return (
@@ -109,7 +111,8 @@ export function FxBar() {
             </div>
             <Knob size={24} label="LEVEL" value={f.mix} action={`${a}.mix`} bipolar={false} />
             <div className="fx-assign">
-              {f.decks.map((on, d) => (
+              {/* 2 DECK mode offers A/B; an assigned hidden deck C/D stays visible (and can be unassigned). */}
+              {f.decks.map((on, d) => d >= deckMode && !on ? null : (
                 <button key={d} className={`tiny fx-assign-${deckLetter(d).toLowerCase()} ${on ? "lit" : ""}`} aria-pressed={on} onClick={() => send(`${a}.assign.deck${d + 1}`)} title={`Apply FX${u + 1} to deck ${deckLetter(d)}`}>
                   {deckLetter(d)}
                 </button>

@@ -20,6 +20,8 @@ import { useMenuPosition } from "./useMenuPosition";
 import { gridReliable } from "../preparation/beatGrid";
 import { openGridEditor } from "./gridEditorStore";
 import { deckLetter } from "../core/actions";
+import { deckCssLetter } from "./deckTheme";
+import { useWorkspaceDecks } from "./workspaceHooks";
 
 export const TRACK_REFS = "application/x-dbdj-track-refs";
 const PLAYLIST_MOVE = "application/x-dbdj-playlist-move";
@@ -280,7 +282,8 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
   const { settings: autoSettings } = useAutoDJ();
   const ps = usePlaylists();
   const libraryState = useLibraryState();
-  const decks = useEngineState().decks;
+  // Load destinations: A/B in 2 DECK mode, A–D in 4 DECK mode.
+  const decks = useWorkspaceDecks();
   const stems = useStemCells();
   const stemIdx = stems.stemIdx;
   const p = ps.playlists.find((p) => p.id === id);
@@ -386,7 +389,7 @@ export function PlaylistView({ id, onOpen, onQueue, onOpenSpotifyLocal }: { id: 
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, i)}
           onContextMenu={(e) => { e.preventDefault(); if (!selected.includes(ref)) setSelected([ref]); setInfo((cur) => { if (!cur) return cur; const t = library.getByRef(ref); return t ?? cur; }); setMenu({ x: e.clientX, y: e.clientY }); }}>
           <td>{track && <PreviewArtTile track={track} size={22} />}</td><TrackColumnCells trackRef={ref} track={track ?? null} match={track ? trackMatch(track) : null} stems={stems} />
-          <td className="row-actions" onClick={(e) => e.stopPropagation()}>{decks.map((d, deck) => { const onDeck = !!track && d.track?.ref === track.ref; return <button key={deck} className={`tiny ${deck === 0 ? "deck-a-btn" : "deck-b-btn"} ${onDeck ? "on-deck" : ""}`} aria-label={`${onDeck ? `Loaded on Deck ${deck ? "B" : "A"}. ` : ""}Load ${track?.title ?? "track"} to Deck ${deck ? "B" : "A"}`} disabled={!track || d.playing || !!track.unavailableReason} onClick={() => track && void engine.loadTrack(deck, track)}>{onDeck ? "●" : "→"} {deck ? "B" : "A"}</button>; })}<button disabled={!track} onClick={() => app.autoDJ.add([ref])}>Queue</button>{(!track || track.unavailableReason) && <button onClick={() => void importFiles(true)}>Locate…</button>}<button disabled={i === 0} onClick={() => playlists.move(id, i, i - 1)}>↑</button><button disabled={i === p.refs.length - 1} onClick={() => playlists.move(id, i, i + 2)}>↓</button><button onClick={() => playlists.removeAt(id, [i])}>Remove</button></td>
+          <td className="row-actions" onClick={(e) => e.stopPropagation()}>{decks.map((d, deck) => { const onDeck = !!track && d.track?.ref === track.ref; return <button key={deck} className={`tiny deck-${deckCssLetter(deck)}-btn ${onDeck ? "on-deck" : ""}`} aria-label={`${onDeck ? `Loaded on Deck ${deckLetter(deck)}. ` : ""}Load ${track?.title ?? "track"} to Deck ${deckLetter(deck)}`} disabled={!track || d.playing || !!track.unavailableReason} onClick={() => track && void engine.loadTrack(deck, track)}>{onDeck ? "●" : "→"} {deckLetter(deck)}</button>; })}<button disabled={!track} onClick={() => app.autoDJ.add([ref])}>Queue</button>{(!track || track.unavailableReason) && <button onClick={() => void importFiles(true)}>Locate…</button>}<button disabled={i === 0} onClick={() => playlists.move(id, i, i - 1)}>↑</button><button disabled={i === p.refs.length - 1} onClick={() => playlists.move(id, i, i + 2)}>↓</button><button onClick={() => playlists.removeAt(id, [i])}>Remove</button></td>
         </tr>;
       })}
       {p.refs.length > 0 && visible.length === 0 && <tr><td colSpan={TRACK_COLUMN_COUNT + 2} className="empty">No tracks match these filters. <button onClick={clearFilters}>Clear filters</button></td></tr>}

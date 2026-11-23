@@ -17,6 +17,7 @@ import { useAutoDJ } from "./PlaylistPanel";
 import { BeatGridEditor } from "./BeatGridEditor";
 import { toggleGridEditor, useGridEditorDeck } from "./gridEditorStore";
 import { gridStatus } from "../preparation/beatGrid";
+import { DeckStatusChips, DensityButtons, HardwareTag, useDeckFrameClass } from "./FourDeck";
 
 const RANGE_LABEL: Record<string, string> = { "0.06": "±6", "0.1": "±10", "0.16": "±16", "1": "WIDE" };
 const SOURCE_LABEL: Record<string, string> = { "apple-music": "APPLE MUSIC" };
@@ -466,9 +467,15 @@ function StateButtons({ deck }: { deck: number }) {
   );
 }
 
-export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full" | "compact" }) {
+/**
+ * `fourDeck`: shown in 4 DECK mode — adds the status chips (ON AIR, SYNC, MASTER, controller side…),
+ * hardware/keyboard focus framing and, on decks C/D, the expand/collapse buttons. Without it the deck
+ * renders exactly as in two-deck mode.
+ */
+export function Deck({ deck, variant = "full", fourDeck = false }: { deck: number; variant?: "full" | "compact"; fourDeck?: boolean }) {
   const state = useEngineState();
   const app = useApp();
+  const frame = useDeckFrameClass(deck);
   const { platform, log, engine } = app;
   const send = useSend();
   const d = state.decks[deck];
@@ -495,7 +502,8 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
   return (
     <section
       // deck-a / deck-b scope the deck colour identity (CSS variables from deckTheme.ts); is-playing raises its intensity.
-      className={`deck deck-${L.toLowerCase()} ${variant} ${d.playing ? "is-playing" : ""} ${dragOver ? "drag-over" : ""}`}
+      className={`deck ${fourDeck ? frame : `deck-${L.toLowerCase()} ${d.playing ? "is-playing" : ""}`} ${variant} ${dragOver ? "drag-over" : ""}`}
+      onPointerDown={fourDeck ? () => app.bus.send(`workspace.focus.deck${deck + 1}`, 1, "ui") : undefined}
       onDragOver={(e) => {
         const types = e.dataTransfer.types;
         if (types.includes("application/x-dbdj-track") || types.includes("Files")) {
@@ -569,6 +577,13 @@ export function Deck({ deck, variant = "full" }: { deck: number; variant?: "full
         </button>
         {d.track?.lyrics && <button className="load-btn" onClick={() => setShowLyrics(true)} title="Show embedded lyrics">LYRICS</button>}
       </header>
+      {fourDeck && (
+        <div className="deck-status-line">
+          <HardwareTag deck={deck} />
+          <DeckStatusChips deck={deck} />
+          {deck >= 2 && <DensityButtons deck={deck} density="full" />}
+        </div>
+      )}
       {showLyrics && d.track?.lyrics && <div className="lyrics-overlay" role="dialog" aria-label={`Lyrics for ${d.track.title}`}><div className="lyrics-panel"><header><div><b>{d.track.title}</b><small>{d.track.artist}</small></div><button onClick={() => setShowLyrics(false)} aria-label="Close lyrics">×</button></header><pre>{d.track.lyrics}</pre></div></div>}
 
       {(d.status === "loading" || d.status === "error") && (

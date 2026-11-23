@@ -33,6 +33,8 @@
 | Audio Engine | `src/audio/` | Web Audio, engine types | React, MIDI, DJ logic |
 | Controller engine + mapping | `src/controllers/` | Core, Web MIDI | React, Web Audio |
 | Mixxx compatibility layer | `src/controllers/mixxx/` | mapping schema, action catalogue | runtime/engine |
+| Deck layers + soft takeover | `src/controllers/layers.ts`, `src/controllers/softTakeover.ts` (wired in `ControllerManager`) | Core, mapping schema, a value reader (`DJEngine.getActionValue`) | React, Web Audio, a specific controller |
+| Workspace (2/4 DECK, densities, lanes, focus) | `src/workspace/` | Core events | engine, audio — switching never touches playback |
 | Analysis | `src/analysis/` | DJ engine events, Web Worker | UI |
 | Library | `src/library/` | Core | UI, audio |
 | Platform | `src/platform/` | Electron preload bridge / DOM file inputs | engine |
@@ -75,16 +77,22 @@
 5. By default the engine refuses to load a new track into a playing deck.
 6. Provider and network errors are confined to the provider layer (Phase 5), and providers never touch decks directly.
 
-## Scaling to 4 decks
+## Four decks
 
-`DJEngine` and `WebAudioEngine` take `deckCount`, and actions exist for decks 1–4. The UI currently renders 2 decks. Crossfader assignment per deck is in `EngineSettings.crossfaderAssign`.
+The engine and audio graph always run four decks (`DECK_COUNT` in `createApp.ts`). The **2 DECK / 4 DECK** workspace mode (`src/workspace/WorkspaceStore.ts`) only changes what is shown.
+
+- Each channel has its own crossfader assignment (A | THRU | B) in `EngineSettings.crossfaderAssign`.
+- Unattended automation may only use decks reserved for it (`EngineState.reservations`: A/B automation, C/D manual).
+- A two-channel controller reaches decks C/D through deck layers, with soft takeover for absolute controls.
+
+Full design, verification results and the Phase 2–5 roadmap are in [architecture/four-deck-performance-engine.md](architecture/four-deck-performance-engine.md).
 
 ## Deck colour identity
 
-Deck A is blue and deck B amber. Every deck-specific colour comes from `src/ui/deckTheme.ts`:
+Deck A is blue, B orange, C green and D purple. Every deck-specific colour comes from `src/ui/deckTheme.ts`:
 
 - **Canvas waveforms** read the packed palette (`deckWavePalette(deck)`).
-- **CSS** reads variables that `installDeckThemeCss()` writes onto `:root` at startup. Deck scopes (`.deck-a`/`.deck-b`, `.deck-scope-a`/`-b`, `.strip.channel-a`/`-b`) map them to `--deck-color` and related names.
+- **CSS** reads variables that `installDeckThemeCss()` writes onto `:root` at startup. Deck scopes (`.deck-a`…`.deck-d`, `.deck-scope-a`…`-d`, `.strip.channel-a`…`-d`) map them to `--deck-color` and related names.
 
 Do not hardcode deck colours in components. Colours belong to the deck index, never to the track, and functional colours keep their meaning: hot cues, STEM colours, transport states, meters, warnings. The default waveform style, Dual-Deck Tonal, maps the cached low/mid/high analysis onto each deck's three-band ramp at draw time, so no re-analysis is needed. See [DECK-COLOUR-IDENTITY.md](DECK-COLOUR-IDENTITY.md).
 

@@ -52,6 +52,11 @@ export interface InputBinding {
   scale?: number;
   /** Only active while this modifier (e.g. "shift") is held. Bindings without it apply when no bound modifier matches. */
   modifier?: string;
+  /**
+   * Action used instead of `action` in four-deck mode (when the deck layer button is enabled), e.g. the
+   * DDJ-SB's SHIFT + KEY LOCK: tempo range with two decks, deck 1/3 (2/4) layer toggle with four.
+   */
+  fourDeckAction?: string;
   /** Provenance for imported bindings. */
   confidence?: "exact" | "heuristic" | "manual";
   note?: string;
